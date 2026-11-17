@@ -31,6 +31,7 @@ mod tile_size_mode;
 mod tile_symmetry;
 mod uv_transform;
 mod uv_wrap;
+mod wear_parameters;
 
 pub use curvature_detail::CurvatureDetail;
 pub use curvature_mode::CurvatureMode;
@@ -51,6 +52,7 @@ pub use tile_size_mode::TileSizeMode;
 pub use tile_symmetry::TileSymmetry;
 pub use uv_transform::UvTransform;
 pub use uv_wrap::UvWrap;
+pub use wear_parameters::WearParameters;
 
 /// Id of a layer or effect (one id space per project).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -926,10 +928,12 @@ pub enum GeneratorKind {
     Position,
     /// Surfaces facing a direction (e.g. up for dust).
     Direction,
+    /// Worn edges of a fibreglass-like coating: the edges fade into its grunge
+    FiberGlassEdgeWear,
 }
 
 impl GeneratorKind {
-    pub const ALL: [GeneratorKind; 7] = [
+    pub const ALL: [GeneratorKind; 8] = [
         GeneratorKind::EdgeWear,
         GeneratorKind::Dirt,
         GeneratorKind::ThinAreas,
@@ -937,6 +941,7 @@ impl GeneratorKind {
         GeneratorKind::AmbientOcclusion,
         GeneratorKind::Position,
         GeneratorKind::Direction,
+        GeneratorKind::FiberGlassEdgeWear,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -947,6 +952,7 @@ impl GeneratorKind {
             GeneratorKind::AmbientOcclusion => "Ambient Occlusion",
             GeneratorKind::Position => "Position",
             GeneratorKind::Direction => "Light",
+            GeneratorKind::FiberGlassEdgeWear => "Fiber Glass Edge Wear",
         }
     }
 
@@ -960,6 +966,7 @@ impl GeneratorKind {
             GeneratorKind::AmbientOcclusion => "AmbientOcclusion",
             GeneratorKind::Position => "Position",
             GeneratorKind::Direction => "Direction",
+            GeneratorKind::FiberGlassEdgeWear => "FiberGlassEdgeWear",
         }
     }
 
@@ -970,14 +977,15 @@ impl GeneratorKind {
 
     /// Whether the kind's result depends on its seed
     pub fn includes_randomness(self) -> bool {
-        matches!(self, GeneratorKind::EdgeWear | GeneratorKind::Dirt)
+        matches!(self, GeneratorKind::EdgeWear | GeneratorKind::Dirt | GeneratorKind::FiberGlassEdgeWear)
     }
 
     /// The mesh maps this kind reads, each an input that an image, a uniform value or an anchor can replace.
     pub fn inputs(self) -> &'static [BakedMap] {
         match self {
-            GeneratorKind::EdgeWear | GeneratorKind::Curvature => &[BakedMap::Curvature],
-            GeneratorKind::Dirt | GeneratorKind::AmbientOcclusion => &[BakedMap::AmbientOcclusion],
+            GeneratorKind::EdgeWear | GeneratorKind::Dirt | GeneratorKind::FiberGlassEdgeWear => &[BakedMap::Curvature, BakedMap::AmbientOcclusion],
+            GeneratorKind::Curvature => &[BakedMap::Curvature],
+            GeneratorKind::AmbientOcclusion => &[BakedMap::AmbientOcclusion],
             GeneratorKind::ThinAreas => &[BakedMap::Thickness],
             GeneratorKind::Position | GeneratorKind::Direction => &[],
         }
@@ -1021,6 +1029,9 @@ pub struct Generator {
     /// Painted height read from an anchor point below, added as micro detail (None: baked maps only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub micro: Option<MicroDetail>,
+    /// The wear kinds' controls (None: the level, softness and noise above, as saved before they existed)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wear: Option<WearParameters>,
 }
 
 impl Generator {
@@ -1059,6 +1070,7 @@ impl Generator {
             resolution: OutputResolution::default(),
             inputs: BTreeMap::new(),
             micro: None,
+            wear: WearParameters::defaults(kind),
         }
     }
 
@@ -2276,6 +2288,18 @@ mod tests {
             assert_eq!(GeneratorKind::parse(kind.label()), Some(kind));
         }
         assert!(!GeneratorKind::ThinAreas.in_picker(), "Thin areas only loads from saved projects and smart masks");
+    }
+
+    #[test]
+    fn wear_generators_saved_before_their_wear_controls_load_on_the_earlier_model() {
+        let mut saved = serde_json::to_value(Generator::new(GeneratorKind::EdgeWear)).unwrap();
+        assert!(saved.get("wear").is_some(), "new wear generators have wear controls");
+
+        saved.as_object_mut().unwrap().remove("wear");
+        let loaded: Generator = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.wear, None, "level, softness and noise keep driving it");
+        let curvature = serde_json::to_value(Generator::new(GeneratorKind::Curvature)).unwrap();
+        assert!(curvature.get("wear").is_none(), "other kinds save no wear controls");
     }
 
     #[test]

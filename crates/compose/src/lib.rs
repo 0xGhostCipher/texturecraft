@@ -49,6 +49,9 @@ mod timber;
 pub mod warp;
 mod warp_source_sample;
 mod warp_texel;
+mod wear;
+mod wear_inputs;
+mod wear_scan;
 
 pub use below::{BelowCache, StackKey};
 pub use display::{DisplayKind, kinds_for, tile_bytes};

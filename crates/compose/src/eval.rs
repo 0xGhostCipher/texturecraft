@@ -16,7 +16,7 @@ use texturecraft_core::{
     CurvatureDetail, CurvatureMode, Effect, EffectKind, FLAT_CURVATURE, Fill, Filter, Filtering, Generator, GeneratorKind, HeightMask, HeightToNormal,
     HighpassSpace, ImageInput, Layer, LayerId, LayerKind, Mask, MaskBackground, MaskOutline, MicroDetail, Mirror, NormalFormat, PreparedColorMatch,
     PreparedGradient, Project, Projection, RepeatMode, Sampling, ShapeCrop, Source, SourceColorMode, SourceSlopeBlur, SourceWarp, StylizedShading,
-    TargetColorMode, TextureSet, TileGrid, TileTransform, WarpSourceMode, blend1, blend3, lum, mix3, per_unit, posterize, udim_at,
+    TargetColorMode, TextureSet, TileGrid, TileTransform, WarpSourceMode, WearParameters, blend1, blend3, lum, mix3, per_unit, posterize, udim_at,
 };
 use texturecraft_geom::glam::{Vec2, Vec3};
 use texturecraft_geom::{Mesh, NO_TRI, Surface, UvGBuffer};
@@ -40,6 +40,8 @@ use crate::shape_distance::distance_filter;
 use crate::slope_texel::slope_texel;
 use crate::store::{BakedMaps, ImageRes, ImageStore, PixelStore, decode};
 use crate::warp_texel::{Input, MIN_READ_WEIGHT, Sample, warp_texel};
+use crate::wear;
+use crate::wear_inputs::WearInputs;
 use draw_placement::DrawPlacement;
 use evaluation_inputs::EvaluationInputs;
 
@@ -2358,12 +2360,24 @@ fn prepare_curvature_sizes(inp: &Inputs, layers: &[LayerId]) {
     prepare_mask_curvature_sizes(inp, masks);
 }
 
+/// The blurred curvature sizes `generator` reads: its detail sizes and its wear's smoothing
+fn curvature_sizes_in_use(generator: &Generator) -> [bool; CurvatureDetail::BLURRED_SIZES] {
+    let detail = generator.detail.as_ref().map(CurvatureDetail::blurred_sizes_in_use).unwrap_or_default();
+    let wear = wear_parameters(generator).map(|wear| wear::levels_in_use(generator.kind, &wear)).unwrap_or_default();
+    std::array::from_fn(|level| detail[level] || wear[level])
+}
+
+/// The wear controls `generator` computes with: its own, Fiber Glass Edge Wear's defaults when it has none (it has no earlier model), else None
+fn wear_parameters(generator: &Generator) -> Option<WearParameters> {
+    generator.wear.or_else(|| WearParameters::defaults(generator.kind).filter(|_| generator.kind == GeneratorKind::FiberGlassEdgeWear))
+}
+
 /// Build the curvature detail sizes the visible generators of `masks` read, once, before tiles composite in parallel.
 fn prepare_mask_curvature_sizes<'a>(inp: &Inputs, masks: impl Iterator<Item = &'a Mask>) {
     let mut needed = [false; CurvatureDetail::BLURRED_SIZES];
     for effect in masks.flat_map(|mask| &mask.effects).filter(|effect| effect.visible) {
-        if let EffectKind::Generator(Generator { detail: Some(detail), .. }) = &effect.kind {
-            for (slot, in_use) in needed.iter_mut().zip(detail.blurred_sizes_in_use()) {
+        if let EffectKind::Generator(generator) = &effect.kind {
+            for (slot, in_use) in needed.iter_mut().zip(curvature_sizes_in_use(generator)) {
                 *slot |= in_use;
             }
         }
@@ -2406,7 +2420,7 @@ fn effect_plans<'a>(
                 None => (inp.pixels.masks.get(&effect.id), PaintTarget::Mask(effect.id)),
             };
             let curvature_sizes = match &effect.kind {
-                EffectKind::Generator(Generator { detail: Some(detail), .. }) => CurvatureSizes::of(inp, &detail.blurred_sizes_in_use()),
+                EffectKind::Generator(generator) => CurvatureSizes::of(inp, &curvature_sizes_in_use(generator)),
                 _ => None,
             };
             let (depth, covers_all, projection) = match &effect.kind {
@@ -3277,6 +3291,10 @@ impl<'a, 'b> Texel<'a, 'b> {
     }
 
     fn generator_ramp(&mut self, generator: &Generator, curvature_sizes: Option<&CurvatureSizes>) -> f32 {
+        if let Some(wear) = wear_parameters(generator) {
+            return self.wear_ramp(generator, &wear, curvature_sizes);
+        }
+
         let coords = self.coords();
         let micro = generator.micro.map_or(0.0, |micro| self.micro_detail(generator.kind, micro));
         let signal = match (generator.kind, &generator.detail) {
@@ -3286,7 +3304,9 @@ impl<'a, 'b> Texel<'a, 'b> {
                 let curvature = self.generator_input(generator, BakedMap::Curvature);
                 self.curvature_detail(detail, sizes, curvature, micro)
             }
-            (GeneratorKind::EdgeWear, None) => (self.generator_input(generator, BakedMap::Curvature).unwrap_or(0.5) - 0.5) * 2.0,
+            (GeneratorKind::EdgeWear, None) | (GeneratorKind::FiberGlassEdgeWear, _) => {
+                (self.generator_input(generator, BakedMap::Curvature).unwrap_or(0.5) - 0.5) * 2.0
+            }
             (GeneratorKind::Curvature, None) => self.generator_input(generator, BakedMap::Curvature).unwrap_or(0.5),
             (GeneratorKind::Dirt, _) => 1.0 - self.generator_input(generator, BakedMap::AmbientOcclusion).unwrap_or(1.0),
             (GeneratorKind::AmbientOcclusion, _) => self.generator_input(generator, BakedMap::AmbientOcclusion).unwrap_or(1.0),
@@ -3323,13 +3343,48 @@ impl<'a, 'b> Texel<'a, 'b> {
         let amount = if micro.amount.is_finite() { micro.amount.clamp(0.0, 1.0) } else { 0.0 };
         let response = height.clamp(-1.0, 1.0) * amount;
         match kind {
-            GeneratorKind::Curvature | GeneratorKind::EdgeWear => response,
+            GeneratorKind::Curvature | GeneratorKind::EdgeWear | GeneratorKind::FiberGlassEdgeWear => response,
 
             // Dirt gathers in dents; dents are occluded
             GeneratorKind::Dirt => -response,
             GeneratorKind::AmbientOcclusion => response,
             GeneratorKind::ThinAreas | GeneratorKind::Position | GeneratorKind::Direction => 0.0,
         }
+    }
+
+    /// A wear generator's value at this texel from its curvature, occlusion and grunge, before its global adjustments and invert
+    fn wear_ramp(&mut self, generator: &Generator, wear: &WearParameters, curvature_sizes: Option<&CurvatureSizes>) -> f32 {
+        let curvature = self.generator_input(generator, BakedMap::Curvature).map_or(0.0, |curvature| curvature - 0.5);
+
+        // Blurred levels are copies of the mesh map, so a replaced curvature input is read at its own size only
+        let sizes = if generator.inputs.contains_key(&BakedMap::Curvature) { None } else { curvature_sizes };
+        let blurred_curvature = self.blurred_curvature(wear::blur_sigma(generator.kind, wear), sizes, curvature);
+
+        let occlusion = self.generator_input(generator, BakedMap::AmbientOcclusion).unwrap_or(1.0);
+        let grunge = wear::grunge(generator.kind, wear, generator.seed, &self.coords());
+        wear::wear_value(generator.kind, wear, &WearInputs { curvature, blurred_curvature, occlusion, grunge })
+    }
+
+    /// The curvature deviation at this texel blurred to `sigma` (texels at 2K) between the two built levels around it; `curvature` without them
+    fn blurred_curvature(&self, sigma: f32, curvature_sizes: Option<&CurvatureSizes>, curvature: f32) -> f32 {
+        let Some((sizes, (baked_x, baked_y))) = curvature_sizes.zip(self.baked_curvature_texel()) else { return curvature };
+
+        let level = |index: usize| sizes.levels.get(index).and_then(Option::as_deref).map(|level| level.sample(baked_x, baked_y));
+        let (narrower, wider, weight) = wear::levels_around(sigma);
+        let narrower = narrower.map_or(Some(curvature), level);
+        match (narrower, level(wider)) {
+            (Some(narrower), Some(wider)) => narrower + (wider - narrower) * weight,
+            _ => curvature,
+        }
+    }
+
+    /// The baked curvature map's texel under this texel (None outside the baked layout)
+    fn baked_curvature_texel(&self) -> Option<(u32, u32)> {
+        let working_size = (self.res, self.inp.gbuf.height);
+        let texel_uv = [(self.x as f32 + 0.5) / working_size.0.max(1) as f32, (self.y as f32 + 0.5) / working_size.1.max(1) as f32];
+        let baked_uv = self.inp.block_scales.bake_uv(texel_uv, working_size)?;
+        let baked_size = (self.inp.baked.resolution, self.inp.baked.height(BakedMap::Curvature));
+        Some(((baked_uv[0] * baked_size.0 as f32) as u32, (baked_uv[1] * baked_size.1 as f32) as u32))
     }
 
     /// The generator's value at this texel: its ramp finished by balance, contrast, invert and offset (its blur and resolution need neighbours: see [`generator_region`]).
@@ -3362,13 +3417,8 @@ impl<'a, 'b> Texel<'a, 'b> {
 
         // Without baked curvature, only painted micro height supplies edges or cavities
         let Some(curvature) = curvature else { return combine(0.0, 0.0) };
+        let Some((baked_x, baked_y)) = self.baked_curvature_texel() else { return combine(0.0, 0.0) };
 
-        let working_size = (self.res, self.inp.gbuf.height);
-        let texel_uv = [(self.x as f32 + 0.5) / working_size.0.max(1) as f32, (self.y as f32 + 0.5) / working_size.1.max(1) as f32];
-        let Some(baked_uv) = self.inp.block_scales.bake_uv(texel_uv, working_size) else { return combine(0.0, 0.0) };
-
-        let baked_size = (self.inp.baked.resolution, self.inp.baked.height(BakedMap::Curvature));
-        let (baked_x, baked_y) = ((baked_uv[0] * baked_size.0 as f32) as u32, (baked_uv[1] * baked_size.1 as f32) as u32);
         let blurred = |index: usize| {
             curvature_sizes.and_then(|sizes| sizes.levels.get(index)).and_then(Option::as_deref).map_or(0.0, |level| level.sample(baked_x, baked_y))
         };
@@ -5656,7 +5706,7 @@ mod tests {
 
     /// An edge wear generator that marks exactly the curvature ridge (the map as baked, a hard step).
     fn ridge_generator() -> Generator {
-        Generator { level: 0.5, softness: 0.01, noise_amount: 0.0, detail: None, ..Generator::new(GeneratorKind::EdgeWear) }
+        Generator { level: 0.5, softness: 0.01, noise_amount: 0.0, detail: None, wear: None, ..Generator::new(GeneratorKind::EdgeWear) }
     }
 
     #[test]
@@ -5755,7 +5805,7 @@ mod tests {
         fixture.baked = BakedMaps { resolution: 64, maps: [(BakedMap::AmbientOcclusion, Arc::new(vec![1.0; 64 * 64]))].into() };
         let layer = fill_layer(&mut fixture.project, [1.0; 3], 1.0);
         let value_with = |fixture: &mut Fixture, input: Option<f32>| -> f32 {
-            let mut generator = Generator { level: 0.5, softness: 0.1, noise_amount: 0.0, ..Generator::new(GeneratorKind::Dirt) };
+            let mut generator = Generator { level: 0.5, softness: 0.1, noise_amount: 0.0, wear: None, ..Generator::new(GeneratorKind::Dirt) };
             if let Some(value) = input {
                 generator.inputs.insert(BakedMap::AmbientOcclusion, Source::Uniform([value; 3]));
             }
@@ -5796,7 +5846,7 @@ mod tests {
         for kind in [GeneratorKind::Curvature, GeneratorKind::EdgeWear] {
             for mode in CurvatureMode::ALL {
                 let detail = CurvatureDetail { mode, weights: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] };
-                let generator = Generator { level: 0.5, softness: 0.5, noise_amount: 2.0, detail: Some(detail), ..Generator::new(kind) };
+                let generator = Generator { level: 0.5, softness: 0.5, noise_amount: 2.0, detail: Some(detail), wear: None, ..Generator::new(kind) };
                 let mut mask = Mask::new(MaskBackground::Black);
                 mask.effects.push(Effect::new(fixture.project.alloc_id(), EffectKind::Generator(generator)));
                 fixture.project.layer_mut(layer).unwrap().mask = Some(mask);
