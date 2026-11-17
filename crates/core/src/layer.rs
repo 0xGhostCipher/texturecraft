@@ -1205,9 +1205,10 @@ impl Generator {
         }
     }
 
-    /// The controls of a kind with only its own controls: its saved ones when they are that kind's, else its defaults
+    /// The controls of a kind with only its own controls: its saved ones (brought into range) when they are that kind's, else its defaults
     pub fn kind_controls(&self) -> Option<KindControls> {
-        self.controls.as_deref().filter(|controls| controls.kind() == self.kind).cloned().or_else(|| KindControls::defaults(self.kind))
+        let saved = self.controls.as_deref().filter(|controls| controls.kind() == self.kind).cloned().map(KindControls::clamped);
+        saved.or_else(|| KindControls::defaults(self.kind))
     }
 
     /// The Grayscale Conversion controls as saved, without a copy
@@ -1241,7 +1242,7 @@ impl Generator {
         self.inputs.values().chain(self.texture.as_ref().and_then(|texture| texture.source.as_ref())).chain(self.grunge.as_ref()).chain(micro)
     }
 
-    /// The micro details the generator computes with: switched on with an image to read (an anchor's micro detail saved on the earlier model reads too)
+    /// The micro details as saved, when the generator computes with them: with a slot switched on, also on the earlier model where an anchor's micro detail saved before Micro Details reads (bring them into range before use: saved files are not trusted)
     pub fn micro_in_use(&self) -> Option<&MicroDetails> {
         self.micro.as_deref().filter(|micro| micro.in_use(self.kind))
     }
