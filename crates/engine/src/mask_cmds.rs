@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add generator",
             ["Layers", "Effects"],
             None,
-            "{layer?, name?, generator?: edgeWear|dirt|fiberGlassEdgeWear|thinAreas|curvature|ambientOcclusion|position|worldSpaceNormals|direction, wearLevel?, wearContrast?, grungeAmount?, grungeScale?: 1..16, triplanar?, triplanarContrast?, edgesSmoothness?: 0..16, aoMasking?, curvatureWeight?, edgesMasking? (wear controls: edgeWear, fiberGlassEdgeWear and dirt), sectionInvert?, sectionBlur?: 0..16 (ambientOcclusion, worldSpaceNormals), sectionBalance? (not curvature), sectionContrast?, sectionBrightness?: -1..1 (not ambientOcclusion), rightLeft|topBottom|frontBack + Invert?|Blend?: normal|add|subtract|multiply|addSub|max|Weight? (position, worldSpaceNormals), useTexture?, textureOpacity?, textureInvert?, textureGrayscale?: desaturation|luma|average|max|min|red|green|blue, textureBlend?: normal|add|subtract|multiply|addSub|max|min|overlay|screen|softLight, textureScale?: 0.01..10, textureContrast?: -1..1, textureBrightness?: -1..1, textureTriplanar?, textureTriplanarContrast? (the texture itself: effect.set input: texture) (section controls: curvature, ambientOcclusion, position, worldSpaceNormals), lightHorizontal?: 0..360, lightVertical?: 0..360, highlightGlossiness?, highlightLevel?, lightAttenuation? (light controls: direction), level?, softness?, noise?, noiseScale?, offset?: -1..1 added to the result, direction? (instead keep edgeWear, dirt, curvature, ambientOcclusion, position and direction on the earlier model), invert?, blur?: 0..1, balance?: 0..1 (0.5 unchanged), contrast?: 0..1, resolution?: auto|textureSet|uvTile|custom, customResolution?, resolutionFactor?: -3..3 (1/8..x8), mode?: edges|cavities|both|raw, sizes?: [7 weights 0..1, finest first] (curvature and edgeWear), microAnchor?: anchor effect id below, microAmount?: 0..1 (0.5)}",
+            "{layer?, name?, generator?: edgeWear|dirt|fiberGlassEdgeWear|thinAreas|curvature|ambientOcclusion|position|worldSpaceNormals|direction, wearLevel?, wearContrast?, grungeAmount?, grungeScale?: 1..16, triplanar?, triplanarContrast?, edgesSmoothness?: 0..16, aoMasking?, curvatureWeight?, edgesMasking?, useCustomGrunge? (the image: effect.set input: grunge) (wear controls: edgeWear, fiberGlassEdgeWear and dirt), sectionInvert?, sectionBlur?: 0..16 (ambientOcclusion, worldSpaceNormals), sectionBalance? (not curvature), sectionContrast?, sectionBrightness?: -1..1 (not ambientOcclusion), rightLeft|topBottom|frontBack + Invert?|Blend?: normal|add|subtract|multiply|addSub|max|Weight? (position, worldSpaceNormals), useTexture?, textureOpacity?, textureInvert?, textureGrayscale?: desaturation|luma|average|max|min|red|green|blue, textureBlend?: normal|add|subtract|multiply|addSub|max|min|overlay|screen|softLight, textureScale?: 0.01..10, textureContrast?: -1..1, textureBrightness?: -1..1, textureTriplanar?, textureTriplanarContrast? (the texture itself: effect.set input: texture) (section controls: curvature, ambientOcclusion, position, worldSpaceNormals), lightHorizontal?: 0..360, lightVertical?: 0..360, highlightGlossiness?, highlightLevel?, lightAttenuation? (light controls: direction), level?, softness?, noise?, noiseScale?, offset?: -1..1 added to the result, direction? (instead keep edgeWear, dirt, curvature, ambientOcclusion, position and direction on the earlier model), invert?, blur?: 0..1, balance?: 0..1 (0.5 unchanged), contrast?: 0..1, resolution?: auto|textureSet|uvTile|custom, customResolution?, resolutionFactor?: -3..3 (1/8..x8), mode?: edges|cavities|both|raw, sizes?: [7 weights 0..1, finest first] (curvature and edgeWear), microAnchor?: anchor effect id below, microAmount?: 0..1 (0.5)}",
             has_layer,
             add_generator
         ),
@@ -98,7 +98,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit effect",
             [],
             None,
-            "{effect, visible?, blend?, opacity?, channel?: the content channel blend and opacity set (default: every channel), name?, filter?: id from filter.list (a filter effect only: swaps its type, keeping position, blend and opacity; its current id edits it in place; \"none\" empties it), channels?: {channelId: bool} a content effect's channels on or off, divider?: 1|10|100|1000 (warp, slope blur: divides the intensity), generator?: kind (a generator effect only: swaps its kind in place, keeping the shared settings and the inputs it reads; its own controls start from that kind's defaults), wear, section and light controls (see effect.add.generator), level?, softness?, noise?, noiseScale?, offset?, invert?, blur?, balance?, contrast?, resolution?, customResolution?, resolutionFactor?, input?: mesh map id or texture + one of inputImage?, inputValue?, inputAnchor?, inputBaked?: true (a generator), mode?, sizes?, microAnchor?: id|null, microAmount?, value?, uniform?: 0..1 (a mask fill reads that value, whatever its source), procedural?: kind (a mask fill) with scale?, seed?, contrast?, balance?, invert?, resolution?, tile?, tileDefaults? (alone, they edit its pattern), image?: resource name (a fill's source), projection?: uv|triplanar|planar|spherical|cylindrical, scale?, rotation?, offset?, axis?, sharpness? (a fill effect's projection; while it reads a pattern, scale is the pattern's), anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, affects?, clamp? (levels), tolerance?, left?, op?, right?, compareChannel?, hardness? (compare; value is its constant), colors?: [[r,g,b] linear, ...] (a color selection's ID colors, may be empty), output?, background?: transparent | black | white | gray, idMap?: an image resource name read as the ID map, null for the texture set's ID mesh map (a color selection; tolerance and hardness too), filter parameters (see effect.add.filter)}",
+            "{effect, visible?, blend?, opacity?, channel?: the content channel blend and opacity set (default: every channel), name?, filter?: id from filter.list (a filter effect only: swaps its type, keeping position, blend and opacity; its current id edits it in place; \"none\" empties it), channels?: {channelId: bool} a content effect's channels on or off, divider?: 1|10|100|1000 (warp, slope blur: divides the intensity), generator?: kind (a generator effect only: swaps its kind in place, keeping the shared settings and the inputs it reads; its own controls start from that kind's defaults), wear, section and light controls (see effect.add.generator), level?, softness?, noise?, noiseScale?, offset?, invert?, blur?, balance?, contrast?, resolution?, customResolution?, resolutionFactor?, input?: mesh map id, texture or grunge + one of inputImage?, inputValue?, inputAnchor?, inputBaked?: true (a generator), mode?, sizes?, microAnchor?: id|null, microAmount?, value?, uniform?: 0..1 (a mask fill reads that value, whatever its source), procedural?: kind (a mask fill) with scale?, seed?, contrast?, balance?, invert?, resolution?, tile?, tileDefaults? (alone, they edit its pattern), image?: resource name (a fill's source), projection?: uv|triplanar|planar|spherical|cylindrical, scale?, rotation?, offset?, axis?, sharpness? (a fill effect's projection; while it reads a pattern, scale is the pattern's), anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, affects?, clamp? (levels), tolerance?, left?, op?, right?, compareChannel?, hardness? (compare; value is its constant), colors?: [[r,g,b] linear, ...] (a color selection's ID colors, may be empty), output?, background?: transparent | black | white | gray, idMap?: an image resource name read as the ID map, null for the texture set's ID mesh map (a color selection; tolerance and hardness too), filter parameters (see effect.add.filter)}",
             has_layer,
             set
         ),
@@ -395,7 +395,7 @@ const EARLIER_WEAR_KEYS: [&str; 7] = ["level", "softness", "noise", "noiseScale"
 const GLOBAL_KEYS: [&str; 3] = ["blur", "balance", "contrast"];
 
 /// The wear controls `effect.add.generator` and `effect.set` take
-const WEAR_KEYS: [&str; 10] = [
+const WEAR_KEYS: [&str; 11] = [
     "wearLevel",
     "wearContrast",
     "grungeAmount",
@@ -406,16 +406,21 @@ const WEAR_KEYS: [&str; 10] = [
     "aoMasking",
     "curvatureWeight",
     "edgesMasking",
+    "useCustomGrunge",
 ];
 
-/// The wear controls in `params`: they move a wear generator onto them, while level, softness, noise or offset keep it on the earlier model
+/// The input name of a wear generator's custom grunge image, beside the mesh map ids
+const GRUNGE_INPUT: &str = "grunge";
+
+/// The wear controls in `params` (a grunge input counts as one): they move a wear generator onto them, while level, softness, noise or offset keep it on the earlier model
 fn wear_from(command: &str, params: &Value, generator: &mut Generator) -> Result<()> {
     let given = |keys: &[&str]| keys.iter().any(|key| params.get(*key).is_some());
+    let wear_given = given(&WEAR_KEYS) || strp(params, "input") == Some(GRUNGE_INPUT);
     let Some(defaults) = WearParameters::defaults(generator.kind) else {
-        return if given(&WEAR_KEYS) { Err(bad(command, "only Metal Edge Wear, Fiber Glass Edge Wear and Dirt have wear controls")) } else { Ok(()) };
+        return if wear_given { Err(bad(command, "only Metal Edge Wear, Fiber Glass Edge Wear and Dirt have wear controls")) } else { Ok(()) };
     };
 
-    let earlier_model = given(&EARLIER_WEAR_KEYS) || (generator.wear.is_none() && !given(&WEAR_KEYS) && generator.kind != GeneratorKind::FiberGlassEdgeWear);
+    let earlier_model = given(&EARLIER_WEAR_KEYS) || (generator.wear.is_none() && !wear_given && generator.kind != GeneratorKind::FiberGlassEdgeWear);
     if given(&GLOBAL_KEYS) && !earlier_model {
         return Err(bad(command, format!("{} has no global blur, balance or contrast on its wear controls", generator.kind.label())));
     }
@@ -424,7 +429,7 @@ fn wear_from(command: &str, params: &Value, generator: &mut Generator) -> Result
     }
 
     if given(&EARLIER_WEAR_KEYS) {
-        if given(&WEAR_KEYS) {
+        if wear_given {
             return Err(bad(command, "level, softness, noise and offset drive the earlier wear model: give them or the wear controls, not both"));
         }
         if generator.kind == GeneratorKind::FiberGlassEdgeWear {
@@ -433,7 +438,7 @@ fn wear_from(command: &str, params: &Value, generator: &mut Generator) -> Result
         generator.wear = None;
         return Ok(());
     }
-    if !given(&WEAR_KEYS) {
+    if !wear_given {
         return Ok(());
     }
 
@@ -457,6 +462,9 @@ fn wear_from(command: &str, params: &Value, generator: &mut Generator) -> Result
     }
     if let Some(triplanar) = boolp(params, "triplanar") {
         wear.triplanar = triplanar;
+    }
+    if let Some(custom_grunge) = boolp(params, "useCustomGrunge") {
+        wear.custom_grunge = custom_grunge;
     }
     *wear = wear.clamped(generator.kind);
     Ok(())
@@ -633,7 +641,7 @@ fn texture_from(command: &str, params: &Value, generator: &mut Generator) -> Res
     if !TEXTURE_KEYS.iter().any(|key| params.get(*key).is_some()) {
         return Ok(());
     }
-    let mut texture = generator.texture.clone().unwrap_or_default();
+    let mut texture = generator.texture.as_deref().cloned().unwrap_or_default();
     if let Some(enabled) = boolp(params, "useTexture") {
         texture.enabled = enabled;
     }
@@ -662,7 +670,7 @@ fn texture_from(command: &str, params: &Value, generator: &mut Generator) -> Res
         let name = value.as_str().ok_or_else(|| bad(command, "`textureBlend` must be a string"))?;
         texture.blend = TextureBlend::parse(name).ok_or_else(|| bad(command, format!("unknown blending mode `{name}`")))?;
     }
-    generator.texture = Some(texture.clamped());
+    generator.texture = Some(Box::new(texture.clamped()));
     Ok(())
 }
 
@@ -803,20 +811,22 @@ fn micro_param(session: &Session, command: &str, reader: LayerId, params: &Value
     Ok(Some(Some(MicroDetail { anchor, amount })))
 }
 
-/// A generator input a command names: a mesh map it reads, or its texture
+/// A generator input a command names: a mesh map it reads, its texture or its custom grunge
 #[derive(Clone, Copy)]
 enum GeneratorInput {
     Map(BakedMap),
     Texture,
+    Grunge,
 }
 
-/// The generator input named by `input` and what replaces it (None: its mesh map again, or an empty texture slot), for a generator on layer `owner`
+/// The generator input named by `input` and what replaces it (None: its mesh map again, or an empty texture or grunge slot), for a generator on layer `owner`
 fn generator_input_param(session: &Session, owner: LayerId, params: &Value) -> Result<Option<(GeneratorInput, Option<Source>)>> {
     const CMD: &str = "effect.set";
     let Some(name) = params.get("input") else { return Ok(None) };
-    let name = name.as_str().ok_or_else(|| bad(CMD, "`input` must be a mesh map id or `texture`"))?;
+    let name = name.as_str().ok_or_else(|| bad(CMD, "`input` must be a mesh map id, `texture` or `grunge`"))?;
     let input = match name {
         TEXTURE_INPUT => GeneratorInput::Texture,
+        GRUNGE_INPUT => GeneratorInput::Grunge,
         _ => GeneratorInput::Map(BakedMap::parse(name).ok_or_else(|| bad(CMD, format!("unknown input `{name}`")))?),
     };
 
@@ -1149,6 +1159,8 @@ fn set(session: &mut Session, params: &Value) -> Result<Value> {
                     }
                     // generator_from refused the texture on kinds without one and moved the generator onto its section controls
                     Some((GeneratorInput::Texture, source)) => generator.texture.get_or_insert_default().source = source,
+                    // generator_from refused the grunge on kinds without wear controls and moved the generator onto them
+                    Some((GeneratorInput::Grunge, source)) => generator.grunge = source,
                     None => {}
                 }
             }
@@ -1281,6 +1293,7 @@ fn swapped_kind(current: &Generator, kind: GeneratorKind) -> Generator {
         global: current.global,
         resolution: current.resolution,
         inputs,
+        grunge: current.grunge.clone().filter(|_| WearParameters::defaults(kind).is_some()),
         ..Generator::new(kind)
     }
 }

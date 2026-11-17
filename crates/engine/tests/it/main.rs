@@ -35,6 +35,7 @@ mod filter_transform;
 mod filters;
 mod folder_contents;
 mod frame_selection;
+mod generator_custom_grunge;
 mod generator_inputs;
 mod generator_sections;
 mod generator_swap;
