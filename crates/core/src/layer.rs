@@ -21,6 +21,7 @@ mod curvature_mode;
 mod decal_flip;
 mod decal_symmetry;
 mod distance_parameters;
+mod dripping_rust_parameters;
 mod filtering;
 mod generator_global;
 mod generator_grayscale;
@@ -56,6 +57,7 @@ pub use curvature_mode::CurvatureMode;
 pub use decal_flip::DecalFlip;
 pub use decal_symmetry::DecalSymmetry;
 pub use distance_parameters::DistanceParameters;
+pub use dripping_rust_parameters::DrippingRustParameters;
 pub use filtering::Filtering;
 pub use generator_global::GeneratorGlobal;
 pub use generator_grayscale::GeneratorGrayscale;
@@ -968,10 +970,12 @@ pub enum GeneratorKind {
     UvBorderDistance,
     /// An image turned gray, tiled and rotated across the UV square
     GrayscaleConversion,
+    /// Rust in the occluded areas, running down the mesh in drips
+    DrippingRust,
 }
 
 impl GeneratorKind {
-    pub const ALL: [GeneratorKind; 13] = [
+    pub const ALL: [GeneratorKind; 14] = [
         GeneratorKind::EdgeWear,
         GeneratorKind::Dirt,
         GeneratorKind::ThinAreas,
@@ -985,6 +989,7 @@ impl GeneratorKind {
         GeneratorKind::ThreeDLinearGradient,
         GeneratorKind::UvBorderDistance,
         GeneratorKind::GrayscaleConversion,
+        GeneratorKind::DrippingRust,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -1001,6 +1006,7 @@ impl GeneratorKind {
             GeneratorKind::ThreeDLinearGradient => "3D Linear Gradient",
             GeneratorKind::UvBorderDistance => "UV Border Distance",
             GeneratorKind::GrayscaleConversion => "Grayscale Conversion",
+            GeneratorKind::DrippingRust => "Dripping Rust",
         }
     }
 
@@ -1020,6 +1026,7 @@ impl GeneratorKind {
             GeneratorKind::ThreeDLinearGradient => "ThreeDLinearGradient",
             GeneratorKind::UvBorderDistance => "UvBorderDistance",
             GeneratorKind::GrayscaleConversion => "GrayscaleConversion",
+            GeneratorKind::DrippingRust => "DrippingRust",
         }
     }
 
@@ -1032,12 +1039,13 @@ impl GeneratorKind {
                 | GeneratorKind::ThreeDLinearGradient
                 | GeneratorKind::UvBorderDistance
                 | GeneratorKind::GrayscaleConversion
+                | GeneratorKind::DrippingRust
         )
     }
 
     /// Whether the kind's result depends on its seed
     pub fn includes_randomness(self) -> bool {
-        matches!(self, GeneratorKind::EdgeWear | GeneratorKind::Dirt | GeneratorKind::FiberGlassEdgeWear)
+        matches!(self, GeneratorKind::EdgeWear | GeneratorKind::Dirt | GeneratorKind::FiberGlassEdgeWear | GeneratorKind::DrippingRust)
     }
 
     /// The mesh maps this kind reads, each an input that an image, a uniform value or an anchor can replace.
@@ -1050,7 +1058,8 @@ impl GeneratorKind {
             GeneratorKind::Position | GeneratorKind::ThreeDDistance | GeneratorKind::ThreeDLinearGradient => &[BakedMap::Position],
             GeneratorKind::WorldSpaceNormals => &[BakedMap::WorldNormal],
             GeneratorKind::Direction => &[BakedMap::WorldNormal, BakedMap::Position],
-            GeneratorKind::UvBorderDistance | GeneratorKind::GrayscaleConversion => &[],
+            // Dripping Rust reads the baked occlusion and the mesh's bounds whole, so no input replaces them yet
+            GeneratorKind::UvBorderDistance | GeneratorKind::GrayscaleConversion | GeneratorKind::DrippingRust => &[],
         }
     }
 
@@ -1063,6 +1072,7 @@ impl GeneratorKind {
                 | GeneratorKind::ThreeDLinearGradient
                 | GeneratorKind::UvBorderDistance
                 | GeneratorKind::GrayscaleConversion
+                | GeneratorKind::DrippingRust
         )
     }
 

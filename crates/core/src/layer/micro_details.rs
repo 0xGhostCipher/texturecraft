@@ -77,7 +77,8 @@ impl MicroDetails {
             | GeneratorKind::ThreeDDistance
             | GeneratorKind::ThreeDLinearGradient
             | GeneratorKind::UvBorderDistance
-            | GeneratorKind::GrayscaleConversion => None,
+            | GeneratorKind::GrayscaleConversion
+            | GeneratorKind::DrippingRust => None,
         }
     }
 

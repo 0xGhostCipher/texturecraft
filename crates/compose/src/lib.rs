@@ -14,6 +14,7 @@ mod curvature_size_level;
 pub mod curvature_sizes;
 pub mod display;
 mod distance_envelope;
+mod dripping_rust;
 mod effect_histogram;
 pub mod environment_sh;
 pub mod environment_sky;
@@ -59,6 +60,7 @@ mod warp_texel;
 mod wear;
 mod wear_inputs;
 mod wear_scan;
+mod working_field;
 
 pub use below::{BelowCache, StackKey};
 pub use display::{DisplayKind, kinds_for, tile_bytes};

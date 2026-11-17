@@ -26,6 +26,7 @@ use texturecraft_texel::{DilationMap, TILE, TILE_AREA, TileImage, from_u16, nois
 use crate::ProjectorDepthCache;
 use crate::below::{Band, BelowCache, Level, StackKey};
 use crate::curvature_sizes::{CurvatureSizes, LEVEL_RADII};
+use crate::dripping_rust;
 use crate::effect_histogram::EffectHistogram;
 use crate::environment_sh::EnvironmentSh;
 use crate::fill_copies::FillCopies;
@@ -1950,6 +1951,26 @@ fn filter_region(
     Some(Field { x0: region_x, y0: region_y, w: width, h: height, comps: field_components, data: result, anchor_stages: Vec::new() })
 }
 
+/// Where working texel (`x`, `y`) of `inp` is, for pattern evaluation (as [`Texel::coords`] sees it outside a fill copy)
+pub(crate) fn texel_coords(inp: &Inputs, x: u32, y: u32) -> Coords {
+    let g = inp.gbuf;
+    let mut c = match g.surface(inp.mesh, (y * g.width + x) as usize) {
+        Some(s) => {
+            let (center, radius) = mesh_frame(inp.bounds);
+            Coords { uv: s.uv, pos: (s.pos - center) / radius, nrm: s.nrm }
+        }
+        None => Coords { uv: Vec2::new((x as f32 + 0.5) / g.width as f32, (y as f32 + 0.5) / g.height as f32), pos: Vec3::ZERO, nrm: Vec3::Y },
+    };
+
+    // UV-tiled sets: projections see the mesh's own UVs (patterns repeat per tile)
+    if let Ok(set) = inp.project.texture_set(inp.ts)
+        && let Some(grid) = set.tile_grid()
+    {
+        c.uv = Vec2::from(set.from_atlas(&grid, c.uv.to_array()));
+    }
+    c
+}
+
 /// What a generator's texture or custom grunge reads with nothing in its slot
 const EMPTY_IMAGE_SLOT: Source = Source::Uniform([0.0; 3]);
 
@@ -2481,7 +2502,8 @@ fn prepare_mask_curvature_sizes<'a>(inp: &Inputs, masks: impl Iterator<Item = &'
     for effect in masks.flat_map(|mask| &mask.effects).filter(|effect| effect.visible) {
         if let EffectKind::Generator(generator) = &effect.kind {
             // Micro details blur a curvature map of their own; a border gradient is built once, not by every tile at the same time
-            if generator.micro_in_use().is_some() || generator.border_distance_controls().is_some() {
+            let whole_map = matches!(generator.kind_controls(), Some(KindControls::BorderDistance(_) | KindControls::DrippingRust(_)));
+            if generator.micro_in_use().is_some() || whole_map {
                 GeneratorMaps::of(inp, generator, &curvature_sizes_in_use(generator));
                 continue;
             }
@@ -3436,6 +3458,11 @@ impl<'a, 'b> Texel<'a, 'b> {
                 return uv_border_distance::border_value(border, gradient);
             }
             Some(KindControls::Grayscale(grayscale)) => return self.grayscale_conversion(grayscale),
+            Some(KindControls::DrippingRust(rust)) => {
+                let texel = (self.y * self.inp.gbuf.width + self.x) as usize;
+                let field = maps.rust_field.as_ref().and_then(|field| field.get(texel)).copied().unwrap_or(0.0);
+                return dripping_rust::rust_value(rust, field);
+            }
             None => {}
         }
 
@@ -3458,9 +3485,14 @@ impl<'a, 'b> Texel<'a, 'b> {
             (GeneratorKind::Direction, _) => coords.nrm.dot(Vec3::from(generator.direction).try_normalize().unwrap_or(Vec3::Y)) * 0.5 + 0.5,
             // World Space Normals and 3D Distance always compute with their own controls: these arms only keep the match whole
             (GeneratorKind::WorldSpaceNormals, _) => coords.nrm.y * 0.5 + 0.5,
-            (GeneratorKind::ThreeDDistance | GeneratorKind::ThreeDLinearGradient | GeneratorKind::UvBorderDistance | GeneratorKind::GrayscaleConversion, _) => {
-                0.0
-            }
+            (
+                GeneratorKind::ThreeDDistance
+                | GeneratorKind::ThreeDLinearGradient
+                | GeneratorKind::UvBorderDistance
+                | GeneratorKind::GrayscaleConversion
+                | GeneratorKind::DrippingRust,
+                _,
+            ) => 0.0,
         };
         let signal = if generator.noise_amount > 0.0 {
             let noise = world_noise(coords.pos, generator.noise_scale, generator.seed);
@@ -3509,7 +3541,8 @@ impl<'a, 'b> Texel<'a, 'b> {
             | GeneratorKind::ThreeDDistance
             | GeneratorKind::ThreeDLinearGradient
             | GeneratorKind::UvBorderDistance
-            | GeneratorKind::GrayscaleConversion => 0.0,
+            | GeneratorKind::GrayscaleConversion
+            | GeneratorKind::DrippingRust => 0.0,
         }
     }
 
