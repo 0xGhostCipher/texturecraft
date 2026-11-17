@@ -44,6 +44,7 @@ use crate::slope_texel::slope_texel;
 use crate::store::{BakedMaps, ImageRes, ImageStore, PixelStore, decode};
 use crate::texture_layer;
 use crate::three_d_distance;
+use crate::uv_border_distance;
 use crate::warp_texel::{Input, MIN_READ_WEIGHT, Sample, warp_texel};
 use crate::wear;
 use crate::wear_inputs::WearInputs;
@@ -3411,6 +3412,11 @@ impl<'a, 'b> Texel<'a, 'b> {
             let position = self.uniform_position_input(generator);
             return three_d_distance::distance_value(&distance, position);
         }
+        if let Some(border) = generator.border_distance_controls() {
+            let texel = (self.y * self.inp.gbuf.width + self.x) as usize;
+            let gradient = maps.border_gradient.as_ref().and_then(|gradient| gradient.get(texel)).copied().unwrap_or(0.0);
+            return uv_border_distance::border_value(&border, gradient);
+        }
         if let Some(gradient) = generator.linear_gradient_controls() {
             let position = self.uniform_position_input(generator);
             return three_d_distance::linear_gradient_value(&gradient, position);
@@ -3435,7 +3441,7 @@ impl<'a, 'b> Texel<'a, 'b> {
             (GeneratorKind::Direction, _) => coords.nrm.dot(Vec3::from(generator.direction).try_normalize().unwrap_or(Vec3::Y)) * 0.5 + 0.5,
             // World Space Normals and 3D Distance always compute with their own controls: these arms only keep the match whole
             (GeneratorKind::WorldSpaceNormals, _) => coords.nrm.y * 0.5 + 0.5,
-            (GeneratorKind::ThreeDDistance | GeneratorKind::ThreeDLinearGradient, _) => 0.0,
+            (GeneratorKind::ThreeDDistance | GeneratorKind::ThreeDLinearGradient | GeneratorKind::UvBorderDistance, _) => 0.0,
         };
         let signal = if generator.noise_amount > 0.0 {
             let noise = world_noise(coords.pos, generator.noise_scale, generator.seed);
@@ -3482,7 +3488,8 @@ impl<'a, 'b> Texel<'a, 'b> {
             | GeneratorKind::Direction
             | GeneratorKind::FiberGlassEdgeWear
             | GeneratorKind::ThreeDDistance
-            | GeneratorKind::ThreeDLinearGradient => 0.0,
+            | GeneratorKind::ThreeDLinearGradient
+            | GeneratorKind::UvBorderDistance => 0.0,
         }
     }
 
