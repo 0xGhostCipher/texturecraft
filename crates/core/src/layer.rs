@@ -44,6 +44,7 @@ mod tile_input_distribution;
 mod tile_shape;
 mod tile_size_mode;
 mod tile_symmetry;
+mod uv_checker_parameters;
 mod uv_random_color_parameters;
 mod uv_transform;
 mod uv_wrap;
@@ -81,6 +82,7 @@ pub use tile_input_distribution::TileInputDistribution;
 pub use tile_shape::TileShape;
 pub use tile_size_mode::TileSizeMode;
 pub use tile_symmetry::TileSymmetry;
+pub use uv_checker_parameters::UvCheckerParameters;
 pub use uv_random_color_parameters::UvRandomColorParameters;
 pub use uv_transform::UvTransform;
 pub use uv_wrap::UvWrap;
@@ -976,10 +978,12 @@ pub enum GeneratorKind {
     DrippingRust,
     /// One random value per UV island
     UvRandomColor,
+    /// A checker and grid over each UV tile with the UV islands' borders drawn in, for checking a layout
+    UvChecker,
 }
 
 impl GeneratorKind {
-    pub const ALL: [GeneratorKind; 15] = [
+    pub const ALL: [GeneratorKind; 16] = [
         GeneratorKind::EdgeWear,
         GeneratorKind::Dirt,
         GeneratorKind::ThinAreas,
@@ -995,6 +999,7 @@ impl GeneratorKind {
         GeneratorKind::GrayscaleConversion,
         GeneratorKind::DrippingRust,
         GeneratorKind::UvRandomColor,
+        GeneratorKind::UvChecker,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -1013,6 +1018,7 @@ impl GeneratorKind {
             GeneratorKind::GrayscaleConversion => "Grayscale Conversion",
             GeneratorKind::DrippingRust => "Dripping Rust",
             GeneratorKind::UvRandomColor => "UV Random Color",
+            GeneratorKind::UvChecker => "UV Checker",
         }
     }
 
@@ -1034,6 +1040,7 @@ impl GeneratorKind {
             GeneratorKind::GrayscaleConversion => "GrayscaleConversion",
             GeneratorKind::DrippingRust => "DrippingRust",
             GeneratorKind::UvRandomColor => "UvRandomColor",
+            GeneratorKind::UvChecker => "UvChecker",
         }
     }
 
@@ -1048,6 +1055,7 @@ impl GeneratorKind {
                 | GeneratorKind::GrayscaleConversion
                 | GeneratorKind::DrippingRust
                 | GeneratorKind::UvRandomColor
+                | GeneratorKind::UvChecker
         )
     }
 
@@ -1055,7 +1063,12 @@ impl GeneratorKind {
     pub fn includes_randomness(self) -> bool {
         matches!(
             self,
-            GeneratorKind::EdgeWear | GeneratorKind::Dirt | GeneratorKind::FiberGlassEdgeWear | GeneratorKind::DrippingRust | GeneratorKind::UvRandomColor
+            GeneratorKind::EdgeWear
+                | GeneratorKind::Dirt
+                | GeneratorKind::FiberGlassEdgeWear
+                | GeneratorKind::DrippingRust
+                | GeneratorKind::UvRandomColor
+                | GeneratorKind::UvChecker
         )
     }
 
@@ -1070,7 +1083,11 @@ impl GeneratorKind {
             GeneratorKind::WorldSpaceNormals => &[BakedMap::WorldNormal],
             GeneratorKind::Direction => &[BakedMap::WorldNormal, BakedMap::Position],
             // Dripping Rust reads the baked occlusion and the mesh's bounds whole, so no input replaces them yet
-            GeneratorKind::UvBorderDistance | GeneratorKind::GrayscaleConversion | GeneratorKind::DrippingRust | GeneratorKind::UvRandomColor => &[],
+            GeneratorKind::UvBorderDistance
+            | GeneratorKind::GrayscaleConversion
+            | GeneratorKind::DrippingRust
+            | GeneratorKind::UvRandomColor
+            | GeneratorKind::UvChecker => &[],
         }
     }
 
@@ -1085,6 +1102,7 @@ impl GeneratorKind {
                 | GeneratorKind::GrayscaleConversion
                 | GeneratorKind::DrippingRust
                 | GeneratorKind::UvRandomColor
+                | GeneratorKind::UvChecker
         )
     }
 
