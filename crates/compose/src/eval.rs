@@ -43,6 +43,7 @@ use crate::shape_distance::distance_filter;
 use crate::slope_texel::slope_texel;
 use crate::store::{BakedMaps, ImageRes, ImageStore, PixelStore, decode};
 use crate::texture_layer;
+use crate::three_d_distance;
 use crate::warp_texel::{Input, MIN_READ_WEIGHT, Sample, warp_texel};
 use crate::wear;
 use crate::wear_inputs::WearInputs;
@@ -3406,6 +3407,10 @@ impl<'a, 'b> Texel<'a, 'b> {
         if let Some(section) = generator.section_controls() {
             return self.section_signal(generator, &section, maps);
         }
+        if let Some(distance) = generator.distance_controls() {
+            let position = self.uniform_position_input(generator);
+            return three_d_distance::distance_value(&distance, position);
+        }
 
         let coords = self.coords();
 
@@ -3424,8 +3429,9 @@ impl<'a, 'b> Texel<'a, 'b> {
             (GeneratorKind::ThinAreas, _) => 1.0 - self.generator_input(generator, BakedMap::Thickness).unwrap_or(1.0),
             (GeneratorKind::Position, _) => coords.pos.dot(Vec3::from(generator.direction).try_normalize().unwrap_or(Vec3::Y)) * 0.5 + 0.5,
             (GeneratorKind::Direction, _) => coords.nrm.dot(Vec3::from(generator.direction).try_normalize().unwrap_or(Vec3::Y)) * 0.5 + 0.5,
-            // World Space Normals always computes with its section controls: this arm only keeps the match whole
+            // World Space Normals and 3D Distance always compute with their own controls: these arms only keep the match whole
             (GeneratorKind::WorldSpaceNormals, _) => coords.nrm.y * 0.5 + 0.5,
+            (GeneratorKind::ThreeDDistance, _) => 0.0,
         };
         let signal = if generator.noise_amount > 0.0 {
             let noise = world_noise(coords.pos, generator.noise_scale, generator.seed);
@@ -3466,7 +3472,12 @@ impl<'a, 'b> Texel<'a, 'b> {
                 sections::axes_signal(normal, &section.axes)
             }
             // Only the kinds with section controls reach here: this arm only keeps the match whole
-            GeneratorKind::EdgeWear | GeneratorKind::Dirt | GeneratorKind::ThinAreas | GeneratorKind::Direction | GeneratorKind::FiberGlassEdgeWear => 0.0,
+            GeneratorKind::EdgeWear
+            | GeneratorKind::Dirt
+            | GeneratorKind::ThinAreas
+            | GeneratorKind::Direction
+            | GeneratorKind::FiberGlassEdgeWear
+            | GeneratorKind::ThreeDDistance => 0.0,
         }
     }
 
@@ -3476,6 +3487,16 @@ impl<'a, 'b> Texel<'a, 'b> {
             Some(source) => self.source(source, &Projection::default(), Sampling::default(), ChannelKind::NormalMap),
             None => self.bounds_position().to_array(),
         }
+    }
+
+    /// The image in `generator`'s Position input, else this texel's position across the mesh's bounds scaled evenly: the longest side spans 0..1, the others centred on 0.5
+    fn uniform_position_input(&mut self, generator: &Generator) -> Vec3 {
+        if let Some(source) = generator.inputs.get(&BakedMap::Position) {
+            return Vec3::from(self.source(source, &Projection::default(), Sampling::default(), ChannelKind::NormalMap));
+        }
+        let (low, high) = self.inp.bounds;
+        let longest = (high - low).max_element().max(MIN_BOUNDS_EXTENT);
+        self.world().map_or(Vec3::splat(0.5), |position| (position - (low + high) * 0.5) / longest + Vec3::splat(0.5))
     }
 
     /// This texel's world position across the mesh's bounds, 0..1 on each axis (0 where uncovered)
