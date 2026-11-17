@@ -940,14 +940,37 @@ impl GeneratorKind {
     ];
     pub fn label(self) -> &'static str {
         match self {
-            GeneratorKind::EdgeWear => "Mask Editor: Edge wear",
+            GeneratorKind::EdgeWear => "Metal Edge Wear",
             GeneratorKind::Dirt => "Dirt",
             GeneratorKind::ThinAreas => "Thin areas",
             GeneratorKind::Curvature => "Curvature",
-            GeneratorKind::AmbientOcclusion => "Ambient occlusion",
-            GeneratorKind::Position => "Position gradient",
-            GeneratorKind::Direction => "Light / direction",
+            GeneratorKind::AmbientOcclusion => "Ambient Occlusion",
+            GeneratorKind::Position => "Position",
+            GeneratorKind::Direction => "Light",
         }
+    }
+
+    /// The name commands and saved projects use for this kind
+    pub fn id(self) -> &'static str {
+        match self {
+            GeneratorKind::EdgeWear => "EdgeWear",
+            GeneratorKind::Dirt => "Dirt",
+            GeneratorKind::ThinAreas => "ThinAreas",
+            GeneratorKind::Curvature => "Curvature",
+            GeneratorKind::AmbientOcclusion => "AmbientOcclusion",
+            GeneratorKind::Position => "Position",
+            GeneratorKind::Direction => "Direction",
+        }
+    }
+
+    /// Whether the generator picker offers this kind (Thin areas only loads from saved projects and smart masks)
+    pub fn in_picker(self) -> bool {
+        self != GeneratorKind::ThinAreas
+    }
+
+    /// Whether the kind's result depends on its seed
+    pub fn includes_randomness(self) -> bool {
+        matches!(self, GeneratorKind::EdgeWear | GeneratorKind::Dirt)
     }
 
     /// The mesh maps this kind reads, each an input that an image, a uniform value or an anchor can replace.
@@ -962,7 +985,7 @@ impl GeneratorKind {
 
     pub fn parse(s: &str) -> Option<GeneratorKind> {
         let norm = |x: &str| x.to_ascii_lowercase().replace([' ', '_', '-', ':'], "");
-        GeneratorKind::ALL.into_iter().find(|k| norm(&format!("{k:?}")) == norm(s) || norm(k.label()) == norm(s))
+        GeneratorKind::ALL.into_iter().find(|k| norm(k.id()) == norm(s) || norm(k.label()) == norm(s))
     }
 }
 
@@ -2243,6 +2266,16 @@ mod tests {
         let not_finite = TileGenerator { scale: f32::NAN, rotation: f32::INFINITY, ..TileGenerator::default() }.clamped();
 
         assert_eq!((not_finite.scale, not_finite.rotation), (1.0, 0.0));
+    }
+
+    #[test]
+    fn generator_ids_are_the_saved_names_and_parse_back() {
+        for kind in GeneratorKind::ALL {
+            assert_eq!(serde_json::to_value(kind).unwrap(), serde_json::json!(kind.id()));
+            assert_eq!(GeneratorKind::parse(kind.id()), Some(kind));
+            assert_eq!(GeneratorKind::parse(kind.label()), Some(kind));
+        }
+        assert!(!GeneratorKind::ThinAreas.in_picker(), "Thin areas only loads from saved projects and smart masks");
     }
 
     #[test]

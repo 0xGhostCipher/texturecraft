@@ -22,14 +22,7 @@ const INPUT_TILE_ICON_SIZE: f32 = 16.0;
 /// The settings of generator effect `id`.
 pub(crate) fn generator_properties(app: &mut TextureCraftApp, ui: &mut Ui, layer: LayerId, id: u64, generator: &Generator) {
     let tokens = Tokens::get(ui.ctx());
-    ui.label(caption(tr("Generator")));
-    egui::ComboBox::from_id_salt("gen_kind").selected_text(tr(generator.kind.label())).show_ui(ui, |ui| {
-        for kind in GeneratorKind::ALL {
-            if ui.selectable_label(kind == generator.kind, tr(kind.label())).clicked() && kind != generator.kind {
-                app.run("effect.set", json!({"effect": id, "generator": format!("{kind:?}")}));
-            }
-        }
-    });
+    crate::generator_slot::show(app, ui, id, generator);
 
     section(ui, "generator_attributes", tr("Attributes"), false, |ui| attributes(ui, generator.kind));
     section(ui, "generator_resolution", tr("Resolution"), false, |ui| resolution(app, ui, id, generator.resolution));

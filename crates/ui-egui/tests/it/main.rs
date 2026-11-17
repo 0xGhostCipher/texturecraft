@@ -39,6 +39,7 @@ mod filter_picker;
 mod folder_properties;
 mod frame_selection;
 mod generator_panel;
+mod generator_picker;
 mod help_menu_664;
 mod history_panel;
 mod import_resources;

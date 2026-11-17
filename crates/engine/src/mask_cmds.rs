@@ -98,7 +98,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit effect",
             [],
             None,
-            "{effect, visible?, blend?, opacity?, channel?: the content channel blend and opacity set (default: every channel), name?, filter?: id from filter.list (a filter effect only: swaps its type, keeping position, blend and opacity; its current id edits it in place; \"none\" empties it), channels?: {channelId: bool} a content effect's channels on or off, divider?: 1|10|100|1000 (warp, slope blur: divides the intensity), generator?: kind (a generator effect only: changes kind in place), level?, softness?, noise?, noiseScale?, offset?, invert?, blur?, balance?, contrast?, resolution?, customResolution?, resolutionFactor?, input?: mesh map id + one of inputImage?, inputValue?, inputAnchor?, inputBaked?: true (a generator), mode?, sizes?, microAnchor?: id|null, microAmount?, value?, uniform?: 0..1 (a mask fill reads that value, whatever its source), procedural?: kind (a mask fill) with scale?, seed?, contrast?, balance?, invert?, resolution?, tile?, tileDefaults? (alone, they edit its pattern), image?: resource name (a fill's source), projection?: uv|triplanar|planar|spherical|cylindrical, scale?, rotation?, offset?, axis?, sharpness? (a fill effect's projection; while it reads a pattern, scale is the pattern's), anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, affects?, clamp? (levels), tolerance?, left?, op?, right?, compareChannel?, hardness? (compare; value is its constant), colors?: [[r,g,b] linear, ...] (a color selection's ID colors, may be empty), output?, background?: transparent | black | white | gray, idMap?: an image resource name read as the ID map, null for the texture set's ID mesh map (a color selection; tolerance and hardness too), filter parameters (see effect.add.filter)}",
+            "{effect, visible?, blend?, opacity?, channel?: the content channel blend and opacity set (default: every channel), name?, filter?: id from filter.list (a filter effect only: swaps its type, keeping position, blend and opacity; its current id edits it in place; \"none\" empties it), channels?: {channelId: bool} a content effect's channels on or off, divider?: 1|10|100|1000 (warp, slope blur: divides the intensity), generator?: kind (a generator effect only: swaps its kind in place, starting from that kind's defaults), level?, softness?, noise?, noiseScale?, offset?, invert?, blur?, balance?, contrast?, resolution?, customResolution?, resolutionFactor?, input?: mesh map id + one of inputImage?, inputValue?, inputAnchor?, inputBaked?: true (a generator), mode?, sizes?, microAnchor?: id|null, microAmount?, value?, uniform?: 0..1 (a mask fill reads that value, whatever its source), procedural?: kind (a mask fill) with scale?, seed?, contrast?, balance?, invert?, resolution?, tile?, tileDefaults? (alone, they edit its pattern), image?: resource name (a fill's source), projection?: uv|triplanar|planar|spherical|cylindrical, scale?, rotation?, offset?, axis?, sharpness? (a fill effect's projection; while it reads a pattern, scale is the pattern's), anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, affects?, clamp? (levels), tolerance?, left?, op?, right?, compareChannel?, hardness? (compare; value is its constant), colors?: [[r,g,b] linear, ...] (a color selection's ID colors, may be empty), output?, background?: transparent | black | white | gray, idMap?: an image resource name read as the ID map, null for the texture set's ID mesh map (a color selection; tolerance and hardness too), filter parameters (see effect.add.filter)}",
             has_layer,
             set
         ),
@@ -785,10 +785,17 @@ fn set(session: &mut Session, params: &Value) -> Result<Value> {
     };
     let swaps_filter = swapped.is_some();
     let id_map = crate::color_selection_cmds::id_map_param(session, params)?;
+    let swapped_generator = match strp(params, "generator") {
+        Some(kind) => swapped_generator_kind(session, effect, kind)?,
+        None => None,
+    };
 
     let mesh = session.mesh.clone();
     session.edit("Edit effect", |session| {
         let edited = session.doc.project.effect_mut(effect).ok_or_else(|| bad(CMD, format!("no effect {}", effect.0)))?;
+        if let Some(generator) = swapped_generator {
+            edited.kind = EffectKind::Generator(generator);
+        }
         if let Some((kind, label)) = swapped {
             if let EffectKind::Filter(old) = &edited.kind
                 && (edited.name == old.label() || Some(edited.name.as_str()) == old.former_label())
@@ -936,6 +943,37 @@ fn current_filter_id(s: &Session, effect: LayerId) -> Option<&'static str> {
     match &s.doc.project.effect(effect)?.1.kind {
         EffectKind::Filter(filter) => crate::filter_lib::definition(filter).map(|def| def.id),
         _ => None,
+    }
+}
+
+/// A generator of kind `name` at its defaults to replace generator effect `effect`, or None when it is that kind already
+fn swapped_generator_kind(s: &Session, effect: LayerId, name: &str) -> Result<Option<Generator>> {
+    const CMD: &str = "effect.set";
+    let kind = GeneratorKind::parse(name).ok_or_else(|| bad(CMD, format!("unknown generator `{name}`")))?;
+    match &s.doc.project.effect(effect).ok_or_else(|| bad(CMD, format!("no effect {}", effect.0)))?.1.kind {
+        EffectKind::Generator(current) if current.kind == kind => Ok(None),
+        EffectKind::Generator(current) => Ok(Some(swapped_kind(current, kind))),
+        other => Err(bad(CMD, format!("`generator` changes generator effects only, not {}", other.name().to_ascii_lowercase()))),
+    }
+}
+
+/// `current` as a `kind` generator: the settings every kind shares and the inputs `kind` reads stay, its own controls start from `kind`'s defaults
+fn swapped_kind(current: &Generator, kind: GeneratorKind) -> Generator {
+    let mut inputs = current.inputs.clone();
+    inputs.retain(|map, _| kind.inputs().contains(map));
+    Generator {
+        level: current.level,
+        softness: current.softness,
+        noise_amount: current.noise_amount,
+        noise_scale: current.noise_scale,
+        seed: current.seed,
+        offset: current.offset,
+        direction: current.direction,
+        invert: current.invert,
+        global: current.global,
+        resolution: current.resolution,
+        inputs,
+        ..Generator::new(kind)
     }
 }
 
