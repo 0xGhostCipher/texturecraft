@@ -111,11 +111,7 @@ pub use height_to_normal::HeightToNormal;
 pub use highpass_space::HighpassSpace;
 pub use image_input::ImageInput;
 pub use layer::{
-    AxisBlend, AxisLayer, ChannelBlend, CompareOp, CurvatureDetail, CurvatureMode, Decal, DecalFlip, DecalSymmetry, DistanceParameters, Effect, EffectKind, Fill, Filter, Filtering, Generator,
-    GeneratorGlobal, GeneratorKind, GeneratorGrayscale, HeightMask, Layer, LayerId, LayerKind, Levels, LightParameters, LinkParam, LinkPreset, Mask, MaskBackground, MaterialLink, MicroCurvatureType, MicroDetails,
-    OutputResolution, POSTERIZE_LEVELS_MAX, POSTERIZE_LEVELS_MIN, PathShape, Procedural, ProceduralKind, Projection, ResolutionMode, SIZE_REFERENCE_RES,
-    Sampling, ScaleMode, SectionParameters, Source, TextureBlend, TextureLayer, TileBlending, TileGenerator, TileInputDistribution, TileShape, TileSizeMode, TileSymmetry, UvTransform, UvWrap, WearParameters, gradient,
-    hsl_adjust, per_unit, posterize,
+    AxisBlend, AxisLayer, ChannelBlend, CompareOp, CurvatureDetail, CurvatureMode, Decal, DecalFlip, DecalSymmetry, DistanceParameters, Effect, EffectKind, Fill, Filter, Filtering, Generator, GeneratorGlobal, GeneratorGrayscale, GeneratorKind, HeightMask, Layer, LayerId, LayerKind, Levels, LightParameters, LinearGradientParameters, LinkParam, LinkPreset, Mask, MaskBackground, MaterialLink, MicroCurvatureType, MicroDetails, OutputResolution, POSTERIZE_LEVELS_MAX, POSTERIZE_LEVELS_MIN, PathShape, Procedural, ProceduralKind, Projection, ResolutionMode, SIZE_REFERENCE_RES, Sampling, ScaleMode, SectionParameters, Source, TextureBlend, TextureLayer, TileBlending, TileGenerator, TileInputDistribution, TileShape, TileSizeMode, TileSymmetry, UvTransform, UvWrap, WearParameters, gradient, hsl_adjust, per_unit, posterize,
 };
 pub use lighting_output::LightingOutput;
 pub use mask_outline::MaskOutline;
