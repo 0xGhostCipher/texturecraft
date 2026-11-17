@@ -4,15 +4,15 @@ use egui::{RichText, Ui};
 use egui_phosphor::regular as ic;
 use serde_json::{Value, json};
 use texturecraft_engine::core::{
-    AxisBlend, BakedMap, CurvatureDetail, CurvatureMode, Generator, GeneratorKind, GeneratorGrayscale, LayerId, LightParameters, MicroDetail, OutputResolution, ResolutionMode,
-    SectionParameters, Source, TextureBlend, TextureLayer, WearParameters,
+    AxisBlend, BakedMap, CurvatureDetail, CurvatureMode, Generator, GeneratorGrayscale, GeneratorKind, LayerId, LightParameters, OutputResolution,
+    ResolutionMode, SectionParameters, Source, TextureBlend, TextureLayer, WearParameters,
 };
 
 use crate::TextureCraftApp;
-use crate::dock::{anchor_entries, anchor_label, anchors_below, effect_anchors_below, image_drop, image_menu, mesh_map_color};
+use crate::dock::{anchor_label, anchors_below, image_drop, image_menu, mesh_map_color};
 use crate::i18n::{baked_map_label, tr, trf};
 use crate::resource_panel::{ATTRIBUTE_KEY_WIDTH, NOTE_FONT_SIZE, factor_label, random_seed};
-use crate::theme::{Tokens, caption};
+use crate::theme::Tokens;
 use crate::widgets::{combo, section, slider_edit, slider_edit_with_suffix};
 
 /// Edge of the picture beside each image input, its corner rounding and the size of an icon drawn in it.
@@ -58,9 +58,6 @@ pub(crate) fn generator_properties(app: &mut TextureCraftApp, ui: &mut Ui, layer
                 light_parameters(app, ui, id, None, defaults);
             }
         }
-        if !matches!(generator.kind, GeneratorKind::ThinAreas | GeneratorKind::Position | GeneratorKind::Direction) {
-            micro_detail_properties(app, ui, id, generator.micro, layer);
-        }
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(tr("Restore defaults")).clicked() {
@@ -82,34 +79,6 @@ pub(crate) fn generator_properties(app: &mut TextureCraftApp, ui: &mut Ui, layer
     }
     if !app.session.doc.baked.contains_key(&app.session.ts()) {
         ui.label(RichText::new(format!("{} {}", ic::WARNING, tr("Bake mesh maps for curvature, AO and thickness based generators."))).color(tokens.warning));
-    }
-}
-
-/// The painted height anchor and its influence on this generator
-fn micro_detail_properties(app: &mut TextureCraftApp, ui: &mut Ui, id: u64, micro: Option<MicroDetail>, layer: LayerId) {
-    let tokens = Tokens::get(ui.ctx());
-    ui.label(caption(tr("Micro detail")))
-        .on_hover_text(tr("Painted height from an anchor point below: raised areas read as edges, recessed ones as cavities."));
-    let anchors = effect_anchors_below(app, layer, LayerId(id));
-    let current = match micro {
-        Some(detail) => anchors.iter().find(|(anchor, _)| *anchor == detail.anchor).map_or_else(|| tr("missing").to_string(), |(_, label)| label.clone()),
-        None => tr("None").to_string(),
-    };
-    combo(ui, tr("Anchor point"), current, |ui| {
-        if ui.selectable_label(micro.is_none(), tr("None")).clicked() {
-            app.run("effect.set", json!({"effect": id, "microAnchor": null}));
-        }
-        if let Some(anchor) = anchor_entries(ui, &anchors, micro.map(|detail| detail.anchor)) {
-            app.run("effect.set", json!({"effect": id, "microAnchor": anchor.0}));
-        }
-    });
-    if let Some(detail) = micro {
-        let mut amount = detail.amount;
-        if let Some(merge) = slider_edit(ui, tr("Amount"), &mut amount, 0.0..=1.0, 2) {
-            app.run("effect.set", json!({"effect": id, "microAmount": amount, "merge": merge}));
-        }
-    } else if anchors.is_empty() {
-        ui.label(RichText::new(tr("Add an anchor point to a layer below to use its height as micro detail.")).color(tokens.text_dim));
     }
 }
 
@@ -330,7 +299,6 @@ fn defaults_of(id: u64, generator: &Generator) -> Value {
         "resolution": format!("{:?}", defaults.resolution.mode),
         "customResolution": defaults.resolution.custom,
         "resolutionFactor": defaults.resolution.factor,
-        "microAnchor": null,
     });
 
     // A generator on the reference's controls restores those only: the earlier model's keys would move it back onto that model

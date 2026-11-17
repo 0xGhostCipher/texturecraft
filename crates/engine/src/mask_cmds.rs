@@ -3,12 +3,14 @@
 use serde_json::{Value, json};
 use texturecraft_core::{
     AxisBlend, BakedMap, BlendMode, Channel, ChannelKind, ColorSelection, CompareOp, CompareSource, CurvatureDetail, CurvatureMode, Effect, EffectKind, Filter, Generator,
-    GeneratorKind, GeneratorGrayscale, LayerId, Levels, LightParameters, Mask, MaskBackground, MicroDetail, Procedural, ProceduralKind, Project, Sampling, SectionParameters, Source, TextureBlend, WearParameters,
+    GeneratorKind, GeneratorGrayscale, LayerId, Levels, LightParameters, Mask, MaskBackground, Procedural, ProceduralKind, Project, Sampling, SectionParameters, Source, TextureBlend, WearParameters,
 };
 
+use crate::anchored_micro_edit::AnchoredMicroEdit;
 use crate::commands::{CommandSpec, always, bad, blend_param, boolp, channel_param, color_param, f32p, has_layer, layer_param, strp, u64p};
 use crate::layer_cmds::{projection_from, projection_from_fields};
 use crate::mask_owner::MaskOwner;
+use crate::micro_params::{MICRO_HEIGHT_INPUT, MICRO_NORMAL_INPUT, micro_from, swapped_micro};
 use crate::session::StackTarget;
 use crate::{EngineError, Result, Session, cmd};
 
@@ -53,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add generator",
             ["Layers", "Effects"],
             None,
-            "{layer?, name?, generator?: edgeWear|dirt|fiberGlassEdgeWear|thinAreas|curvature|ambientOcclusion|position|worldSpaceNormals|direction, wearLevel?, wearContrast?, grungeAmount?, grungeScale?: 1..16, triplanar?, triplanarContrast?, edgesSmoothness?: 0..16, aoMasking?, curvatureWeight?, edgesMasking?, useCustomGrunge? (the image: effect.set input: grunge) (wear controls: edgeWear, fiberGlassEdgeWear and dirt), sectionInvert?, sectionBlur?: 0..16 (ambientOcclusion, worldSpaceNormals), sectionBalance? (not curvature), sectionContrast?, sectionBrightness?: -1..1 (not ambientOcclusion), rightLeft|topBottom|frontBack + Invert?|Blend?: normal|add|subtract|multiply|addSub|max|Weight? (position, worldSpaceNormals), useTexture?, textureOpacity?, textureInvert?, textureGrayscale?: desaturation|luma|average|max|min|red|green|blue, textureBlend?: normal|add|subtract|multiply|addSub|max|min|overlay|screen|softLight, textureScale?: 0.01..10, textureContrast?: -1..1, textureBrightness?: -1..1, textureTriplanar?, textureTriplanarContrast? (the texture itself: effect.set input: texture) (section controls: curvature, ambientOcclusion, position, worldSpaceNormals), lightHorizontal?: 0..360, lightVertical?: 0..360, highlightGlossiness?, highlightLevel?, lightAttenuation? (light controls: direction), level?, softness?, noise?, noiseScale?, offset?: -1..1 added to the result, direction? (instead keep edgeWear, dirt, curvature, ambientOcclusion, position and direction on the earlier model), invert?, blur?: 0..1, balance?: 0..1 (0.5 unchanged), contrast?: 0..1, resolution?: auto|textureSet|uvTile|custom, customResolution?, resolutionFactor?: -3..3 (1/8..x8), mode?: edges|cavities|both|raw, sizes?: [7 weights 0..1, finest first] (curvature and edgeWear), microAnchor?: anchor effect id below, microAmount?: 0..1 (0.5)}",
+            "{layer?, name?, generator?: edgeWear|dirt|fiberGlassEdgeWear|thinAreas|curvature|ambientOcclusion|position|worldSpaceNormals|direction, wearLevel?, wearContrast?, grungeAmount?, grungeScale?: 1..16, triplanar?, triplanarContrast?, edgesSmoothness?: 0..16, aoMasking?, curvatureWeight?, edgesMasking?, useCustomGrunge? (the image: effect.set input: grunge) (wear controls: edgeWear, fiberGlassEdgeWear and dirt), sectionInvert?, sectionBlur?: 0..16 (ambientOcclusion, worldSpaceNormals), sectionBalance? (not curvature), sectionContrast?, sectionBrightness?: -1..1 (not ambientOcclusion), rightLeft|topBottom|frontBack + Invert?|Blend?: normal|add|subtract|multiply|addSub|max|Weight? (position, worldSpaceNormals), useTexture?, textureOpacity?, textureInvert?, textureGrayscale?: desaturation|luma|average|max|min|red|green|blue, textureBlend?: normal|add|subtract|multiply|addSub|max|min|overlay|screen|softLight, textureScale?: 0.01..10, textureContrast?: -1..1, textureBrightness?: -1..1, textureTriplanar?, textureTriplanarContrast? (the texture itself: effect.set input: texture) (section controls: curvature, ambientOcclusion, position, worldSpaceNormals), useMicroDetails? (curvature, ambientOcclusion), microHeight?, microNormal? (the images: effect.set input: microHeight|microNormal, an image or a value; microHeight also an anchor point), microCurvatureType?: standard|sobel|smooth, microCurvatureIntensity?: 0..5 on curvature, 0..1 on the wear kinds, microHeightIntensity?: 0..10 (curvature and the wear kinds), microAoRadius?, microAoDepth? (ambientOcclusion and the wear kinds) (micro details), lightHorizontal?: 0..360, lightVertical?: 0..360, highlightGlossiness?, highlightLevel?, lightAttenuation? (light controls: direction), level?, softness?, noise?, noiseScale?, offset?: -1..1 added to the result, direction? (instead keep edgeWear, dirt, curvature, ambientOcclusion, position and direction on the earlier model), invert?, blur?: 0..1, balance?: 0..1 (0.5 unchanged), contrast?: 0..1, resolution?: auto|textureSet|uvTile|custom, customResolution?, resolutionFactor?: -3..3 (1/8..x8), mode?: edges|cavities|both|raw, sizes?: [7 weights 0..1, finest first] (curvature and edgeWear), microAnchor?: anchor effect id below (its height as the Micro Height), microAmount?: 0..1 (the Micro Height's intensity, 0.5 = 1)}",
             has_layer,
             add_generator
         ),
@@ -98,7 +100,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit effect",
             [],
             None,
-            "{effect, visible?, blend?, opacity?, channel?: the content channel blend and opacity set (default: every channel), name?, filter?: id from filter.list (a filter effect only: swaps its type, keeping position, blend and opacity; its current id edits it in place; \"none\" empties it), channels?: {channelId: bool} a content effect's channels on or off, divider?: 1|10|100|1000 (warp, slope blur: divides the intensity), generator?: kind (a generator effect only: swaps its kind in place, keeping the shared settings and the inputs it reads; its own controls start from that kind's defaults), wear, section and light controls (see effect.add.generator), level?, softness?, noise?, noiseScale?, offset?, invert?, blur?, balance?, contrast?, resolution?, customResolution?, resolutionFactor?, input?: mesh map id, texture or grunge + one of inputImage?, inputValue?, inputAnchor?, inputBaked?: true (a generator), mode?, sizes?, microAnchor?: id|null, microAmount?, value?, uniform?: 0..1 (a mask fill reads that value, whatever its source), procedural?: kind (a mask fill) with scale?, seed?, contrast?, balance?, invert?, resolution?, tile?, tileDefaults? (alone, they edit its pattern), image?: resource name (a fill's source), projection?: uv|triplanar|planar|spherical|cylindrical, scale?, rotation?, offset?, axis?, sharpness? (a fill effect's projection; while it reads a pattern, scale is the pattern's), anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, affects?, clamp? (levels), tolerance?, left?, op?, right?, compareChannel?, hardness? (compare; value is its constant), colors?: [[r,g,b] linear, ...] (a color selection's ID colors, may be empty), output?, background?: transparent | black | white | gray, idMap?: an image resource name read as the ID map, null for the texture set's ID mesh map (a color selection; tolerance and hardness too), filter parameters (see effect.add.filter)}",
+            "{effect, visible?, blend?, opacity?, channel?: the content channel blend and opacity set (default: every channel), name?, filter?: id from filter.list (a filter effect only: swaps its type, keeping position, blend and opacity; its current id edits it in place; \"none\" empties it), channels?: {channelId: bool} a content effect's channels on or off, divider?: 1|10|100|1000 (warp, slope blur: divides the intensity), generator?: kind (a generator effect only: swaps its kind in place, keeping the shared settings and the inputs it reads; its own controls start from that kind's defaults), wear, section and light controls (see effect.add.generator), level?, softness?, noise?, noiseScale?, offset?, invert?, blur?, balance?, contrast?, resolution?, customResolution?, resolutionFactor?, input?: mesh map id, texture, grunge, microHeight or microNormal + one of inputImage?, inputValue?, inputAnchor?, inputBaked?: true (a generator), mode?, sizes?, microAnchor?: id|null (the Micro Height reads that anchor point; null empties it), microAmount?, value?, uniform?: 0..1 (a mask fill reads that value, whatever its source), procedural?: kind (a mask fill) with scale?, seed?, contrast?, balance?, invert?, resolution?, tile?, tileDefaults? (alone, they edit its pattern), image?: resource name (a fill's source), projection?: uv|triplanar|planar|spherical|cylindrical, scale?, rotation?, offset?, axis?, sharpness? (a fill effect's projection; while it reads a pattern, scale is the pattern's), anchor?, anchorChannel?, inLow?, inHigh?, gamma?, outLow?, outHigh?, affects?, clamp? (levels), tolerance?, left?, op?, right?, compareChannel?, hardness? (compare; value is its constant), colors?: [[r,g,b] linear, ...] (a color selection's ID colors, may be empty), output?, background?: transparent | black | white | gray, idMap?: an image resource name read as the ID map, null for the texture set's ID mesh map (a color selection; tolerance and hardness too), filter parameters (see effect.add.filter)}",
             has_layer,
             set
         ),
@@ -691,6 +693,8 @@ pub fn section_key_applies(kind: GeneratorKind, key: &str) -> bool {
 fn generator_from(command: &str, params: &Value, generator: &mut Generator) -> Result<()> {
     wear_from(command, params, generator)?;
     section_from(command, params, generator)?;
+    let earlier_keys: &[&str] = if WearParameters::defaults(generator.kind).is_some() { &EARLIER_WEAR_KEYS } else { &EARLIER_SECTION_KEYS };
+    micro_from(command, params, generator, earlier_keys)?;
     if let Some(level) = f32p(params, "level") {
         generator.level = level.clamp(0.0, 1.0);
     }
@@ -780,53 +784,26 @@ fn add_anchor(session: &mut Session, params: &Value) -> Result<Value> {
     push_effect(session, &Value::Object(fields), EffectKind::Anchor, BlendMode::Normal)
 }
 
-/// A generator's micro detail from `microAnchor` / `microAmount` for a generator on layer
-/// `reader` (None: leave it as it is; `Some(None)`: remove it).
-fn micro_param(session: &Session, command: &str, reader: LayerId, params: &Value, current: Option<MicroDetail>) -> Result<Option<Option<MicroDetail>>> {
-    let amount = match params.get("microAmount") {
-        Some(value) => {
-            Some(value.as_f64().filter(|v| v.is_finite()).ok_or_else(|| bad(command, "`microAmount` must be a number 0..1"))?.clamp(0.0, 1.0) as f32)
-        }
-        None => None,
-    };
-    let anchor = match params.get("microAnchor") {
-        None => current.map(|m| m.anchor),
-        Some(Value::Null) => return Ok(Some(None)),
-        Some(value) => Some(LayerId(value.as_u64().ok_or_else(|| bad(command, "`microAnchor` must be an anchor effect id or null"))?)),
-    };
-    let Some(anchor) = anchor else {
-        return match amount {
-            Some(_) => Err(bad(command, "give `microAnchor` before `microAmount`: the generator has no micro detail")),
-            None => Ok(None),
-        };
-    };
-
-    if params.get("microAnchor").is_none() && amount.is_none() {
-        return Ok(None);
-    }
-
-    // The same rule as fills: an anchor below, in the same texture set
-    anchor_source(session, command, reader, anchor, Channel::Height)?;
-    let amount = amount.or(current.map(|m| m.amount)).unwrap_or(MicroDetail::DEFAULT_AMOUNT);
-    Ok(Some(Some(MicroDetail { anchor, amount })))
-}
-
 /// A generator input a command names: a mesh map it reads, its texture or its custom grunge
 #[derive(Clone, Copy)]
 enum GeneratorInput {
     Map(BakedMap),
     Texture,
     Grunge,
+    MicroHeight,
+    MicroNormal,
 }
 
 /// The generator input named by `input` and what replaces it (None: its mesh map again, or an empty texture or grunge slot), for a generator on layer `owner`
 fn generator_input_param(session: &Session, owner: LayerId, params: &Value) -> Result<Option<(GeneratorInput, Option<Source>)>> {
     const CMD: &str = "effect.set";
     let Some(name) = params.get("input") else { return Ok(None) };
-    let name = name.as_str().ok_or_else(|| bad(CMD, "`input` must be a mesh map id, `texture` or `grunge`"))?;
+    let name = name.as_str().ok_or_else(|| bad(CMD, "`input` must be a mesh map id, `texture`, `grunge`, `microHeight` or `microNormal`"))?;
     let input = match name {
         TEXTURE_INPUT => GeneratorInput::Texture,
         GRUNGE_INPUT => GeneratorInput::Grunge,
+        MICRO_HEIGHT_INPUT => GeneratorInput::MicroHeight,
+        MICRO_NORMAL_INPUT => GeneratorInput::MicroNormal,
         _ => GeneratorInput::Map(BakedMap::parse(name).ok_or_else(|| bad(CMD, format!("unknown input `{name}`")))?),
     };
 
@@ -842,6 +819,9 @@ fn generator_input_param(session: &Session, owner: LayerId, params: &Value) -> R
             Some(Source::Image { name: image.to_string(), normal_format: Default::default() })
         }
         (None, Some(value), None, false) => Some(Source::Uniform([value.clamp(0.0, 1.0); 3])),
+        (None, None, Some(_), false) if matches!(input, GeneratorInput::MicroNormal) => {
+            return Err(bad(CMD, "the micro normal reads an image or a value, not an anchor point"));
+        }
         (None, None, Some(anchor), false) => {
             let channel = channel_param(CMD, params, "anchorChannel")?.unwrap_or(Channel::Height);
             Some(anchor_source(session, CMD, owner, LayerId(anchor), channel)?)
@@ -861,8 +841,8 @@ fn add_generator(session: &mut Session, params: &Value) -> Result<Value> {
     generator_from("effect.add.generator", params, &mut generator)?;
     let selected_layer = layer_param(session, "effect.add.generator", params)?;
     let reader = session.doc.project.mask_owner(selected_layer);
-    if let Some(micro) = micro_param(session, "effect.add.generator", reader, params, None)? {
-        generator.micro = micro;
+    if let Some(edit) = AnchoredMicroEdit::parse(session, "effect.add.generator", reader, params)? {
+        edit.apply("effect.add.generator", &mut generator)?;
     }
     let blend = blend_param("effect.add.generator", params, "blend")?.unwrap_or(BlendMode::Normal);
     push_effect(session, params, EffectKind::Generator(generator), blend)
@@ -1071,7 +1051,7 @@ fn set(session: &mut Session, params: &Value) -> Result<Value> {
     };
 
     let micro = match session.doc.project.effect(effect) {
-        Some((owner, Effect { kind: EffectKind::Generator(generator), .. })) => micro_param(session, CMD, owner, params, generator.micro)?,
+        Some((owner, Effect { kind: EffectKind::Generator(_), .. })) => AnchoredMicroEdit::parse(session, CMD, owner, params)?,
         _ if params.get("microAnchor").is_some() || params.get("microAmount").is_some() => {
             return Err(bad(CMD, "`microAnchor` and `microAmount` edit generator effects only"));
         }
@@ -1144,9 +1124,6 @@ fn set(session: &mut Session, params: &Value) -> Result<Value> {
                     generator.inputs.retain(|map, _| kind.inputs().contains(map));
                 }
                 generator_from(CMD, params, generator)?;
-                if let Some(micro) = micro {
-                    generator.micro = micro;
-                }
                 match input {
                     Some((GeneratorInput::Map(map), source)) => {
                         if !generator.inputs_in_use().contains(&map) {
@@ -1161,7 +1138,21 @@ fn set(session: &mut Session, params: &Value) -> Result<Value> {
                     Some((GeneratorInput::Texture, source)) => generator.texture.get_or_insert_default().source = source,
                     // generator_from refused the grunge on kinds without wear controls and moved the generator onto them
                     Some((GeneratorInput::Grunge, source)) => generator.grunge = source,
+                    // generator_from refused micro details on kinds without them and created them
+                    Some((GeneratorInput::MicroHeight, source)) => {
+                        if let Some(micro) = generator.micro.as_mut() {
+                            micro.height_source = source;
+                        }
+                    }
+                    Some((GeneratorInput::MicroNormal, source)) => {
+                        if let Some(micro) = generator.micro.as_mut() {
+                            micro.normal_source = source;
+                        }
+                    }
                     None => {}
+                }
+                if let Some(edit) = micro {
+                    edit.apply(CMD, generator)?;
                 }
             }
             _ if generator_kind.is_some() => return Err(bad(CMD, "`generator` requires a generator effect")),
@@ -1294,6 +1285,7 @@ fn swapped_kind(current: &Generator, kind: GeneratorKind) -> Generator {
         resolution: current.resolution,
         inputs,
         grunge: current.grunge.clone().filter(|_| WearParameters::defaults(kind).is_some()),
+        micro: swapped_micro(current.micro.as_deref(), kind),
         ..Generator::new(kind)
     }
 }

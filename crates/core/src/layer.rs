@@ -12,6 +12,7 @@ use crate::{
     ShapeCrop, SourceSlopeBlur, SourceWarp, StylizedLighting, SunAndSky, ThresholdMode, TileTransform, finite_unit, lum,
 };
 
+mod anchored_micro_detail;
 mod axis_blend;
 mod axis_layer;
 mod curvature_detail;
@@ -22,7 +23,8 @@ mod filtering;
 mod generator_global;
 mod generator_grayscale;
 mod light_parameters;
-mod micro_detail;
+mod micro_curvature_type;
+mod micro_details;
 mod output_resolution;
 mod resolution_mode;
 mod sampling;
@@ -40,6 +42,7 @@ mod uv_transform;
 mod uv_wrap;
 mod wear_parameters;
 
+use anchored_micro_detail::AnchoredMicroDetail;
 pub use axis_blend::AxisBlend;
 pub use axis_layer::AxisLayer;
 pub use curvature_detail::CurvatureDetail;
@@ -50,7 +53,8 @@ pub use filtering::Filtering;
 pub use generator_global::GeneratorGlobal;
 pub use generator_grayscale::GeneratorGrayscale;
 pub use light_parameters::LightParameters;
-pub use micro_detail::MicroDetail;
+pub use micro_curvature_type::MicroCurvatureType;
+pub use micro_details::MicroDetails;
 pub use output_resolution::OutputResolution;
 pub use resolution_mode::ResolutionMode;
 pub use sampling::Sampling;
@@ -1028,6 +1032,7 @@ impl GeneratorKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Generator {
     pub kind: GeneratorKind,
     /// Where the mask starts (0..1, generator specific threshold).
@@ -1056,9 +1061,6 @@ pub struct Generator {
     /// What an input reads instead of its mesh map (an image, a uniform value or an anchor); inputs not listed read their mesh map.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: BTreeMap<BakedMap, Source>,
-    /// Painted height read from an anchor point below, added as micro detail (None: baked maps only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub micro: Option<MicroDetail>,
     /// The wear kinds' controls (None: the level, softness and noise above, as saved before they existed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wear: Option<WearParameters>,
@@ -1074,6 +1076,30 @@ pub struct Generator {
     /// The image a wear generator reads as its grunge once Use Custom Grunge is on (None: an empty slot)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grunge: Option<Source>,
+    /// The micro details of Curvature, Ambient Occlusion and the wear kinds (None: never touched, their defaults: off); boxed, so a generator effect stays small
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub micro: Option<Box<MicroDetails>>,
+}
+
+impl Serialize for Generator {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Generator::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Generator {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Generator, D::Error> {
+        let mut saved = serde_json::Value::deserialize(deserializer)?;
+
+        // Micro detail saved before Micro Details: an anchor point's height and its amount
+        let anchored = saved.get_mut("micro").filter(|micro| micro.get("anchor").is_some()).map(serde_json::Value::take);
+        let mut generator = Generator::deserialize(saved).map_err(serde::de::Error::custom)?;
+        if let Some(anchored) = anchored {
+            let AnchoredMicroDetail { anchor, amount } = serde_json::from_value(anchored).map_err(serde::de::Error::custom)?;
+            generator.micro = MicroDetails::of_anchor(generator.kind, anchor, amount).map(Box::new);
+        }
+        Ok(generator)
+    }
 }
 
 impl Generator {
@@ -1111,9 +1137,15 @@ impl Generator {
         self.texture.as_deref().filter(|texture| texture.in_use() && self.section_controls().is_some())
     }
 
-    /// Everything the generator reads instead of its mesh maps: its inputs, then its texture and its custom grunge
+    /// Everything the generator reads instead of its mesh maps: its inputs, then its texture, its custom grunge and its micro details
     pub fn sources(&self) -> impl Iterator<Item = &Source> {
-        self.inputs.values().chain(self.texture.as_ref().and_then(|texture| texture.source.as_ref())).chain(self.grunge.as_ref())
+        let micro = self.micro.iter().flat_map(|micro| micro.sources());
+        self.inputs.values().chain(self.texture.as_ref().and_then(|texture| texture.source.as_ref())).chain(self.grunge.as_ref()).chain(micro)
+    }
+
+    /// The micro details the generator computes with: switched on with an image to read (an anchor's micro detail saved on the earlier model reads too)
+    pub fn micro_in_use(&self) -> Option<&MicroDetails> {
+        self.micro.as_deref().filter(|micro| micro.in_use(self.kind))
     }
 
     /// Whether the generator is on the level, softness and noise it had before the reference app's controls
@@ -1148,12 +1180,12 @@ impl Generator {
             global: GeneratorGlobal::default(),
             resolution: OutputResolution::default(),
             inputs: BTreeMap::new(),
-            micro: None,
             wear: WearParameters::defaults(kind),
             section: SectionParameters::defaults(kind),
             light: LightParameters::defaults(kind),
             texture: None,
             grunge: None,
+            micro: None,
         }
     }
 
@@ -2125,10 +2157,7 @@ impl EffectKind {
         match self {
             EffectKind::Fill { source, .. } => source.reads_anchor(anchor),
             EffectKind::Material(fill) => fill.sources.values().any(|source| source.reads_anchor(anchor)),
-            EffectKind::Generator(generator) => {
-                generator.micro.is_some_and(|micro| anchor.is_none_or(|wanted| wanted == micro.anchor))
-                    || generator.sources().any(|source| source.reads_anchor(anchor))
-            }
+            EffectKind::Generator(generator) => generator.sources().any(|source| source.reads_anchor(anchor)),
             _ => false,
         }
     }
@@ -2141,19 +2170,13 @@ impl EffectKind {
             EffectKind::Generator(generator) => generator.sources().collect(),
             _ => Vec::new(),
         };
-        let mut anchors: Vec<_> = sources
+        sources
             .into_iter()
             .filter_map(|source| match source {
                 Source::Anchor { anchor, channel, .. } => Some((*anchor, *channel)),
                 _ => None,
             })
-            .collect();
-        if let EffectKind::Generator(generator) = self
-            && let Some(micro) = generator.micro
-        {
-            anchors.push((micro.anchor, Channel::Height));
-        }
-        anchors
+            .collect()
     }
 
     /// The image resources this effect's sources read (a fill, its patterns, a material or a generator input, a colour selection's ID map)
@@ -2641,10 +2664,10 @@ mod tests {
         let reader = fill_layer.mask.as_ref().map(|mask| &mask.effects[0].kind);
         assert!(reader.is_some_and(|reader| reader.reads(Some(LayerId(9))) && reader.reads(None) && !reader.reads(Some(LayerId(8)))));
 
-        // A generator with micro detail reads its anchor too
+        // A generator whose Micro Height reads an anchor reads it too
         let mut generator_layer = Layer::new(LayerId(3), "g", LayerKind::Paint, &[Channel::BaseColor]);
         let mut generator = Generator::new(GeneratorKind::Dirt);
-        generator.micro = Some(MicroDetail { anchor: LayerId(9), amount: 0.5 });
+        generator.micro = MicroDetails::of_anchor(GeneratorKind::Dirt, LayerId(9), 0.5).map(Box::new);
 
         assert_eq!(EffectKind::Generator(generator.clone()).anchors_read(), [(LayerId(9), Channel::Height)]);
         assert!(EffectKind::Generator(generator.clone()).reads(Some(LayerId(9))) && !EffectKind::Generator(generator.clone()).reads(Some(LayerId(8))));
@@ -2652,6 +2675,29 @@ mod tests {
         generator_layer.mask = Some(Mask { effects: vec![Effect::new(LayerId(4), EffectKind::Generator(generator))], ..Mask::new(MaskBackground::Black) });
 
         assert!(generator_layer.reads_anchor());
+    }
+
+    #[test]
+    fn micro_detail_saved_on_an_anchor_loads_as_micro_details_reading_its_height() {
+        let mut saved = serde_json::to_value(Generator::new(GeneratorKind::Curvature)).unwrap();
+        saved["micro"] = serde_json::json!({"anchor": 9, "amount": 0.25});
+
+        let generator: Generator = serde_json::from_value(saved.clone()).unwrap();
+        let micro = generator.micro.as_deref().unwrap();
+        let defaults = MicroDetails::defaults(GeneratorKind::Curvature).unwrap();
+
+        assert!(micro.enabled && micro.height, "{micro:?}");
+        assert_eq!(micro.height_source, Some(Source::Anchor { anchor: LayerId(9), channel: Channel::Height, ramp: Vec::new() }));
+        assert!(micro.height_intensity < defaults.height_intensity, "a weaker amount reads a gentler height");
+        assert_eq!((micro.curvature_type, micro.ao_radius, micro.normal_source.clone()), (defaults.curvature_type, defaults.ao_radius, None));
+        assert!(EffectKind::Generator(generator.clone()).reads(Some(LayerId(9))));
+
+        let reloaded: Generator = serde_json::from_value(serde_json::to_value(&generator).unwrap()).unwrap();
+        assert_eq!(reloaded, generator, "saved again as Micro Details");
+
+        saved["kind"] = serde_json::to_value(GeneratorKind::ThinAreas).unwrap();
+        let without: Generator = serde_json::from_value(saved).unwrap();
+        assert!(without.micro.is_none(), "a kind without micro details drops it");
     }
 
     #[test]

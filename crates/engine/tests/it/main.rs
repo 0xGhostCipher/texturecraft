@@ -37,6 +37,7 @@ mod folder_contents;
 mod frame_selection;
 mod generator_custom_grunge;
 mod generator_inputs;
+mod generator_micro_details;
 mod generator_sections;
 mod generator_swap;
 mod generator_texture;

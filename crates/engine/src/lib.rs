@@ -9,6 +9,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod add_mask_cmds;
+mod anchored_micro_edit;
 pub mod bake;
 pub mod bake_preview;
 pub mod brush_preset_cmds;
@@ -50,6 +51,7 @@ pub mod materialx_cmds;
 pub mod meshmap_cmds;
 mod meshmap_file_name;
 pub mod meshmap_import_cmds;
+pub mod micro_params;
 mod orb_camera;
 pub mod orb_preview;
 pub mod painting;
