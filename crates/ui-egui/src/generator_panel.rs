@@ -68,10 +68,10 @@ pub(crate) fn generator_properties(app: &mut TextureCraftApp, ui: &mut Ui, layer
             });
         });
     });
-    if !inputs_in_use(generator).is_empty() {
+    if !generator.inputs_in_use().is_empty() {
         section(ui, "generator_inputs", tr("Image inputs"), true, |ui| {
-            for map in inputs_in_use(generator) {
-                input_slot(app, ui, (layer, id), *map, generator.inputs.get(map), generator.detail.is_some());
+            for map in generator.inputs_in_use() {
+                input_slot(app, ui, (layer, id), *map, generator.inputs.get(map), generator.detail_in_use().is_some());
             }
         });
     }
@@ -106,12 +106,6 @@ fn micro_detail_properties(app: &mut TextureCraftApp, ui: &mut Ui, id: u64, micr
     } else if anchors.is_empty() {
         ui.label(RichText::new(tr("Add an anchor point to a layer below to use its height as micro detail.")).color(tokens.text_dim));
     }
-}
-
-/// The inputs `generator` reads: none for Position and Light on their earlier model, which read the mesh itself
-fn inputs_in_use(generator: &Generator) -> &'static [BakedMap] {
-    let reads_geometry = generator.on_earlier_model() && matches!(generator.kind, GeneratorKind::Position | GeneratorKind::Direction);
-    if reads_geometry { &[] } else { generator.kind.inputs() }
 }
 
 /// What a generator kind makes, its category and its tags (read only).
@@ -493,7 +487,7 @@ fn angle_row(ui: &mut Ui, id: &str, label: &str, degrees: &mut f32) -> Option<bo
     .inner
 }
 
-/// A round dial whose needle points at `degrees` (counterclockwise from the right); dragging it turns it, `Some(merge)` like [`slider_edit`]
+/// A round dial whose needle points at `degrees` (0 on the left, clockwise, as in the reference); dragging it turns it, `Some(merge)` like [`slider_edit`]
 fn angle_dial(ui: &mut Ui, label: &str, degrees: &mut f32) -> Option<bool> {
     let tokens = Tokens::get(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(egui::vec2(DIAL_SIZE, DIAL_SIZE), egui::Sense::click_and_drag());
@@ -502,7 +496,7 @@ fn angle_dial(ui: &mut Ui, label: &str, degrees: &mut f32) -> Option<bool> {
         && let Some(pointer) = response.interact_pointer_pos()
     {
         let offset = pointer - rect.center();
-        let turned = (-offset.y).atan2(offset.x).to_degrees().rem_euclid(*LightParameters::ANGLE_RANGE.end());
+        let turned = (-offset.y).atan2(-offset.x).to_degrees().rem_euclid(*LightParameters::ANGLE_RANGE.end());
         if offset.length() > DIAL_DEAD_ZONE && (turned - *degrees).abs() > f32::EPSILON {
             *degrees = turned;
             // Later frames of one drag share its undo step
@@ -516,10 +510,11 @@ fn angle_dial(ui: &mut Ui, label: &str, degrees: &mut f32) -> Option<bool> {
     response.widget_info(|| egui::WidgetInfo::slider(true, f64::from(shown), label));
 
     let painter = ui.painter();
-    let radius = DIAL_SIZE * 0.5 - 1.0;
+    // The rim's stroke stays inside the dial
+    let radius = (DIAL_SIZE - DIAL_NEEDLE_WIDTH) * 0.5;
     painter.circle(rect.center(), radius, tokens.field, egui::Stroke::new(DIAL_NEEDLE_WIDTH, tokens.button_border));
     let (sin, cos) = degrees.to_radians().sin_cos();
-    let tip = rect.center() + egui::vec2(cos, -sin) * radius;
+    let tip = rect.center() + egui::vec2(-cos, -sin) * radius;
     painter.line_segment([rect.center(), tip], egui::Stroke::new(DIAL_NEEDLE_WIDTH, tokens.accent));
     painter.circle_filled(rect.center(), DIAL_HUB_RADIUS, tokens.text);
     edit

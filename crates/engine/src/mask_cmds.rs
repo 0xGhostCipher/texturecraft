@@ -511,6 +511,11 @@ fn section_from(command: &str, params: &Value, generator: &mut Generator) -> Res
         return Err(bad(command, format!("{} has no `{unused}`", kind.label())));
     }
 
+    let reads_direction = matches!(kind, GeneratorKind::Position | GeneratorKind::Direction);
+    if params.get("direction").is_some() && !reads_direction {
+        return Err(bad(command, format!("{} has no `direction`: only Position and Light point one way", kind.label())));
+    }
+
     if earlier {
         if !new_keys.is_empty() {
             return Err(bad(
@@ -1056,8 +1061,8 @@ fn set(session: &mut Session, params: &Value) -> Result<Value> {
                     generator.micro = micro;
                 }
                 if let Some((map, source)) = input {
-                    if !generator.kind.inputs().contains(&map) {
-                        return Err(bad(CMD, format!("this generator has no `{}` input", map.id())));
+                    if !generator.inputs_in_use().contains(&map) {
+                        return Err(bad(CMD, format!("this generator does not read a `{}` input", map.id())));
                     }
 
                     match source {
