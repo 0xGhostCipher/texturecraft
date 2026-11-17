@@ -20,6 +20,7 @@ mod decal_flip;
 mod decal_symmetry;
 mod filtering;
 mod generator_global;
+mod generator_grayscale;
 mod light_parameters;
 mod micro_detail;
 mod output_resolution;
@@ -27,6 +28,8 @@ mod resolution_mode;
 mod sampling;
 mod scale_mode;
 mod section_parameters;
+mod texture_blend;
+mod texture_layer;
 mod tile_blending;
 mod tile_generator;
 mod tile_input_distribution;
@@ -45,6 +48,7 @@ pub use decal_flip::DecalFlip;
 pub use decal_symmetry::DecalSymmetry;
 pub use filtering::Filtering;
 pub use generator_global::GeneratorGlobal;
+pub use generator_grayscale::GeneratorGrayscale;
 pub use light_parameters::LightParameters;
 pub use micro_detail::MicroDetail;
 pub use output_resolution::OutputResolution;
@@ -52,6 +56,8 @@ pub use resolution_mode::ResolutionMode;
 pub use sampling::Sampling;
 pub use scale_mode::ScaleMode;
 pub use section_parameters::SectionParameters;
+pub use texture_blend::TextureBlend;
+pub use texture_layer::TextureLayer;
 pub use tile_blending::TileBlending;
 pub use tile_generator::TileGenerator;
 pub use tile_input_distribution::TileInputDistribution;
@@ -1062,6 +1068,9 @@ pub struct Generator {
     /// The Light generator's controls (None: the level, softness and noise above, as saved before they existed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light: Option<LightParameters>,
+    /// The texture blended over the signal on the section controls (None: Use Texture never touched, as saved before it existed)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<TextureLayer>,
 }
 
 impl Generator {
@@ -1092,6 +1101,16 @@ impl Generator {
     pub fn inputs_in_use(&self) -> &'static [BakedMap] {
         let reads_geometry = self.on_earlier_model() && matches!(self.kind, GeneratorKind::Position | GeneratorKind::Direction);
         if reads_geometry { &[] } else { self.kind.inputs() }
+    }
+
+    /// The texture the generator blends over its signal: only on the section controls, turned on with some opacity
+    pub fn texture_in_use(&self) -> Option<&TextureLayer> {
+        self.texture.as_ref().filter(|texture| texture.in_use() && self.section_controls().is_some())
+    }
+
+    /// Everything the generator reads instead of its mesh maps: its inputs, then its texture
+    pub fn sources(&self) -> impl Iterator<Item = &Source> {
+        self.inputs.values().chain(self.texture.as_ref().and_then(|texture| texture.source.as_ref()))
     }
 
     /// Whether the generator is on the level, softness and noise it had before the reference app's controls
@@ -1130,6 +1149,7 @@ impl Generator {
             wear: WearParameters::defaults(kind),
             section: SectionParameters::defaults(kind),
             light: LightParameters::defaults(kind),
+            texture: None,
         }
     }
 
@@ -2103,7 +2123,7 @@ impl EffectKind {
             EffectKind::Material(fill) => fill.sources.values().any(|source| source.reads_anchor(anchor)),
             EffectKind::Generator(generator) => {
                 generator.micro.is_some_and(|micro| anchor.is_none_or(|wanted| wanted == micro.anchor))
-                    || generator.inputs.values().any(|source| source.reads_anchor(anchor))
+                    || generator.sources().any(|source| source.reads_anchor(anchor))
             }
             _ => false,
         }
@@ -2114,7 +2134,7 @@ impl EffectKind {
         let sources: Vec<&Source> = match self {
             EffectKind::Fill { source, .. } => vec![source],
             EffectKind::Material(fill) => fill.sources.values().collect(),
-            EffectKind::Generator(generator) => generator.inputs.values().collect(),
+            EffectKind::Generator(generator) => generator.sources().collect(),
             _ => Vec::new(),
         };
         let mut anchors: Vec<_> = sources
@@ -2137,7 +2157,7 @@ impl EffectKind {
         let sources: Vec<&Source> = match self {
             EffectKind::Fill { source, .. } => vec![source],
             EffectKind::Material(fill) => fill.sources.values().collect(),
-            EffectKind::Generator(generator) => generator.inputs.values().collect(),
+            EffectKind::Generator(generator) => generator.sources().collect(),
             _ => Vec::new(),
         };
         let id_map = match self {

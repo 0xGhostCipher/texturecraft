@@ -38,6 +38,7 @@ mod frame_selection;
 mod generator_inputs;
 mod generator_sections;
 mod generator_swap;
+mod generator_texture;
 mod generator_wear;
 mod gradient_map;
 mod high_poly_missed;

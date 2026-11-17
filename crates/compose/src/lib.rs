@@ -42,6 +42,7 @@ mod slope_texel;
 mod soft_box;
 pub mod solo;
 pub mod store;
+mod texture_layer;
 pub mod thumb;
 pub mod tile_length;
 mod tile_pattern;
