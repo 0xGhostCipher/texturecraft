@@ -54,6 +54,7 @@ mod tile_pattern;
 mod tile_random_stream;
 mod timber;
 mod uv_border_distance;
+mod uv_islands;
 pub mod warp;
 mod warp_source_sample;
 mod warp_texel;
