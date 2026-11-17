@@ -111,10 +111,10 @@ pub use height_to_normal::HeightToNormal;
 pub use highpass_space::HighpassSpace;
 pub use image_input::ImageInput;
 pub use layer::{
-    ChannelBlend, CompareOp, CurvatureDetail, CurvatureMode, Decal, DecalFlip, DecalSymmetry, Effect, EffectKind, Fill, Filter, Filtering, Generator,
+    AxisBlend, AxisLayer, ChannelBlend, CompareOp, CurvatureDetail, CurvatureMode, Decal, DecalFlip, DecalSymmetry, Effect, EffectKind, Fill, Filter, Filtering, Generator,
     GeneratorGlobal, GeneratorKind, HeightMask, Layer, LayerId, LayerKind, Levels, LinkParam, LinkPreset, Mask, MaskBackground, MaterialLink, MicroDetail,
     OutputResolution, POSTERIZE_LEVELS_MAX, POSTERIZE_LEVELS_MIN, PathShape, Procedural, ProceduralKind, Projection, ResolutionMode, SIZE_REFERENCE_RES,
-    Sampling, ScaleMode, Source, TileBlending, TileGenerator, TileInputDistribution, TileShape, TileSizeMode, TileSymmetry, UvTransform, UvWrap, WearParameters, gradient,
+    Sampling, ScaleMode, SectionParameters, Source, TileBlending, TileGenerator, TileInputDistribution, TileShape, TileSizeMode, TileSymmetry, UvTransform, UvWrap, WearParameters, gradient,
     hsl_adjust, per_unit, posterize,
 };
 pub use lighting_output::LightingOutput;

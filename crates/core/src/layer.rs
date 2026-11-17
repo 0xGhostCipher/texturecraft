@@ -12,6 +12,8 @@ use crate::{
     ShapeCrop, SourceSlopeBlur, SourceWarp, StylizedLighting, SunAndSky, ThresholdMode, TileTransform, finite_unit, lum,
 };
 
+mod axis_blend;
+mod axis_layer;
 mod curvature_detail;
 mod curvature_mode;
 mod decal_flip;
@@ -23,6 +25,7 @@ mod output_resolution;
 mod resolution_mode;
 mod sampling;
 mod scale_mode;
+mod section_parameters;
 mod tile_blending;
 mod tile_generator;
 mod tile_input_distribution;
@@ -33,6 +36,8 @@ mod uv_transform;
 mod uv_wrap;
 mod wear_parameters;
 
+pub use axis_blend::AxisBlend;
+pub use axis_layer::AxisLayer;
 pub use curvature_detail::CurvatureDetail;
 pub use curvature_mode::CurvatureMode;
 pub use decal_flip::DecalFlip;
@@ -44,6 +49,7 @@ pub use output_resolution::OutputResolution;
 pub use resolution_mode::ResolutionMode;
 pub use sampling::Sampling;
 pub use scale_mode::ScaleMode;
+pub use section_parameters::SectionParameters;
 pub use tile_blending::TileBlending;
 pub use tile_generator::TileGenerator;
 pub use tile_input_distribution::TileInputDistribution;
@@ -930,10 +936,12 @@ pub enum GeneratorKind {
     Direction,
     /// Worn edges of a fibreglass-like coating: the edges fade into its grunge
     FiberGlassEdgeWear,
+    /// The world space normal's axes combined into one gray
+    WorldSpaceNormals,
 }
 
 impl GeneratorKind {
-    pub const ALL: [GeneratorKind; 8] = [
+    pub const ALL: [GeneratorKind; 9] = [
         GeneratorKind::EdgeWear,
         GeneratorKind::Dirt,
         GeneratorKind::ThinAreas,
@@ -942,6 +950,7 @@ impl GeneratorKind {
         GeneratorKind::Position,
         GeneratorKind::Direction,
         GeneratorKind::FiberGlassEdgeWear,
+        GeneratorKind::WorldSpaceNormals,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -953,6 +962,7 @@ impl GeneratorKind {
             GeneratorKind::Position => "Position",
             GeneratorKind::Direction => "Light",
             GeneratorKind::FiberGlassEdgeWear => "Fiber Glass Edge Wear",
+            GeneratorKind::WorldSpaceNormals => "World Space Normals",
         }
     }
 
@@ -967,6 +977,7 @@ impl GeneratorKind {
             GeneratorKind::Position => "Position",
             GeneratorKind::Direction => "Direction",
             GeneratorKind::FiberGlassEdgeWear => "FiberGlassEdgeWear",
+            GeneratorKind::WorldSpaceNormals => "WorldSpaceNormals",
         }
     }
 
@@ -987,7 +998,9 @@ impl GeneratorKind {
             GeneratorKind::Curvature => &[BakedMap::Curvature],
             GeneratorKind::AmbientOcclusion => &[BakedMap::AmbientOcclusion],
             GeneratorKind::ThinAreas => &[BakedMap::Thickness],
-            GeneratorKind::Position | GeneratorKind::Direction => &[],
+            GeneratorKind::Position => &[BakedMap::Position],
+            GeneratorKind::WorldSpaceNormals => &[BakedMap::WorldNormal],
+            GeneratorKind::Direction => &[],
         }
     }
 
@@ -1041,6 +1054,9 @@ pub struct Generator {
     /// The wear kinds' controls (None: the level, softness and noise above, as saved before they existed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wear: Option<WearParameters>,
+    /// The section controls of Curvature, Ambient Occlusion, Position and World Space Normals (None: the level, softness and noise above, as saved before they existed)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<SectionParameters>,
 }
 
 impl Generator {
@@ -1054,6 +1070,16 @@ impl Generator {
     /// The global blur, balance and contrast the generator applies: none on the wear controls, which have no such controls
     pub fn applied_global(&self) -> GeneratorGlobal {
         if self.wear.is_some() || self.kind == GeneratorKind::FiberGlassEdgeWear { GeneratorGlobal::default() } else { self.global }
+    }
+
+    /// The section controls the generator computes with: its own, World Space Normals' defaults when it has none (it has no earlier model), else None
+    pub fn section_controls(&self) -> Option<SectionParameters> {
+        self.section.or_else(|| SectionParameters::defaults(self.kind).filter(|_| self.kind == GeneratorKind::WorldSpaceNormals))
+    }
+
+    /// Whether the generator is on the level, softness and noise it had before the reference app's controls
+    pub fn on_earlier_model(&self) -> bool {
+        self.wear.is_none() && self.section_controls().is_none() && self.kind != GeneratorKind::FiberGlassEdgeWear
     }
 
     pub fn new(kind: GeneratorKind) -> Generator {
@@ -1085,6 +1111,7 @@ impl Generator {
             inputs: BTreeMap::new(),
             micro: None,
             wear: WearParameters::defaults(kind),
+            section: SectionParameters::defaults(kind),
         }
     }
 
@@ -2315,6 +2342,24 @@ mod tests {
         assert_eq!(loaded.wear, None, "level, softness and noise keep driving it");
         let curvature = serde_json::to_value(Generator::new(GeneratorKind::Curvature)).unwrap();
         assert!(curvature.get("wear").is_none(), "other kinds save no wear controls");
+    }
+
+    #[test]
+    fn generators_saved_before_their_section_controls_load_on_the_earlier_model() {
+        for kind in [GeneratorKind::Curvature, GeneratorKind::AmbientOcclusion, GeneratorKind::Position] {
+            let mut saved = serde_json::to_value(Generator::new(kind)).unwrap();
+            assert!(saved.get("section").is_some(), "new {kind:?} generators have the reference's controls");
+
+            saved.as_object_mut().unwrap().remove("section");
+            let loaded: Generator = serde_json::from_value(saved).unwrap();
+            assert!(loaded.on_earlier_model(), "{kind:?}: level, softness and noise keep driving it");
+            assert_eq!(loaded.applied_global(), loaded.global, "{kind:?} keeps its global adjustments");
+        }
+
+        let mut saved = serde_json::to_value(Generator::new(GeneratorKind::WorldSpaceNormals)).unwrap();
+        saved.as_object_mut().unwrap().remove("section");
+        let loaded: Generator = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.section_controls(), SectionParameters::defaults(GeneratorKind::WorldSpaceNormals), "it has no earlier model");
     }
 
     #[test]
