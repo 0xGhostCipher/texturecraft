@@ -261,7 +261,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   for a destination, and the browser downloads the file.
 - A **History** panel: click any step to go back to it, or forward again to an undone one.
 - **11 languages:** English, French, German, Spanish, Portuguese, Italian, Russian, Japanese,
-  Chinese, Korean and Arabic, switchable live.
+  Chinese, Korean and Arabic, switchable live. A build without the shared craft-i18n catalogs
+  offers English only.
 - **In the browser:** the same app compiled to WebAssembly, on WebGPU or WebGL2, with touch
   navigation and project open, save and download.
 
