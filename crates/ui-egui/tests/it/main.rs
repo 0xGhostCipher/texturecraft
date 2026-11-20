@@ -20,6 +20,7 @@ mod display_post_effects;
 mod effect_decal;
 mod effect_rows;
 mod effect_sliders;
+mod empty_menus;
 mod empty_start;
 mod export_file_types;
 mod export_map_overrides;

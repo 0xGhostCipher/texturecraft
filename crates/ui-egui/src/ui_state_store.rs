@@ -245,7 +245,8 @@ fn read_bytes(_file: &Path) -> std::io::Result<Vec<u8>> {
 
 /// Whether every dock, the two in use and those of the named layouts, was read rather than replaced by a default
 fn fully_read(ui: &UiState) -> bool {
-    !ui.dock.replaced_unreadable()
+    ui.inactive_render_dock.as_ref().is_none_or(|dock| !dock.replaced_unreadable())
+        && !ui.dock.replaced_unreadable()
         && !ui.inactive_mode_dock.replaced_unreadable()
         && ui.named_layouts.iter().all(|layout| !layout.painting.replaced_unreadable() && !layout.baking.replaced_unreadable())
 }

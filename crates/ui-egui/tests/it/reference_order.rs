@@ -35,12 +35,12 @@ fn named<'a>(found: &'a [(f32, String, bool)], name: &str) -> Option<&'a (f32, S
 fn every_menu_lists_its_items_in_the_reference_order() {
     // Items the reference has and TextureCraft lacks are absent; TextureCraft's own sit where they fit
     let expected = [
-        "File: New project... | Open... | - | Open sample project... | - | Close | - | Save | Save as... | More save options > Save as template... | More save options > Save and reduce file size | More save options > Save as copy... | Remove unused resources... | - | Import resources... | Import MaterialX material... | Import PBR texture folder... | Import material... | Export Textures... | Export Mesh... | - | Quit",
-        "Edit: Undo | Redo | Project Configuration... | Reimport mesh | Settings...",
-        "Mode: Bake Mesh Maps | Painting | Rendering (path traced)",
-        "Window: Views > Assets | Views > Common Settings | Views > Display Settings | Views > Export | Views > History | Views > Layers | Views > Log | Views > Mesh Map Bakers | Views > Mesh Map Settings | Views > Properties | Views > Python Console | Views > Renderer Settings | Views > Shader Settings | Views > Online assets | Views > Texture Sets | Views > Texture Set Settings | Toolbars > Docks | Toolbars > Plugins | Toolbars > Tools | - | Save UI Layout > Painting mode | Save UI Layout > Rendering mode | Save UI Layout > Baking mode | Load UI Layout | Layouts > Save current layout as... | Layouts > Manage layouts... | - | Hide UI | Reset panel layout | Reset UI",
-        "Viewport: Display material | Display next channel | Display previous channel | Display next mesh map | Display previous mesh map | UV checker | - | Frame texture set | Show entire mesh | Front view | Back view | Left view | Right view | Top view | Bottom view | - | Perspective | Orthographic | - | 3D/2D views | 3D view only | 2D view only | Swap 3D/2D | - | Navigation buttons | - | Enable quick mask | Edit quick mask | Invert quick mask",
-        "Help: Release notes... | Documentation... | Shortcuts list... | - | Join the community (Discord)... | ArtCraft website... | Report a bug... | Show log... | Export log... | - | Check for Updates... | About TextureCraft...",
+        "File: New Project | Open | Recent Projects > Clear | - | Open Sample Project | - | Close | - | Save | Save As | More Save Options > Save As Template | More Save Options > Save and Reduce File Size | More Save Options > Save As Copy | Remove Unused Resources | - | Import Resources | Export Textures | Export Mesh | - | Quit",
+        "Edit: Undo | Redo | Project Configuration | Reimport Mesh | Settings",
+        "Mode: Bake Mesh Maps | Painting | Rendering",
+        "Window: Views > Assets | Views > Baking Log | Views > Common Settings | Views > Display Settings | Views > Export | Views > History | Views > Layers | Views > Log | Views > Mesh Map Bakers | Views > Mesh Map Settings | Views > Properties | Views > Renderer Settings | Views > Shader Settings | Views > Texture Set List | Views > Texture Set Settings | Toolbars > Docks | Toolbars > Tools | - | Save UI Layout > Painting Mode | Save UI Layout > Rendering Mode | Save UI Layout > Baking Mode | Load UI Layout | - | Hide UI | Reset UI",
+        "Viewport: Display Material | Display Next Channel | Display Previous Channel | Display Next Mesh Map | Display Previous Mesh Map | - | Show Entire Mesh/Path | - | Enable Quick Mask | Edit Quick Mask | Invert Quick Mask",
+        "Help: Release Notes | Documentation | Shortcuts List | - | Discord | Report a Bug | Show Log | Export Log | - | Check for Updates | About TextureCraft",
     ];
     let actual: Vec<String> = menus::TOP
         .iter()
@@ -168,7 +168,7 @@ fn the_blank_screen_menus_match_the_measured_enabled_states() {
         assert!(menus::enabled(app, id), "{id} is enabled on the blank screen");
     }
     for id in ["ui.view.bakeSettings", "ui.view.bakeMaps", "ui.view.meshMapBakers"] {
-        assert!(!menus::enabled(app, id), "{id} belongs to Baking mode");
+        assert!(!menus::enabled(app, id), "{id} belongs to Baking Mode");
     }
 }
 

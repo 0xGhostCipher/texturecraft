@@ -423,13 +423,13 @@ pub(crate) fn ask(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut yes = false;
     let (title, text, yes_label, no_label) = match &question {
         Ask::Delete(name) => (
-            tr("Delete template"),
+            tr("Delete Template"),
             trf("Delete the template \"{name}\"? Its file is removed and this cannot be undone.", &[("name", name)]),
             tr("Delete"),
             tr("Cancel"),
         ),
         Ask::Leave(_) => (
-            tr("Unfinished template edit"),
+            tr("Unfinished Template Edit"),
             trf(
                 "The last edit of the template \"{name}\" is not saved: {error}. Switching away drops it.",
                 &[("name", &app.ui.export.preset), ("error", &unfinished(app).unwrap_or_default())],
@@ -438,27 +438,22 @@ pub(crate) fn ask(app: &mut TextureCraftApp, ctx: &egui::Context) {
             tr("Keep editing"),
         ),
     };
-    egui::Window::new(title)
-        .id(egui::Id::unique("export_template_ask"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            ui.set_max_width(360.0);
-            ui.label(text);
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                yes = ui.button(yes_label).clicked();
-                cancel |= ui.button(no_label).clicked();
-            });
+    let mut open = true;
+    crate::windows::dialog(ctx, "export_template_ask", title, &mut open).default_width(360.0).show(ctx, |ui| {
+        ui.label(text);
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            yes = ui.button(yes_label).clicked();
+            cancel |= ui.button(no_label).clicked();
         });
+    });
     if yes {
         app.ui.export.ask = None;
         match question {
             Ask::Delete(name) => remove(app, name),
             Ask::Leave(act) => perform(app, ctx, act),
         }
-    } else if cancel {
+    } else if cancel || !open {
         app.ui.export.ask = None;
     }
 }

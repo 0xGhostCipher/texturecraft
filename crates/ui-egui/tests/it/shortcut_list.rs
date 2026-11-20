@@ -35,23 +35,23 @@ fn the_list_starts_with_the_reference_names_and_keys_in_the_reference_order() {
         ("Quit application", "Ctrl+Q"),
         ("Export Textures...", "Ctrl+Shift+E"),
         ("Reimport mesh", "Ctrl+Shift+R"),
-        ("Switch to baking mode", "Ctrl+Shift+B"),
+        ("Switch to baking mode", "F8"),
         ("Switch to edition mode", "F9"),
         ("Switch to rendering mode (path traced)", "F10"),
         ("Show mesh wireframe", ""),
         ("Camera projection: Perspective view", "F5"),
         ("Camera projection: Orthographic view", "F6"),
-        ("Display next channel", "C"),
-        ("Display previous channel", "Shift+C"),
-        ("Display material", "M"),
-        ("Display next mesh map", "B"),
-        ("Display previous mesh map", "Shift+B"),
-        ("Show entire mesh/path", "F"),
+        ("Display Next Channel", "C"),
+        ("Display Previous Channel", "Shift+C"),
+        ("Display Material", "M"),
+        ("Display Next Mesh Map", "B"),
+        ("Display Previous Mesh Map", "Shift+B"),
+        ("Show Entire Mesh/Path", "F"),
         ("Select next camera", ">"),
         ("Select previous camera", "<"),
-        ("Enable quick mask", "Y"),
-        ("Edit quick mask", "U"),
-        ("Invert quick mask", "Ctrl+Shift+I"),
+        ("Enable Quick Mask", "Y"),
+        ("Edit Quick Mask", "U"),
+        ("Invert Quick Mask", "Ctrl+Shift+I"),
         ("Viewers layout: 3D/2D", "F1"),
         ("Viewers layout: 3D only", "F2"),
         ("Viewers layout: 2D only", "F3"),
@@ -82,9 +82,9 @@ fn the_menus_keep_their_texts_and_quit_keeps_ctrl_q() {
     assert_eq!(label("file.saveAs"), Some("Save as..."));
     assert_eq!(label("ui.quit"), Some("Quit"));
     assert_eq!(label("ui.mode.bake"), Some("Bake Mesh Maps"));
-    assert_eq!(label("viewport.frame"), Some("Show entire mesh"));
+    assert_eq!(label("viewport.frame"), Some("Show Entire Mesh/Path"));
     assert_eq!(shortcut_of(&keymap::Keymap::new(), "ui.quit"), Some("Ctrl+Q"));
-    assert_eq!(shortcut_of(&keymap::Keymap::new(), "ui.mode.bake"), Some("Ctrl+Shift+B"));
+    assert_eq!(shortcut_of(&keymap::Keymap::new(), "ui.mode.bake"), Some("F8"));
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn the_settings_page_lists_the_reference_names_and_shows_the_missing_functions_d
     h.run_steps(4);
     h.get_by_role_and_label(Role::Tab, "Shortcuts").click();
     h.run_steps(4);
-    for name in ["Open project", "Save as project", "Quit application", "Switch to baking mode", "Show entire mesh/path", "Viewers layout: Swap 3D/2D"] {
+    for name in ["Open project", "Save as project", "Quit application", "Switch to baking mode", "Show Entire Mesh/Path", "Viewers layout: Swap 3D/2D"] {
         assert!(h.query_by_label(name).is_some(), "{name} is listed");
     }
     assert!(h.query_by_label("Open...").is_none(), "the menu's text is not the list's");
@@ -110,8 +110,8 @@ fn the_settings_page_lists_the_reference_names_and_shows_the_missing_functions_d
 #[test]
 fn the_listed_keys_run_their_commands() {
     let mut h = harness();
-    press(&mut h, Key::B, Modifiers::COMMAND | Modifiers::SHIFT);
-    assert_eq!(h.state().ui.mode, Mode::Baking, "Ctrl+Shift+B switches to baking mode");
+    press(&mut h, Key::F8, Modifiers::NONE);
+    assert_eq!(h.state().ui.mode, Mode::Baking, "F8 switches to baking mode");
     press(&mut h, Key::F9, Modifiers::NONE);
     assert_eq!(h.state().ui.mode, Mode::Painting, "F9 switches to edition mode");
     press(&mut h, Key::F10, Modifiers::NONE);

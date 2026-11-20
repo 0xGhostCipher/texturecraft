@@ -54,6 +54,8 @@ mod mask_preview_image;
 mod material_preview_image;
 pub mod menus;
 mod mesh_export_options;
+#[cfg(not(target_arch = "wasm32"))]
+mod mode_layout;
 mod name_error;
 mod named_layout;
 pub mod named_layouts;
@@ -90,6 +92,8 @@ mod running_bake;
 pub mod saved_search;
 mod screen_color_pick;
 mod section_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod session_log_file;
 pub mod settings_window;
 pub mod shader_settings;
 pub mod shelf;
@@ -191,6 +195,8 @@ pub struct Toast {
 
 pub struct TextureCraftApp {
     pub session: Session,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) session_log_file: Option<session_log_file::SessionLogFile>,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
     /// Yaw and pitch an Alt+Shift drag has reached before snapping to 90° steps (see `viewport`).
@@ -304,6 +310,7 @@ impl TextureCraftApp {
         // The first run speaks the OS (or browser) language
         let mut ui_store = ui_state_store::UiStateStore::new(ui_state_store::FILE.get().cloned());
         let mut ui = start_ui(ui_store.load(cc.storage), &mut session);
+        ui.trim_recent();
 
         // No window opens by itself with no project (a saved layout may have left Export open)
         if !session.project_open {
@@ -319,6 +326,8 @@ impl TextureCraftApp {
             uv_rotation_snap: None,
             uv_view_reset: false,
             session,
+            #[cfg(not(target_arch = "wasm32"))]
+            session_log_file: None,
             ui,
             ui_store,
             gpu,
@@ -370,6 +379,17 @@ impl TextureCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         if cc.winit_window().is_none() {
             app.file_dialogs.without_window();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if cc.winit_window().is_some() {
+            let path = crate::data_dir()
+                .join("logs")
+                .join(format!("session-{}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S%.6fZ"), std::process::id()))
+                .join("log.txt");
+            match session_log_file::SessionLogFile::new(path) {
+                Ok(file) => app.session_log_file = Some(file),
+                Err(error) => app.toast(format!("{}: {error}", i18n::tr("Could not create the session log")), true),
+            }
         }
         app.ui.rename = None;
         app.ui.windows.new_project = false;
@@ -1037,6 +1057,13 @@ impl eframe::App for TextureCraftApp {
         }
         profile::drive(self, ctx);
         self.toasts.retain(|t| t.until > now);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file) = &mut self.session_log_file
+            && let Err(error) = file.sync(self.session.log_id, self.session.log.entries())
+        {
+            self.session_log_file = None;
+            self.toast(format!("{}: {error}", i18n::tr("Could not update the session log")), true);
+        }
         self.profiler.logic_ms = (now_ms() - t0) as f32;
 
         // Last, so it sees every close request this frame's work made
@@ -1057,9 +1084,7 @@ impl eframe::App for TextureCraftApp {
             titlebar::show(self, ui);
             banner(self, ui);
             toolbar::status_bar(self, ui);
-            if self.ui.toolbar_tools {
-                toolbar::tool_shelf(self, ui);
-            }
+            toolbar::tool_shelf(self, ui);
             self.ui.sync_mode_dock();
             if self.ui.mode != state::Mode::Baking && self.ui.toolbar_docks {
                 toolbar::rail(self, ui);

@@ -717,7 +717,7 @@ fn set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 
     // Many texture sets scroll inside the list; the footer stays in view
-    let list_height = BODY_HEIGHT - header.rect.height() - ui.spacing().item_spacing.y;
+    let list_height = ui.available_height();
     egui::ScrollArea::vertical().id_salt("export_texture_sets").max_height(list_height.max(0.0)).show(ui, |ui| set_rows(app, ui));
 }
 
@@ -1204,107 +1204,121 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut do_export = false;
     let mut canceled = false;
     let presets = texturecraft_engine::formats::builtin_presets();
-    crate::windows::dialog("export_textures", tr("Export textures"), &mut open).fixed_size(vec2(900.0, 520.0)).show(ctx, |ui| {
+    crate::windows::dialog(ctx, "export_textures", tr("Export Textures"), &mut open).default_size(vec2(900.0, BODY_HEIGHT + 80.0)).show(ctx, |ui| {
         // Nothing to export without a project
         if !app.session.project_open {
             ui.label(tr("No project is open"));
             return;
         }
 
-        ui.horizontal(|ui| {
-            for (i, t) in [tr("Settings"), tr("Output templates"), tr("List of exports")].iter().enumerate() {
-                if ui.selectable_label(app.ui.export.tab == i as u8, caption(&t.to_uppercase())).clicked() {
-                    app.ui.export.tab = i as u8;
-                }
-            }
-
-            // The file list opens the destination folder
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if app.ui.export.tab == 2 {
-                    // The browser downloads the files instead
-                    #[cfg(target_arch = "wasm32")]
-                    crate::unavailable::greyed(ui, |ui| ui.button(tr("Open output directory")));
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if ui.button(tr("Open output directory")).clicked() {
-                        open_output_directory(app);
-                    }
-                } else if ui.button(tr("Include all")).on_hover_text(tr("Select every texture set, UV tile and output map")).clicked() {
-                    app.ui.export.skip.clear();
-                    for o in app.ui.export.sets.values_mut() {
-                        o.maps.values_mut().for_each(|m| m.enabled = true);
-                    }
-                    app.ui.export.sets.retain(|_, o| !o.is_default());
-                }
-            });
-        });
-        ui.separator();
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), BODY_HEIGHT), egui::Layout::left_to_right(egui::Align::Min), |ui| {
-            ui.set_height(BODY_HEIGHT);
-            match app.ui.export.tab {
-                1 => {
-                    crate::export_templates::tab(app, ui, &presets);
-                    return;
-                }
-                2 => {
-                    list_tab(app, ui);
-                    return;
-                }
-                _ => {}
-            }
-
-            ui.vertical(|ui| {
-                ui.set_width(LIST_WIDTH);
-                set_list(app, ui);
-            });
-            ui.separator();
-            ui.vertical(|ui| match app.ui.export.page {
-                Some(ts) if ts < app.session.set_count() => set_page(app, ui, ts, &presets),
-                _ => global_page(app, ui, &presets),
-            });
-        });
-        ui.add_space(8.0);
-        ui.separator();
-
-        // While exporting: the progress and Cancel Export
-        if let Some(job) = &app.ui.export.job {
-            let done = job.total - job.pending.len();
-            let progress = if job.total == 0 { 1.0 } else { done as f32 / job.total as f32 };
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("Cancel Export")).clicked() {
-                        app.ui.export.job = None;
-                    }
-                    let percent = format!("{:.0}%", progress * 100.0);
-                    ui.add(egui::ProgressBar::new(progress).text(percent));
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            // While exporting: the progress and Cancel Export
+            if let Some(job) = &app.ui.export.job {
+                let done = job.total - job.pending.len();
+                let progress = if job.total == 0 { 1.0 } else { done as f32 / job.total as f32 };
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(tr("Cancel Export")).clicked() {
+                            app.ui.export.job = None;
+                        }
+                        let percent = format!("{:.0}%", progress * 100.0);
+                        ui.add(egui::ProgressBar::new(progress).text(percent));
+                    });
                 });
-            });
-            return;
-        }
+            } else {
+                let selected = selected_texture_count(app);
+                ui.horizontal(|ui| {
+                    // Not on LIST OF EXPORTS
+                    if app.ui.export.tab != 2 && ui.button(tr("Reset all")).on_hover_text(tr("Restore the export defaults and select every texture")).clicked()
+                    {
+                        // Keep ownership so Cancel can restore the opening settings
+                        let e = &mut app.ui.export;
+                        let (opened_with, owner, owner_id) = (e.opened_with.take(), std::mem::take(&mut e.owner), e.owner_id);
+                        app.ui.export = ExportUi { opened_with, owner, owner_id, ..ExportUi::default() };
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Nothing to write without a ticked texture set
+                        let any = !export_selection(app).is_empty();
+                        if ui
+                            .add_enabled(any, primary_button(ui, tr("Export")))
+                            .on_hover_text(tr("Write the selected textures using the settings above"))
+                            .clicked()
+                        {
+                            do_export = true;
+                        }
 
-        let selected = selected_texture_count(app);
-        ui.horizontal(|ui| {
-            // Not on LIST OF EXPORTS
-            if app.ui.export.tab != 2 && ui.button(tr("Reset all")).on_hover_text(tr("Restore the export defaults and select every texture")).clicked() {
-                // Keep ownership so Cancel can restore the opening settings
-                let e = &mut app.ui.export;
-                let (opened_with, owner, owner_id) = (e.opened_with.take(), std::mem::take(&mut e.owner), e.owner_id);
-                app.ui.export = ExportUi { opened_with, owner, owner_id, ..ExportUi::default() };
+                        // Saving closes the window without starting an export
+                        if ui.button(tr("Save settings")).on_hover_text(tr("Keep these settings for the next export")).clicked() {
+                            app.ui.windows.export = false;
+                        }
+                        if ui.button(tr("Cancel")).on_hover_text(tr("Restore the settings from when you opened this window")).clicked() {
+                            canceled = true;
+                        }
+                        ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
+                    });
+                });
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Nothing to write without a ticked texture set
-                let any = !export_selection(app).is_empty();
-                if ui.add_enabled(any, primary_button(ui, tr("Export"))).on_hover_text(tr("Write the selected textures using the settings above")).clicked() {
-                    do_export = true;
-                }
+            ui.separator();
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.horizontal(|ui| {
+                    for (i, t) in [tr("Settings"), tr("Output templates"), tr("List of exports")].iter().enumerate() {
+                        if ui.selectable_label(app.ui.export.tab == i as u8, caption(&t.to_uppercase())).clicked() {
+                            app.ui.export.tab = i as u8;
+                        }
+                    }
 
-                // Saving closes the window without starting an export
-                if ui.button(tr("Save settings")).on_hover_text(tr("Keep these settings for the next export")).clicked() {
-                    app.ui.windows.export = false;
-                }
-                if ui.button(tr("Cancel")).on_hover_text(tr("Restore the settings from when you opened this window")).clicked() {
-                    canceled = true;
-                }
-                ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
+                    // The file list opens the destination folder
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if app.ui.export.tab == 2 {
+                            // The browser downloads the files instead
+                            #[cfg(target_arch = "wasm32")]
+                            crate::unavailable::greyed(ui, |ui| ui.button(tr("Open output directory")));
+                            #[cfg(not(target_arch = "wasm32"))]
+                            if ui.button(tr("Open output directory")).clicked() {
+                                open_output_directory(app);
+                            }
+                        } else if ui.button(tr("Include all")).on_hover_text(tr("Select every texture set, UV tile and output map")).clicked() {
+                            app.ui.export.skip.clear();
+                            for o in app.ui.export.sets.values_mut() {
+                                o.maps.values_mut().for_each(|m| m.enabled = true);
+                            }
+                            app.ui.export.sets.retain(|_, o| !o.is_default());
+                        }
+                    });
+                });
+                ui.separator();
+                let body_height = ui.available_height().max(0.0);
+                ui.allocate_ui_with_layout(vec2(ui.available_width(), body_height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                    ui.set_height(body_height);
+                    match app.ui.export.tab {
+                        1 => {
+                            crate::export_templates::tab(app, ui, &presets);
+                            return;
+                        }
+                        2 => {
+                            list_tab(app, ui);
+                            return;
+                        }
+                        _ => {}
+                    }
+
+                    ui.vertical(|ui| {
+                        ui.set_width(LIST_WIDTH);
+                        set_list(app, ui);
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        egui::ScrollArea::both().id_salt("export_settings_page").auto_shrink([false, false]).min_scrolled_height(0.0).show(ui, |ui| match app
+                            .ui
+                            .export
+                            .page
+                        {
+                            Some(ts) if ts < app.session.set_count() => set_page(app, ui, ts, &presets),
+                            _ => global_page(app, ui, &presets),
+                        });
+                    });
+                });
             });
         });
     });
