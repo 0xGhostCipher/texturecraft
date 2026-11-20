@@ -46,13 +46,3 @@ Built-in environments (`crates/render/src/ibl.rs`), smart materials and procedur
 (`crates/paint/src/brush.rs`), meshes (`crates/geom/src/primitives.rs`) and shelf thumbnails
 (`crates/ui-egui/src/thumbs.rs`) are generated in code by TextureCraft contributors (MIT OR
 Apache-2.0). None of them is derived from another product's presets, shaders, materials or images.
-
-## Default-browser integration dependencies
-
-The desktop app enables eframe's `links` feature. These unmodified Rust dependencies open links in the system browser and parse their URLs; their upstream MIT and Apache-2.0 licence files remain in the published crates.
-
-| Dependency | Source | License |
-|---|---|---|
-| `webbrowser` 1.2.7 | https://github.com/amodm/webbrowser-rs | MIT OR Apache-2.0 |
-| `url` 2.5.8, `idna` 1.1.0, `form_urlencoded` 1.2.2 | https://github.com/servo/rust-url | MIT OR Apache-2.0 |
-| `idna_adapter` 1.2.2 | https://github.com/hsivonen/idna_adapter | Apache-2.0 OR MIT |
