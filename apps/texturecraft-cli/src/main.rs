@@ -276,14 +276,22 @@ fn batch(a: &Args) -> R {
     let script: Value = serde_json::from_str(&text).map_err(|e| format!("{path} is not JSON: {e}"))?;
     let steps =
         script.as_array().or_else(|| script.get("steps").and_then(Value::as_array)).ok_or("the script must be a list of steps or {\"steps\": [...]}")?;
-    let field = |k: &str| script.get(k).and_then(Value::as_str);
-    let mut h = open(field("open").unwrap_or("builtin:material_ball"), None)?;
+    let field = |k: &str| -> Result<Option<&str>, String> {
+        match script.get(k) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(path)) => Ok(Some(path.as_str())),
+            Some(_) => Err(format!("the script's `{k}` field must be a string")),
+        }
+    };
+    let input = field("open")?.unwrap_or("builtin:material_ball");
+    let output = field("save")?;
+    let mut h = open(input, None)?;
     let reply = h.batch(steps);
     print_json(&reply)?;
     if let Some(f) = reply.get("failed").filter(|f| !f.is_null()) {
         return Err(format!("step {} (`{}`) failed: {}", f["index"], f["id"].as_str().unwrap_or_default(), f["error"].as_str().unwrap_or_default()));
     }
-    match field("save") {
+    match output {
         Some(out) => save(&mut h, out),
         None => Ok(()),
     }
