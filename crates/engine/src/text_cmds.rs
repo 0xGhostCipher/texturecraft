@@ -2,6 +2,7 @@
 //! with the brush as its alpha or to place as a decal.
 
 use serde_json::{Value, json};
+use texturecraft_formats::sanitize_resource_name;
 use texturecraft_paint::text::render_text;
 
 use crate::commands::{CommandSpec, always, bad, color_param, f32p, strp};
@@ -104,6 +105,21 @@ fn add_text(s: &mut Session, p: &Value) -> Result<Value> {
     let png = texturecraft_formats::coverage_png(img.width, img.height, &img.coverage, rgb).map_err(|e| bad(cmd, e.to_string()))?;
     // The resource is named after the text (its first line, shortened) unless a name is given.
     let label: String = strp(p, "name").unwrap_or_else(|| text.lines().next().unwrap_or_default()).chars().take(32).collect();
-    let name = s.import_resource_bytes(&format!("Text {}.png", label.trim()), png)?;
+    let file_name = sanitize_resource_name(&format!("Text {}.png", label.trim()));
+    let name = s.import_resource_bytes(&file_name, png)?;
     Ok(json!({ "name": name, "width": img.width, "height": img.height }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_resource_names_keep_the_label_before_a_slash() {
+        let mut s = crate::sample_session(128, 32).unwrap();
+        let from_text = crate::execute(&mut s, "resource.text", &json!({"text": "1/2", "font": "Hack", "size": 16})).unwrap();
+        assert_eq!(from_text["name"], "Text_1_2.png");
+        let from_name = crate::execute(&mut s, "resource.text", &json!({"text": "Plan", "name": "plan\\detail", "font": "Hack", "size": 16})).unwrap();
+        assert_eq!(from_name["name"], "Text_plan_detail.png");
+    }
 }
