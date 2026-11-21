@@ -3,9 +3,8 @@
 use serde_json::{Value, json};
 use texturecraft_core::project::ENVIRONMENTS;
 use texturecraft_core::{BakedMap, Channel, EnvAlignment, ShadowMode, ToneMapping};
-use texturecraft_geom::glam::Vec3;
 
-use crate::commands::{CommandSpec, always, bad, boolp, can_redo, can_undo, color_param, f32p, strp, u64p};
+use crate::commands::{CommandSpec, always, bad, boolp, can_redo, can_undo, color_param, f32p, strp, u64p, vec3};
 use crate::frame_target::FrameTarget;
 use crate::session::ViewMode;
 use crate::{Result, Session, cmd};
@@ -231,6 +230,10 @@ pub(crate) fn camera_json(s: &Session) -> Value {
 }
 
 fn camera_set(s: &mut Session, p: &Value) -> Result<Value> {
+    let target = vec3(p, "target");
+    if target.is_none() && p.get("target").is_some_and(|value| !value.is_null()) {
+        return Err(bad("camera.set", "`target` must be an array of three finite numbers"));
+    }
     let c = &mut s.camera;
     match strp(p, "rotation") {
         Some("free") => c.set_free(true),
@@ -250,11 +253,8 @@ fn camera_set(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = f32p(p, "fov") {
         c.fov = v.clamp(5.0, 150.0);
     }
-    if let Some(t) = p.get("target").and_then(Value::as_array) {
-        let v: Vec<f32> = t.iter().filter_map(Value::as_f64).map(|x| x as f32).collect();
-        if v.len() == 3 && v.iter().all(|x| x.is_finite()) {
-            c.target = Vec3::new(v[0], v[1], v[2]);
-        }
+    if let Some(target) = target {
+        c.target = target;
     }
     if let Some(o) = boolp(p, "ortho") {
         c.ortho = o;
@@ -373,6 +373,19 @@ mod tests {
 
     fn sphere_session() -> Session {
         Session::new_project("t", texturecraft_geom::primitives::sphere(1.0, 16, 8), "builtin:sphere", None, 128).unwrap()
+    }
+
+    #[test]
+    fn camera_set_rejects_an_invalid_target_without_changing_the_camera() {
+        let mut s = sphere_session();
+        let before = execute(&mut s, "camera.set", &json!({"target": [1.0, 2.0, 3.0], "fov": 40.0})).unwrap();
+        assert_eq!(before["target"], json!([1.0, 2.0, 3.0]));
+        let revision = s.revision;
+        for target in [json!([10, "typo", 20, 30]), json!([1, 2]), json!([1, 2, 1e300]), json!({"x": 1})] {
+            assert!(execute(&mut s, "camera.set", &json!({"target": target, "fov": 90.0})).is_err(), "{target}");
+            assert_eq!(execute(&mut s, "camera.get", &json!({})).unwrap(), before);
+            assert_eq!(s.revision, revision);
+        }
     }
 
     fn pressed(s: &mut Session, command: &str) -> ViewMode {
