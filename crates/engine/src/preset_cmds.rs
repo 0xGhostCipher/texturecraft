@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use texturecraft_formats::export::{MAX_PRESET_NAME, sanitize_file_stem};
 use texturecraft_formats::{ExportPreset, builtin_preset, builtin_presets, preset_from_json};
 
-use crate::commands::{CommandSpec, always, bad, boolp, strp};
+use crate::commands::{CommandSpec, always, bad, strp};
 use crate::{Result, Session, cmd};
 
 /// Most user presets kept (and read from the library folder).
@@ -167,12 +167,17 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "export.preset.save";
     let mut preset = preset_param(p.get("preset").ok_or_else(|| bad(CMD, "`preset` is required"))?, CMD)?;
     let lib = &mut s.export_presets;
-    let renamed = match strp(p, "rename") {
-        Some(old) => Some(lib.find(old).ok_or_else(|| bad(CMD, format!("no user export preset `{old}` to rename")))?),
-        None => None,
+    let renamed = match p.get("rename") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(old)) => Some(lib.find(old).ok_or_else(|| bad(CMD, format!("no user export preset `{old}` to rename")))?),
+        Some(_) => return Err(bad(CMD, "`rename` must be a preset name")),
+    };
+    let unique = match p.get("unique") {
+        None | Some(Value::Null) => false,
+        Some(value) => value.as_bool().ok_or_else(|| bad(CMD, "`unique` must be a boolean"))?,
     };
     let target = renamed.or_else(|| lib.find(&preset.name));
-    if boolp(p, "unique") == Some(true) {
+    if unique {
         preset.name = lib.unique_name(&preset.name, renamed);
     } else if lib.taken(&preset.name, target) {
         return Err(bad(CMD, format!("an export preset named \"{}\" exists already (built-in presets are read-only)", preset.name)));
@@ -248,6 +253,27 @@ mod tests {
         // Presets survive opening another project.
         run(&mut s, "project.new", json!({"resolution": 128})).unwrap();
         assert_eq!(s.export_presets.list.len(), 2);
+    }
+
+    #[test]
+    fn malformed_save_options_do_not_replace_a_user_preset() {
+        let mut s = session();
+        let original = preset("Mine");
+        run(&mut s, "export.preset.save", json!({"preset": original})).unwrap();
+        let mut replacement = original.clone();
+        replacement["maps"][0]["bit_depth"] = json!(16);
+
+        for (key, invalid) in [("unique", json!("true")), ("rename", json!(7))] {
+            let mut params = json!({"preset": replacement});
+            params[key] = invalid;
+            let result = run(&mut s, "export.preset.save", params);
+            assert_eq!(run(&mut s, "export.preset.get", json!({"name": "Mine"})).unwrap(), original);
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains(&format!("`{key}`")), "{error}");
+        }
+
+        run(&mut s, "export.preset.save", json!({"preset": replacement, "unique": null, "rename": null})).unwrap();
+        assert_eq!(run(&mut s, "export.preset.get", json!({"name": "Mine"})).unwrap(), replacement);
     }
 
     #[test]
