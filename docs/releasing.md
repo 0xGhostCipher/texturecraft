@@ -115,9 +115,10 @@ All file names are `texturecraft-<version>-<platform>-<arch>.<ext>`, written to 
 Every desktop package ships both binaries, `texturecraft` and `texturecraft-cli` (on macOS the CLI
 is its own zip next to the DMG). Release builds embed the craft-fonts interface font (Inter) and CJK UI fonts
 (`CRAFT_FONTS_REF` in `release.yml`) and ship their `OFL-<family>.txt` licences with the other
-notices. The packaging
-scripts smoke-test `texturecraft-cli --version`, and the Linux job also runs the AppImage with
-`--version`, so both binaries must print their version and exit without opening a window.
+notices. The packaging scripts smoke-test `texturecraft-cli --version` where they can run the
+staged binary. The FreeBSD aarch64 release cross-build skips that check. The Linux job also runs
+the AppImage with `--version`. Both binaries must print their version and exit without opening a
+window.
 
 ## TextureCraft-specific values
 
