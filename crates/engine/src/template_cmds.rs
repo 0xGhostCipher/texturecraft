@@ -36,6 +36,7 @@ pub struct ProjectTemplate {
     pub spec_gloss: bool,
     pub parallax: bool,
     pub ior: f32,
+    pub ior_specular: bool,
     pub scatter_color: [f32; 3],
     pub scatter_radius: f32,
 }
@@ -51,6 +52,7 @@ impl Default for ProjectTemplate {
             spec_gloss: d.spec_gloss,
             parallax: d.parallax,
             ior: d.ior,
+            ior_specular: d.ior_specular,
             scatter_color: d.scatter_color,
             scatter_radius: d.scatter_radius,
         }
@@ -116,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Project templates",
             [],
             None,
-            "{} → [{name, label, builtin, resolution, normalFormat, channels: [ids], specGloss}]",
+            "{} → [{name, label, builtin, resolution, normalFormat, channels: [ids], specGloss, iorSpecular}]",
             always,
             list
         ),
@@ -196,6 +198,7 @@ impl Session {
         p.normal_format = t.normal_format;
         let d = &mut p.display;
         (d.spec_gloss, d.parallax, d.ior, d.scatter_color, d.scatter_radius) = (t.spec_gloss, t.parallax, t.ior, t.scatter_color, t.scatter_radius);
+        d.ior_specular = t.ior_specular;
         for ts in 0..p.texture_sets.len() {
             if let Some(set) = p.texture_sets.get_mut(ts) {
                 set.channels = t.channels.clone();
@@ -277,6 +280,7 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
             "normalFormat": if t.normal_format == NormalFormat::DirectX { "directX" } else { "openGl" },
             "channels": t.channels.iter().map(|(c, _)| c.id()).collect::<Vec<_>>(),
             "specGloss": t.spec_gloss,
+            "iorSpecular": t.ior_specular,
         })
     };
     Ok(json!(builtin_templates().iter().map(|t| entry(t, true)).chain(s.templates.list.iter().map(|t| entry(t, false))).collect::<Vec<_>>()))
@@ -296,6 +300,7 @@ fn save(session: &mut Session, params: &Value) -> Result<Value> {
         spec_gloss: display.spec_gloss,
         parallax: display.parallax,
         ior: display.ior,
+        ior_specular: display.ior_specular,
         scatter_color: display.scatter_color,
         scatter_radius: display.scatter_radius,
     };

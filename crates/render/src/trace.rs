@@ -23,7 +23,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use texturecraft_compose::{Composite, ImageRes};
 use texturecraft_core::Channel;
-use texturecraft_core::project::{DisplaySettings, EnvAlignment, ToneMapping};
+use texturecraft_core::project::{DisplaySettings, EnvAlignment, LEGACY_DIELECTRIC_F0_SCALE, ToneMapping};
 use texturecraft_geom::glam::{Vec2, Vec3};
 use texturecraft_geom::{Bvh, Mesh, OrbitCamera};
 
@@ -63,6 +63,8 @@ pub struct TraceScene {
     pub(crate) radius: f32,
     /// Index of refraction of the Transmission channel.
     pub ior: f32,
+    /// Multiplier for Specular Level in the Metallic/Roughness model.
+    pub(crate) dielectric_f0_scale: f32,
     /// Thin lens: focus depth along the view axis (0: the camera's orbit target) and lens radius
     /// as a fraction of the mesh's bounding radius (the viewport's depth of field).
     pub lens: Option<[f32; 2]>,
@@ -103,6 +105,7 @@ impl TraceScene {
             scatter_sigma: Vec3::ONE,
             radius,
             ior: 1.5,
+            dielectric_f0_scale: LEGACY_DIELECTRIC_F0_SCALE,
             lens: None,
         };
         let d = DisplaySettings::default();
@@ -137,6 +140,7 @@ impl TraceScene {
         scene.spec_gloss = display.spec_gloss;
         scene.set_scatter(display.scatter_color, display.scatter_radius);
         scene.ior = display.ior;
+        scene.dielectric_f0_scale = display.dielectric_f0_scale();
         scene.lens = display.dof.enabled.then_some([display.dof.focus_distance, display.dof.aperture]);
 
         scene
@@ -606,7 +610,7 @@ fn surface(scene: &TraceScene, tri: u32, u: f32, v: f32, o: Vec3, d: Vec3, t: f3
     } else {
         let metallic = ch(Channel::Metallic, 0, 0)[0].clamp(0.0, 1.0);
         let level = ch(Channel::SpecularLevel, 0, 0)[0].clamp(0.0, 1.0);
-        (base * (1.0 - metallic), Vec3::splat(0.08 * level).lerp(base, metallic), metallic)
+        (base * (1.0 - metallic), Vec3::splat(scene.dielectric_f0_scale * level).lerp(base, metallic), metallic)
     };
     let coat_base = if n_geo.dot(-d) > 0.0 { n_geo } else { geo };
     let coat_n = match set {

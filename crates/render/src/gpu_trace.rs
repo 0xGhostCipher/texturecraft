@@ -97,6 +97,7 @@ struct SceneConst {
     env_camera: bool,
     heights: Vec<f32>,
     ior: f32,
+    dielectric_f0_scale: f32,
     /// Focus depth (0: the orbit target) and lens radius in world units (0: pinhole).
     lens: [f32; 2],
 }
@@ -418,6 +419,7 @@ impl GpuTracer {
             env_camera: scene.env_camera,
             heights: scene.sets.iter().map(|s| s.height_strength).collect(),
             ior: scene.ior,
+            dielectric_f0_scale: scene.dielectric_f0_scale,
             lens: scene.lens.map_or([0.0; 2], |[focus, aperture]| [focus, aperture.max(0.0) * scene.radius]),
         });
         Ok(())
@@ -609,7 +611,7 @@ impl GpuTracer {
             env: [sin, cos, 0.0, 0.0],
             sigma: sc.sigma.extend(0.0).to_array(),
             eye: cam.eye().extend(1.0).to_array(),
-            lens: [if sc.lens[0] > 0.0 { sc.lens[0] } else { cam.distance }, sc.lens[1], sc.ior, 0.0],
+            lens: [if sc.lens[0] > 0.0 { sc.lens[0] } else { cam.distance }, sc.lens[1], sc.ior, sc.dielectric_f0_scale],
         };
         let mut sets = [[0.0f32; 4]; 256];
         for (i, (slot, m)) in sets.iter_mut().zip(&mat.info).enumerate() {

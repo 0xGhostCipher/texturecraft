@@ -68,7 +68,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Display settings",
             [],
             None,
-            "{environment?: <built-in>|resource:<image resource>, exposure?, blur?, rotation?, opacity?, toneMapping?: linear|aces, fov?, shadows?, shadowMode? (intensive|average|lightweight: the shadow map resolution), shadowOpacity? (0..1: how dark the shadows are), alignment? (world|camera: what the environment turns with), soloUnlit? (single-channel views flat; off: lit), aoIntensity?, bloom?, vignette?, sharpen?, grain?, postEffects?, taa?, specGloss?, parallax?, displacement? (the viewport moves the surface by the height channel), scatterColor?: [r,g,b] linear or \"#rrggbb\" sRGB, scatterRadius? (0..1 of the mesh radius), ior? (1..3, transmission), dof?: {enabled?, focusDistance? (view depth, world units; 0 = the orbit target), aperture? (lens radius, 0..1 of the mesh radius)}}",
+            "{environment?: <built-in>|resource:<image resource>, exposure?, blur?, rotation?, opacity?, toneMapping?: linear|aces, fov?, shadows?, shadowMode? (intensive|average|lightweight: the shadow map resolution), shadowOpacity? (0..1: how dark the shadows are), alignment? (world|camera: what the environment turns with), soloUnlit? (single-channel views flat; off: lit), aoIntensity?, bloom?, vignette?, sharpen?, grain?, postEffects?, taa?, specGloss?, parallax?, displacement? (the viewport moves the surface by the height channel), scatterColor?: [r,g,b] linear or \"#rrggbb\" sRGB, scatterRadius? (0..1 of the mesh radius), ior? (1..3), iorSpecular? (use IOR for dielectric reflectance at normal incidence in Metallic Roughness), dof?: {enabled?, focusDistance? (view depth, world units; 0 = the orbit target), aperture? (lens radius, 0..1 of the mesh radius)}}",
             always,
             display
         ),
@@ -297,6 +297,7 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
 
     let scatter_color = color_param("display.set", p, "scatterColor")?;
     let d = &mut s.doc.project.display;
+    let (old_ior, old_ior_specular, old_spec_gloss) = (d.ior, d.ior_specular, d.spec_gloss);
     if let Some(e) = env {
         d.environment = e;
     }
@@ -349,6 +350,7 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
         ("postEffects", &mut d.post_effects),
         ("taa", &mut d.taa),
         ("specGloss", &mut d.spec_gloss),
+        ("iorSpecular", &mut d.ior_specular),
         ("parallax", &mut d.parallax),
         ("displacement", &mut d.displacement),
         ("soloUnlit", &mut d.solo_unlit),
@@ -358,6 +360,7 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
 
+    s.modified |= d.ior_specular != old_ior_specular || (d.ior_specular && (d.ior != old_ior || d.spec_gloss != old_spec_gloss));
     // The field of view applies to the view only when set (a saved camera keeps its own)
     if f32p(p, "fov").is_some() {
         s.camera.fov = s.doc.project.display.fov;

@@ -70,8 +70,9 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
     header(ui);
 
     let mut display = app.session.doc.project.display.clone();
+    let mut ior_specular = display.ior_specular;
     section_page::show(ui, "shader_settings", &SECTIONS, |ui, index| match index {
-        0 => shader_parameters(ui, &mut display),
+        0 => shader_parameters(ui, &mut display, &mut ior_specular),
         _ => displacement(ui, &mut display),
     });
 
@@ -79,6 +80,9 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         app.session.doc.project.display = display;
         app.session.modified = true;
         app.session.revision = app.session.revision.wrapping_add(1);
+    }
+    if ior_specular != app.session.doc.project.display.ior_specular {
+        app.run("display.set", serde_json::json!({"iorSpecular": ior_specular}));
     }
 }
 
@@ -139,7 +143,7 @@ pub fn matches_query(name: &str, query: &str) -> bool {
 }
 
 /// Base Surface, Specular, Transmission and Subsurface
-fn shader_parameters(ui: &mut Ui, display: &mut DisplaySettings) {
+fn shader_parameters(ui: &mut Ui, display: &mut DisplaySettings, ior_specular: &mut bool) {
     let tokens = Tokens::get(ui.ctx());
     section(ui, "shader_base_surface", tr("Base Surface"), true, |ui| {
         shader_model(ui, display);
@@ -148,8 +152,11 @@ fn shader_parameters(ui: &mut Ui, display: &mut DisplaySettings) {
     section(ui, "shader_specular", tr("Specular"), true, |ui| {
         unavailable::checkbox(ui, false, tr("Enable anisotropy"));
         slider(ui, tr("Index of refraction"), &mut display.ior, INDEX_OF_REFRACTION_RANGE, 2).on_hover_text(tr(
-            "How strongly transmissive surfaces bend light (where the Transmission channel is painted): water 1.33, glass 1.5, diamond 2.42",
+            "Controls how strongly transmissive surfaces bend light. When the checkbox below is on, it also controls dielectric reflectance.",
         ));
+        ui.add_enabled(!display.spec_gloss, egui::Checkbox::new(ior_specular, tr("Use IOR for specular reflection")))
+            .on_hover_text(tr("Uses the index of refraction for dielectric reflectance at normal incidence. Specular level adjusts its strength."))
+            .on_disabled_hover_text(tr("Specular Glossiness uses the Specular color channel for reflectance."));
         unavailable::checkbox(ui, false, tr("Enable specular color"));
     });
     section(ui, "shader_transmission", tr("Transmission"), true, |ui| {

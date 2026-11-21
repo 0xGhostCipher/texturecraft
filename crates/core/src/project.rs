@@ -312,6 +312,8 @@ pub struct DisplaySettings {
     pub scatter_radius: f32,
     /// Index of refraction of transmissive surfaces (where the Transmission channel is painted).
     pub ior: f32,
+    /// Use IOR to determine dielectric reflectance at normal incidence in Metallic/Roughness.
+    pub ior_specular: bool,
     /// Depth of field of the viewport and the path tracer (thin lens).
     pub dof: DepthOfField,
 }
@@ -367,10 +369,25 @@ pub const ENVIRONMENTS: [&str; 6] = ["Studio Soft", "Studio Contrast", "Overcast
 /// Prefix of [`DisplaySettings::environment`] naming an image resource.
 pub const ENV_RESOURCE_PREFIX: &str = "resource:";
 
+/// Original dielectric F0 multiplier for the Specular Level channel.
+pub const LEGACY_DIELECTRIC_F0_SCALE: f32 = 0.08;
+
 impl DisplaySettings {
     /// The image resource used as the environment, if any.
     pub fn environment_resource(&self) -> Option<&str> {
         self.environment.strip_prefix(ENV_RESOURCE_PREFIX)
+    }
+
+    /// Multiplier for Specular Level in the Metallic/Roughness model.
+    pub fn dielectric_f0_scale(&self) -> f32 {
+        if self.ior_specular && !self.spec_gloss && self.ior.is_finite() {
+            let ior = self.ior.clamp(1.0, 3.0);
+            let fresnel = (ior - 1.0) / (ior + 1.0);
+            // Specular Level 0.5 represents OpenPBR's default specular weight of 1.
+            2.0 * fresnel * fresnel
+        } else {
+            LEGACY_DIELECTRIC_F0_SCALE
+        }
     }
 }
 
@@ -402,6 +419,7 @@ impl Default for DisplaySettings {
             scatter_color: [1.0, 0.4, 0.25],
             scatter_radius: 0.1,
             ior: 1.5,
+            ior_specular: false,
             dof: DepthOfField::default(),
         }
     }
