@@ -107,6 +107,26 @@ fn new_info_run_bake_export_batch() {
 }
 
 #[test]
+fn batch_rejects_non_string_paths() {
+    let d = tmp("batch-paths");
+    let script = d.join("script.json");
+    let out = d.join("unexpected.tcraft");
+    let invalid_open = serde_json::json!({"steps": [], "open": false, "save": p(&out)});
+    let invalid_save = serde_json::json!({"steps": [], "open": "builtin:cube", "save": [p(&out)]});
+    for (body, field) in [(invalid_open, "open"), (invalid_save, "save")] {
+        std::fs::write(&script, body.to_string()).unwrap();
+        let output = cli(&["batch", p(&script)]);
+        assert_eq!(output.status.code(), Some(1));
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(field) && error.contains("must be a string"), "{error}");
+        assert!(output.stdout.is_empty() && !out.exists());
+    }
+    std::fs::write(&script, r#"{"steps":[],"open":null,"save":null}"#).unwrap();
+    assert_eq!(json(&["batch", p(&script)])["completed"], 0);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn info_on_a_mesh_reports_uvs() {
     let d = tmp("mesh");
     let obj = d.join("quad.obj");
