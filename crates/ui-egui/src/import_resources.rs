@@ -151,6 +151,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let visible = |row: &ImportRow| filter.is_none_or(|usage| row.usage == usage);
         let modifiers = ui.input(|i| i.modifiers);
         let mut clicked = None;
+        let mut usage_change = None;
 
         egui::ScrollArea::vertical().min_scrolled_height(LIST_HEIGHT_POINTS).max_height(LIST_HEIGHT_POINTS).auto_shrink([false, false]).show(ui, |ui| {
             for row in window.rows.iter_mut().filter(|row| visible(row)) {
@@ -180,7 +181,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                                 let item = ui.add_enabled(usage.available(), egui::Button::selectable(row.usage == usage, usage.name()));
                                 if usage.available() {
                                     if item.clicked() {
-                                        row.usage = usage;
+                                        usage_change = Some((row.id, usage));
                                         ui.close();
                                     }
                                 } else {
@@ -194,6 +195,15 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 });
             }
         });
+
+        if let Some((edited, usage)) = usage_change {
+            let edit_selection = window.selected.contains(&edited);
+            for row in &mut window.rows {
+                if (row.id == edited || edit_selection && window.selected.contains(&row.id)) && !is_material(row) {
+                    row.usage = usage;
+                }
+            }
+        }
 
         if let Some(id) = clicked {
             let visible: Vec<u64> = if modifiers.shift { window.rows.iter().filter(|row| visible(row)).map(|row| row.id).collect() } else { Vec::new() };

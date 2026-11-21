@@ -142,6 +142,24 @@ fn the_usage_defaults_to_undefined_and_the_choice_reaches_the_import() {
 }
 
 #[test]
+fn choosing_a_usage_updates_the_selected_images() {
+    let dir = TempDir::new("import-resources-multi-usage");
+    let mut h = app();
+    invoke(&mut h);
+    add(&mut h, &[png(&dir, "one.png"), png(&dir, "two.png"), dir.join("material.tcmat"), png(&dir, "three.png")]);
+
+    h.get_by_label("one.png").click();
+    h.run_steps(3);
+    h.get_by_label("material.tcmat").click_modifiers(egui::Modifiers::SHIFT);
+    h.run_steps(3);
+    assert_eq!(h.state().ui.windows.import_resources.as_ref().unwrap().selected.len(), 3);
+    choose_usage(&mut h, 0, "texture");
+
+    let rows = &h.state().ui.windows.import_resources.as_ref().unwrap().rows;
+    assert_eq!(rows.iter().map(|row| row.usage.name()).collect::<Vec<_>>(), ["texture", "texture", "undefined", "undefined"]);
+}
+
+#[test]
 fn a_prefix_goes_in_front_of_the_resource_name() {
     let dir = TempDir::new("import-resources-prefix");
     let mut h = app();
