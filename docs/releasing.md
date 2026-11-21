@@ -109,7 +109,7 @@ All file names are `texturecraft-<version>-<platform>-<arch>.<ext>`, written to 
 | Windows x64, x86, arm64 | `-windows-<arch>.msi`, `-windows-<arch>-portable.zip` | `packaging/windows/package.ps1` |
 | Linux x86_64, aarch64 (Ubuntu 22.04, glibc 2.35) | `.AppImage` + `.AppImage.zsync`, `.deb`, `.rpm`, `.tar.gz` | `packaging/linux/package.sh` |
 | Flatpak x86_64, aarch64 | `-linux-<arch>.flatpak`, repackaged from the Linux tarball | `packaging/linux/flatpak-bundle.sh` |
-| FreeBSD x86_64 (14.3 VM on `github-ubuntu-16core`) | `-freebsd-x86_64.tar.gz` | `packaging/freebsd/package.sh` |
+| FreeBSD x86_64 and aarch64 (aarch64 is cross-compiled in the x86_64 VM) | `-freebsd-<arch>.tar.gz` | `packaging/freebsd/package.sh` |
 | Web | `texturecraft-web-<version>.zip` (trunk, `wasm-release` profile; hosting notes in `packaging/web/README.md`) | `packaging/web/package.sh` |
 
 Every desktop package ships both binaries, `texturecraft` and `texturecraft-cli` (on macOS the CLI
