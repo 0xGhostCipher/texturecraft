@@ -119,7 +119,7 @@ fn the_sections_follow_the_project_setup_order() {
         "Use a separate texture set for each tile",
         "Import settings",
         "Import cameras",
-        "Auto-unwrap",
+        "Rebuild mesh UVs",
         "Import baked maps",
         "Import mesh normal maps and baked maps for all materials.",
         "Normal map filename: <texture set>_normal",
@@ -151,7 +151,7 @@ fn the_defaults_match_the_reference() {
     assert!(ticked(&h, Role::RadioButton, "Keep UV tiles together per material"));
     assert!(disabled(&h, Role::RadioButton, "Keep UV tiles together per material"), "greyed while UV tiles are off");
     assert!(ticked(&h, Role::CheckBox, "Import cameras") && !disabled(&h, Role::CheckBox, "Import cameras"));
-    assert!(ticked(&h, Role::CheckBox, "Auto-unwrap"));
+    assert!(!ticked(&h, Role::CheckBox, "Rebuild mesh UVs") && !disabled(&h, Role::CheckBox, "Rebuild mesh UVs"));
     assert!(ticked(&h, Role::RadioButton, "Use the mesh file’s unit scale"));
     assert!(!ticked(&h, Role::CheckBox, "Scale material fills in real-world units"));
 }
@@ -186,8 +186,6 @@ fn settings_not_available_yet_are_disabled_with_a_hint() {
     let unavailable = [
         (Role::CheckBox, "Compute tangent space per fragment"),
         (Role::RadioButton, "Use a separate texture set for each tile"),
-        (Role::CheckBox, "Auto-unwrap"),
-        (Role::Button, "Auto-unwrap options"),
         (Role::RadioButton, "Custom unit scale"),
         (Role::CheckBox, "Scale material fills in real-world units"),
     ];
@@ -326,7 +324,7 @@ fn the_supported_settings_reach_the_create_command() {
 
 #[test]
 fn ticking_uv_tiles_creates_a_uv_tile_project() {
-    for (tick, expected) in [(false, Vec::<u32>::new()), (true, vec![1002])] {
+    for (tick, rebuild_uvs, expected) in [(false, false, vec![]), (true, false, vec![1002]), (true, true, vec![1001])] {
         let mut h = harness();
         let dir = TempDir::new("new-project-udim");
         h.state_mut().ui.new_project.file = Some(mesh_file(&dir, TILE_1002_QUAD));
@@ -336,6 +334,10 @@ fn ticking_uv_tiles_creates_a_uv_tile_project() {
             h.get_by_role_and_label(Role::CheckBox, "Use UV Tile workflow").click();
             h.run_steps(3);
             assert!(!disabled(&h, Role::RadioButton, "Keep UV tiles together per material"));
+        }
+        if rebuild_uvs {
+            h.get_by_role_and_label(Role::CheckBox, "Rebuild mesh UVs").click();
+            h.run_steps(3);
         }
         h.get_by_role_and_label(Role::CheckBox, "Import cameras").click();
         h.run_steps(2);
@@ -347,6 +349,12 @@ fn ticking_uv_tiles_creates_a_uv_tile_project() {
         assert_eq!(app.session.doc.project.name, "tiles");
         assert_eq!(app.session.doc.project.texture_sets[0].uv_tiles, expected, "UV tiles ticked: {tick}");
         assert_eq!(app.session.doc.project.texture_sets[0].resolution, 128);
+        if rebuild_uvs {
+            let bytes = texturecraft_engine::formats::save_project_bytes(&app.session.project_file()).unwrap();
+            let reopened = texturecraft_engine::Session::from_project_bytes(&bytes).unwrap();
+            assert_eq!(reopened.source_mesh().uvs, app.session.source_mesh().uvs);
+            assert_eq!(reopened.doc.project.format_version, texturecraft_engine::core::project::REBUILT_MESH_UVS_VERSION);
+        }
     }
 }
 

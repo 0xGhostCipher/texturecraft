@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New project from a mesh file",
             [],
             None,
-            "{mesh: path to .glb/.gltf/.fbx/.dae/.usd/.usda/.usdc/.usdz/.abc/.obj/.ply/.stl, resolution?: 2048, name?, uvTiles?: bool (UDIM; default: when the UVs leave tile 1001), template?: project template name, importCameras?: bool (default true: keep the cameras stored in the file)}",
+            "{mesh: path to .glb/.gltf/.fbx/.dae/.usd/.usda/.usdc/.usdz/.abc/.obj/.ply/.stl, resolution?: 2048, name?, uvTiles?: bool (UDIM; default: when the UVs leave tile 1001), rebuildUvs?: bool (default false: auto-unwrap where needed), template?: project template name, importCameras?: bool (default true: keep the cameras stored in the file)}",
             always,
             new_from_mesh
         ),
@@ -101,7 +101,7 @@ fn leaf_of(name: &str) -> String {
 /// with, so its unnamed parts keep their names (and the geometry masks that use them).
 fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8]) -> Result<texturecraft_formats::ImportedMesh> {
     let stem = std::path::Path::new(&project.mesh_file).file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).unwrap_or("mesh");
-    texturecraft_formats::import_mesh_bytes(&format!("{stem}.{ext}"), bytes).map_err(fe)
+    texturecraft_formats::mesh_import::import_mesh_bytes_with_uvs(&format!("{stem}.{ext}"), bytes, project.mesh_rebuild_uvs).map_err(fe)
 }
 
 impl Session {
@@ -160,11 +160,16 @@ impl Session {
 
     /// [`Session::from_mesh_bytes`] with a UV tile mode (see [`Session::new_project_tiled`]).
     pub fn from_mesh_bytes_tiled(file_name: &str, bytes: &[u8], resolution: u32, name: &str, uv_tiles: Option<bool>) -> Result<Session> {
-        Self::from_mesh_source(file_name, Cow::Borrowed(bytes), resolution, name, uv_tiles)
+        Self::from_mesh_bytes_with_uvs(file_name, bytes, resolution, name, uv_tiles, false)
     }
 
-    fn from_mesh_source(file_name: &str, bytes: Cow<'_, [u8]>, resolution: u32, name: &str, uv_tiles: Option<bool>) -> Result<Session> {
-        let imported = texturecraft_formats::import_mesh_bytes(file_name, &bytes).map_err(fe)?;
+    /// Create a project with an explicit choice to rebuild the imported mesh's UVs.
+    pub fn from_mesh_bytes_with_uvs(file_name: &str, bytes: &[u8], resolution: u32, name: &str, uv_tiles: Option<bool>, rebuild_uvs: bool) -> Result<Session> {
+        Self::from_mesh_source(file_name, Cow::Borrowed(bytes), resolution, name, uv_tiles, rebuild_uvs)
+    }
+
+    fn from_mesh_source(file_name: &str, bytes: Cow<'_, [u8]>, resolution: u32, name: &str, uv_tiles: Option<bool>, rebuild_uvs: bool) -> Result<Session> {
+        let imported = texturecraft_formats::mesh_import::import_mesh_bytes_with_uvs(file_name, &bytes, rebuild_uvs).map_err(fe)?;
         let extension = ext_of(file_name);
         let mut session = Session::new_project_tiled(name, imported.mesh, &format!("mesh.{extension}"), None, resolution, uv_tiles)?;
 
@@ -173,6 +178,7 @@ impl Session {
         source.shrink_to_fit();
         session.mesh_source = Some((extension, source));
         session.doc.project.mesh_file = leaf_of(file_name);
+        session.doc.project.mesh_rebuild_uvs = rebuild_uvs;
         session.doc.project.cameras = imported.cameras;
 
         session.log.warnings("Importer", imported.report.warnings);
@@ -500,7 +506,7 @@ mod native {
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{absolute, open_path, read_mesh};
 
-/// `file.new {mesh, name?, resolution?, uvTiles?, template?, importCameras?}`: a new project from the
+/// `file.new {mesh, name?, resolution?, uvTiles?, rebuildUvs?, template?, importCameras?}`: a new project from the
 /// mesh file `mesh`, remembering its path for Reimport mesh.
 #[cfg(not(target_arch = "wasm32"))]
 fn new_from_mesh(session: &mut Session, params: &Value) -> Result<Value> {
@@ -511,9 +517,11 @@ fn new_from_mesh(session: &mut Session, params: &Value) -> Result<Value> {
     let resolution = u64p(params, "resolution").or(template.as_ref().map(|template| u64::from(template.resolution))).unwrap_or(DEFAULT_RESOLUTION_PX);
     let name = strp(params, "name").map(str::to_string).unwrap_or_else(|| stem_of(path));
     let uv_tiles = crate::commands::boolp(params, "uvTiles");
+    let rebuild_uvs = crate::commands::boolp(params, "rebuildUvs").unwrap_or(false);
     let mesh_file = native::read_mesh("file.new", path)?;
 
-    let mut next = Session::from_mesh_source(&mesh_file.name, Cow::Owned(mesh_file.bytes), u32::try_from(resolution).unwrap_or(0), &name, uv_tiles)?;
+    let mut next =
+        Session::from_mesh_source(&mesh_file.name, Cow::Owned(mesh_file.bytes), u32::try_from(resolution).unwrap_or(0), &name, uv_tiles, rebuild_uvs)?;
     next.doc.project.mesh_path = native::absolute(path);
     next.log.warnings("Importer", mesh_file.warnings);
     if crate::commands::boolp(params, "importCameras") == Some(false) {
@@ -576,7 +584,7 @@ fn reimport(s: &mut Session, p: &Value) -> Result<Value> {
 fn change_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let path = native::path_param(p, "path", "file.changeMesh")?;
     let file = native::read_mesh("file.changeMesh", path)?;
-    let reply = s.reimport_mesh(Some(file), crate::commands::boolp(p, "preserveStrokes").unwrap_or(true))?;
+    let reply = s.replace_mesh(Some(file), crate::commands::boolp(p, "preserveStrokes").unwrap_or(true), false)?;
     // Only after the swap succeeded: Reimport mesh and Save keep following the new file.
     s.doc.project.mesh_path = native::absolute(path);
     Ok(reply)
@@ -594,9 +602,13 @@ impl Session {
     /// With `preserve_strokes`, painted pixels follow the surface where the UVs changed. Replies
     /// like `file.reimportMesh`: `{preserved?}`.
     pub fn reimport_mesh(&mut self, file: Option<texturecraft_formats::MeshFile>, preserve_strokes: bool) -> Result<Value> {
+        self.replace_mesh(file, preserve_strokes, self.doc.project.mesh_rebuild_uvs)
+    }
+
+    fn replace_mesh(&mut self, file: Option<texturecraft_formats::MeshFile>, preserve_strokes: bool, rebuild_uvs: bool) -> Result<Value> {
         let (mesh, source, warnings, mesh_file) = match file {
             Some(f) => {
-                let m = texturecraft_formats::import_mesh_bytes(&f.name, &f.bytes).map_err(fe)?.mesh;
+                let m = texturecraft_formats::mesh_import::import_mesh_bytes_with_uvs(&f.name, &f.bytes, rebuild_uvs).map_err(fe)?.mesh;
                 (m, Some((ext_of(&f.name), f.bytes)), f.warnings, leaf_of(&f.name))
             }
             None => match &self.mesh_source {
@@ -611,6 +623,7 @@ impl Session {
         if let Some((ext, _)) = &source {
             doc.project.mesh = format!("mesh.{ext}");
             doc.project.mesh_file = mesh_file;
+            doc.project.mesh_rebuild_uvs = rebuild_uvs;
         }
         let mut next = Session::new(doc, mesh, source)?;
         next.log.warnings("Importer", warnings);

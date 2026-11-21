@@ -18,12 +18,13 @@
 //! count of 0, followed by `width × height × components` f32 LE. Pixels of a UV-tiled texture
 //! set cover its whole atlas (`resolution` per tile, see `TileGrid`).
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read, Seek, Write};
 use std::sync::Arc;
 
 use texturecraft_compose::{BakedMaps, PixelStore};
+use texturecraft_core::project::REBUILT_MESH_UVS_VERSION;
 use texturecraft_core::{BakePaintTarget, BakedMap, Channel, FORMAT_VERSION, LayerId, Project, TANGENT_BENT_NORMAL_VERSION};
 use texturecraft_texel::{TILE_AREA, TileImage};
 use zip::write::SimpleFileOptions;
@@ -190,7 +191,12 @@ fn write_baked(w: &mut dyn Write, res: u32, h: u32, comps: usize, data: &[f32]) 
 fn entries(pf: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<Vec<Entry<'_>>> {
     let deflate = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated).large_file(true);
     let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    let json = serde_json::to_vec_pretty(&pf.project).map_err(|e| FormatError::Invalid(e.to_string()))?;
+    let mut project = Cow::Borrowed(&pf.project);
+    // An older reader would load the authored UVs and put paint in the wrong places.
+    if project.mesh_rebuild_uvs && project.format_version < REBUILT_MESH_UVS_VERSION {
+        project.to_mut().format_version = REBUILT_MESH_UVS_VERSION;
+    }
+    let json = serde_json::to_vec_pretty(project.as_ref()).map_err(|e| FormatError::Invalid(e.to_string()))?;
     let mut out = vec![Entry { name: "project.json".into(), options: deflate, weight: json.len() as u64, body: Box::new(move |w| w.write_all(&json)) }];
     if let Some((ext, bytes)) = &pf.mesh {
         out.push(Entry {
@@ -505,7 +511,7 @@ fn load_archive<R: Read + Seek>(mut zip: ZipArchive<R>, mut budget: LoadBudget) 
     if version < TANGENT_BENT_NORMAL_VERSION {
         drop_world_space_bent_normals(&mut pf);
     }
-    pf.project.format_version = FORMAT_VERSION;
+    pf.project.format_version = version.max(TANGENT_BENT_NORMAL_VERSION);
 
     if recovered {
         pf.warnings.push(

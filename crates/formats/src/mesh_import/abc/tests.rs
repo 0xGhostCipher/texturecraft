@@ -217,10 +217,10 @@ fn imports_polymesh_through_xforms_with_face_sets_uvs_and_normals() {
             assert!((p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).z > 0.0);
         }
     }
-    let mesh = finish(raw).unwrap().mesh;
+    let mesh = finish(raw, false).unwrap().mesh;
     assert_eq!(mesh.materials.len(), 3);
     // The strip alone keeps its indexed face-varying UVs: u = x / 2 in the file's own space.
-    let strip = finish(read(&sample_file(false)).unwrap()).unwrap();
+    let strip = finish(read(&sample_file(false)).unwrap(), false).unwrap();
     assert!(!strip.report.uvs_generated);
     for (p, uv) in strip.mesh.positions.iter().zip(&strip.mesh.uvs) {
         let local = (*p - Vec3::new(1.0, 2.0, 3.0)) / 2.0;
@@ -332,7 +332,7 @@ fn truncated_and_corrupted_files_never_panic() {
             b[i] = (rng >> 32) as u8;
         }
         if let Ok(raw) = read(&b) {
-            let _ = finish(raw);
+            let _ = finish(raw, false);
         }
     }
 }

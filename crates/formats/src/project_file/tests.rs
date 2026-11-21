@@ -104,7 +104,7 @@ fn legacy_bakes_load_as_is_without_layout_conversion() {
     sample.pf.baked.insert(0, BakedMaps { resolution: 32, maps: [(BakedMap::AmbientOcclusion, Arc::new(pixels))].into() });
 
     let loaded = load_project_bytes(&save_project_bytes(&sample.pf).unwrap()).unwrap();
-    assert_eq!(loaded.project.format_version, FORMAT_VERSION);
+    assert_eq!(loaded.project.format_version, TANGENT_BENT_NORMAL_VERSION);
     assert_eq!(loaded.baked, sample.pf.baked, "old bake pixels are accepted without preserving their former layout");
     assert_eq!(loaded.bake_paint, sample.pf.bake_paint, "correction paint remains in the working layout");
     let reopened = load_project_bytes(&save_project_bytes(&loaded).unwrap()).unwrap();
