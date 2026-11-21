@@ -227,7 +227,8 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
-    if u64p(p, "index").is_none() && strp(p, "name").is_none_or(|n| n == DEFAULT_CAMERA) {
+    let default_name = p.get("name").is_none_or(|name| name.is_null() || name.as_str() == Some(DEFAULT_CAMERA));
+    if p.get("index").is_none_or(Value::is_null) && default_name {
         // The default camera: fov and projection from the display settings, framing the mesh
         s.selected_camera_name = None;
         s.camera.fov = s.doc.project.display.fov;
@@ -451,6 +452,31 @@ mod tests {
         assert!(execute(&mut s, "camera.rename", &json!({"index": 0})).is_err(), "`to` is required");
         execute(&mut s, "edit.undo", &Value::Null).unwrap();
         assert_eq!(s.doc.project.cameras.len(), 2, "removing is undoable");
+    }
+
+    #[test]
+    fn malformed_camera_selectors_leave_the_current_view_intact() {
+        let mut s = session();
+        execute(&mut s, "camera.set", &json!({"yaw": 30, "target": [1, 2, 3], "fov": 25, "ortho": true})).unwrap();
+        execute(&mut s, "camera.add", &json!({"name": "Side"})).unwrap();
+        execute(&mut s, "camera.select", &json!({"index": 0, "name": DEFAULT_CAMERA})).unwrap();
+        let side = s.camera;
+        let revision = s.revision;
+        for params in [json!({"index": -1}), json!({"index": -0.5}), json!({"index": "0"}), json!({"name": false})] {
+            assert!(execute(&mut s, "camera.select", &params).is_err(), "{params}");
+            assert_eq!(s.camera, side);
+            assert_eq!(s.selected_camera_name.as_deref(), Some("Side"));
+            assert_eq!(s.revision, revision);
+        }
+
+        for params in [json!({"index": null, "name": null}), json!({"name": DEFAULT_CAMERA})] {
+            execute(&mut s, "camera.select", &json!({"index": null, "name": "Side"})).unwrap();
+            assert_eq!(s.camera, side);
+            execute(&mut s, "camera.select", &params).unwrap();
+            assert_eq!(s.selected_camera_name, None);
+            assert!(!s.camera.ortho);
+            assert_eq!(s.camera.fov, s.doc.project.display.fov);
+        }
     }
 
     #[test]
