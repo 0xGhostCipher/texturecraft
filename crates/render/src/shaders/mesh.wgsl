@@ -388,6 +388,11 @@ fn fs_gbuf(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32
     var sss = vec3<f32>(0.0);
     if (g.scatter.w > 0.5) {
         sss = shade_mesh(i, front).sss;
+        if (i.hover == 1u) {
+            // fs_mesh mixes the hover tint into the color without this light; the blur pass adds it
+            // back unblended, so scale it by the share of the color that stays
+            sss = sss * (1.0 - g.set_hover.a);
+        }
     } else if (textureSample(t_base, samp, i.uv).a < hash12(i.clip.xy)) {
         discard;
     }

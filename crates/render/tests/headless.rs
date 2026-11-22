@@ -1072,6 +1072,31 @@ fn subsurface_blur_spreads_only_scattering_light() {
     assert!((m1 - m0).abs() < 2.0, "the blur moves light, it adds none: {m0} -> {m1}");
 }
 
+#[test]
+fn the_hover_tint_covers_the_blurred_scattering_light_too() {
+    let Some((mut h, frame)) = setup() else { return };
+    let lit = shaded(&frame, |s| s.light = LIGHT);
+    let mask = mesh_mask(&mut h, &lit, &[0]);
+    fill(&mut h, &[0, 1], DisplayKind::BaseColor, &[150, 150, 150, 255]);
+    fill(&mut h, &[0, 1], DisplayKind::Emissive, &[0, 0, 0, 255]);
+    let blur = shaded(&lit, |s| s.sss_blur = Some([0.06, 0.024, 0.015]));
+    let hover = |f: &Frame| shaded(f, |s| s.set_hover = Some(texturecraft_render::SetHighlight { set: 0, color: [1.0, 0.5, 0.0] }));
+    let mean = |img: &Img| region_mean(&mask, |x, y| img.luma(x, y));
+    let plain = mean(&render(&mut h, &lit, "hover_sss_plain"));
+    let blurred = mean(&render(&mut h, &blur, "hover_sss_blur"));
+    let hovered_plain = mean(&render(&mut h, &hover(&lit), "hover_sss_plain_hovered"));
+    let hovered_blur = mean(&render(&mut h, &hover(&blur), "hover_sss_blur_hovered"));
+    assert!(hovered_plain != plain, "the hover tint changes the set");
+    // The blur only moves light around, so it must change a hovered set as little as a plain one
+    // (the scattering light restored by the blur pass is blended with the tint as well)
+    assert!(
+        ((hovered_blur - hovered_plain) - (blurred - plain)).abs() < 3.0,
+        "the blur changes the plain set by {} and the hovered set by {}",
+        blurred - plain,
+        hovered_blur - hovered_plain
+    );
+}
+
 /// An environment that is bright only around `dir` (world space, rotation 0).
 fn spot_environment(dir: texturecraft_geom::glam::Vec3) -> ImageRes {
     let (w, hh) = (256u32, 128u32);
