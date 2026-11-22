@@ -1090,7 +1090,7 @@ fn the_hover_tint_covers_the_blurred_scattering_light_too() {
     // The blur only moves light around, so it must change a hovered set as little as a plain one
     // (the scattering light restored by the blur pass is blended with the tint as well)
     assert!(
-        ((hovered_blur - hovered_plain) - (blurred - plain)).abs() < 3.0,
+        ((hovered_blur - hovered_plain) - (blurred - plain)).abs() < 1.0,
         "the blur changes the plain set by {} and the hovered set by {}",
         blurred - plain,
         hovered_blur - hovered_plain

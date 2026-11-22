@@ -2222,9 +2222,12 @@ impl Renderer {
         let geo = self.geometry(m, frame);
         pass.set_vertex_buffer(0, geo.vb.slice(..));
         pass.set_index_buffer(geo.ib.slice(..), wgpu::IndexFormat::Uint32);
-        for (range, _, set) in self.drawable(&geo.draws, &frame.visible, None) {
+        // As in the main pass, instance index 1 marks the hovered set (fs_gbuf scales its scattering light)
+        let hover_set = frame.shade.set_hover.filter(|_| frame.kind == ViewKind::Scene).map(|hover| hover.set);
+        for (range, texture_set, set) in self.drawable(&geo.draws, &frame.visible, None) {
             pass.set_bind_group(1, &set.bind_group, &[]);
-            pass.draw_indexed(range, 0, 0..1);
+            let first_instance = u32::from(hover_set == Some(texture_set));
+            pass.draw_indexed(range, 0, first_instance..first_instance + 1);
         }
     }
 
