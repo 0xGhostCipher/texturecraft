@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use texturecraft_engine::compose::ThumbTarget;
 use texturecraft_engine::core::{
     BakedMap, BlendMode, Channel, ChannelBlend, ChannelKind, Decal, DecalFlip, Effect, EffectKind, Fill, Filter, Layer, LayerId, LayerKind, LinkParam,
-    MaterialLink, Projection, Source,
+    MaterialLink, Project, Projection, Source,
 };
 use texturecraft_engine::filter_lib::scalar_params;
 use texturecraft_engine::paint::alpha_params::MAX_ALPHA_CONTRAST;
@@ -249,9 +249,10 @@ pub(crate) fn layers(app: &mut TextureCraftApp, ui: &mut Ui) {
     select_all_layers(app, ui);
     // A thumbnail or selection can close the editor before its TextEdit sees lost focus.
     if let Some((id, _)) = &app.ui.rename
-        && let Some((owner, _)) = app.session.doc.project.effect(LayerId(*id))
+        && app.session.doc.project.effect(LayerId(*id)).is_some()
         && app.layer_panel.expanded_effects.is_none_or(|(layer, in_mask)| {
-            layer != owner || !app.session.doc.project.layers.get(&layer).is_some_and(|l| stack_effects(l, in_mask).iter().any(|e| e.id.0 == *id))
+            let project = &app.session.doc.project;
+            !project.layers.get(&layer).is_some_and(|l| stack_effects(project, l, in_mask).iter().any(|e| e.id.0 == *id))
         })
     {
         finish_effect_rename(app);
@@ -497,8 +498,13 @@ fn level_x(left: f32, level: usize) -> f32 {
     left + ROW_LEFT_PADDING + level as f32 * INDENT + EYE_SIZE * 0.5
 }
 
-fn stack_effects(layer: &Layer, in_mask: bool) -> &[Effect] {
-    if in_mask { layer.mask.as_ref().map_or(&[], |mask| &mask.effects) } else { &layer.content_effects }
+/// The effects `layer` lists in its mask (the mask it draws with, so an instance without its own shows its source's) or content.
+fn stack_effects(project: &Project, layer: &Layer, in_mask: bool) -> Vec<Effect> {
+    if in_mask {
+        project.layers.get(&project.mask_owner(layer.id)).and_then(|owner| owner.mask.as_ref()).map_or_else(Vec::new, |mask| mask.effects.clone())
+    } else {
+        layer.content_effects.clone()
+    }
 }
 
 fn layer_tree(app: &mut TextureCraftApp, ui: &mut Ui, id: LayerId, depth: usize, count: &mut usize) {
@@ -510,9 +516,9 @@ fn layer_tree(app: &mut TextureCraftApp, ui: &mut Ui, id: LayerId, depth: usize,
     if let Some((open_layer, in_mask)) = app.layer_panel.expanded_effects
         && open_layer == id
     {
-        let stack = stack_effects(&layer, in_mask);
+        let stack = stack_effects(&app.session.doc.project, &layer, in_mask);
         for (index, effect) in stack.iter().rev().enumerate() {
-            effect_row(app, ui, &layer, stack, effect, index, depth + 2, index + 1 == stack.len(), in_mask);
+            effect_row(app, ui, &layer, &stack, effect, index, depth + 2, index + 1 == stack.len(), in_mask);
         }
     }
 
@@ -715,7 +721,7 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
         let mask_response = ui
             .interact(mask_rect, ui.scope_id().with(("mask", layer.id.0)), Sense::click())
             .on_hover_text(tr("Select the mask (Alt+click: show it in the viewport)"));
-        let mask_stack = layer.mask.as_ref().filter(|mask| !mask.effects.is_empty()).map(|_| (layer.id, true));
+        let mask_stack = (!mask.effects.is_empty()).then_some((layer.id, true));
         effect_stack_thumbnail(
             app,
             &painter,

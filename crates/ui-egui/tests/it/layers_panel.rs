@@ -49,6 +49,36 @@ fn click(h: &mut Harness<'_, TextureCraftApp>, at: egui::Pos2) {
     h.run_steps(3);
 }
 
+/// An instance without a mask of its own shows its source's mask thumbnail with the effect badge, so
+/// that thumbnail opens the source mask's effects and each of those rows can be selected from the instance.
+#[test]
+fn an_instance_mask_thumbnail_opens_the_inherited_mask_effects() {
+    let (mut h, source) = harness();
+    let instance = LayerId(id(execute(&mut h.state_mut().session, "layer.instance", &json!({"layer": source.0})).unwrap(), "layer"));
+    execute(&mut h.state_mut().session, "layer.rename", &json!({"layer": instance.0, "name": "Instance row"})).unwrap();
+    execute(&mut h.state_mut().session, "layer.select", &json!({"layer": instance.0})).unwrap();
+    h.run_steps(4);
+    assert!(h.state().session.doc.project.layers[&instance].mask.is_none(), "the instance draws with its source's mask");
+    assert!(h.query_by_label("Effect M").is_none(), "stacks start closed");
+
+    let mask = thumb(&h, "Instance row", true);
+    click(&mut h, mask);
+    assert_eq!(h.state().session.selected_layer(), Some(instance));
+    assert_eq!(h.state().session.target, StackTarget::Mask);
+    assert!(h.query_by_label("Effect M").is_some(), "the inherited mask effect is listed");
+    click(&mut h, mask);
+    assert!(h.query_by_label("Effect M").is_none(), "the same thumbnail closes the stack");
+    click(&mut h, mask);
+
+    // Selecting the inherited effect through the instance keeps the instance selected and the stack open
+    let row = h.get_by_label("Effect M").rect();
+    click(&mut h, row.center());
+    let StackTarget::Effect(effect) = h.state().session.target else { panic!("{:?}", h.state().session.target) };
+    assert_eq!(h.state().session.doc.project.effect(effect).map(|(owner, _)| owner), Some(source));
+    assert_eq!(h.state().session.selected_layer(), Some(instance));
+    assert!(h.query_by_label("Effect M").is_some(), "selecting an effect leaves its stack open");
+}
+
 #[test]
 fn mask_and_content_thumbnails_toggle_their_own_stacks() {
     let (mut h, layer) = harness();
