@@ -381,17 +381,16 @@ fn fs_opaque(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
 }
 
 // The depth of field / subsurface G-buffer: rgb the scattering diffuse light (when the blur is
-// on), a the view depth (the clear value 0 marks the background).
+// on), a the view depth (the clear value 0 marks the background). With the blur on, the depth of
+// a pixel of the hovered set is negated: the blur pass reads it as that pixel's hover marker.
 @fragment
 fn fs_gbuf(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let z = max(dot(i.wpos - g.eye.xyz, g.fwd.xyz), 1e-4);
+    var z = max(dot(i.wpos - g.eye.xyz, g.fwd.xyz), 1e-4);
     var sss = vec3<f32>(0.0);
     if (g.scatter.w > 0.5) {
         sss = shade_mesh(i, front).sss;
         if (i.hover == 1u) {
-            // fs_mesh mixes the hover tint into the color without this light; the blur pass adds it
-            // back unblended, so scale it by the share of the color that stays
-            sss = sss * (1.0 - g.set_hover.a);
+            z = -z;
         }
     } else if (textureSample(t_base, samp, i.uv).a < hash12(i.clip.xy)) {
         discard;

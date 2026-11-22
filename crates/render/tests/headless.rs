@@ -1077,15 +1077,17 @@ fn the_hover_tint_covers_the_blurred_scattering_light_too() {
     let Some((mut h, frame)) = setup() else { return };
     let lit = shaded(&frame, |s| s.light = LIGHT);
     let mask = mesh_mask(&mut h, &lit, &[0]);
+    let neighbour = mesh_mask(&mut h, &lit, &[1]);
     fill(&mut h, &[0, 1], DisplayKind::BaseColor, &[150, 150, 150, 255]);
     fill(&mut h, &[0, 1], DisplayKind::Emissive, &[0, 0, 0, 255]);
     let blur = shaded(&lit, |s| s.sss_blur = Some([0.06, 0.024, 0.015]));
     let hover = |f: &Frame| shaded(f, |s| s.set_hover = Some(texturecraft_render::SetHighlight { set: 0, color: [1.0, 0.5, 0.0] }));
     let mean = |img: &Img| region_mean(&mask, |x, y| img.luma(x, y));
-    let plain = mean(&render(&mut h, &lit, "hover_sss_plain"));
-    let blurred = mean(&render(&mut h, &blur, "hover_sss_blur"));
+    let plain_img = render(&mut h, &lit, "hover_sss_plain");
+    let blurred_img = render(&mut h, &blur, "hover_sss_blur");
+    let hovered_blur_img = render(&mut h, &hover(&blur), "hover_sss_blur_hovered");
+    let (plain, blurred, hovered_blur) = (mean(&plain_img), mean(&blurred_img), mean(&hovered_blur_img));
     let hovered_plain = mean(&render(&mut h, &hover(&lit), "hover_sss_plain_hovered"));
-    let hovered_blur = mean(&render(&mut h, &hover(&blur), "hover_sss_blur_hovered"));
     assert!(hovered_plain != plain, "the hover tint changes the set");
     // The blur only moves light around, so it must change a hovered set as little as a plain one
     // (the scattering light restored by the blur pass is blended with the tint as well)
@@ -1094,6 +1096,15 @@ fn the_hover_tint_covers_the_blurred_scattering_light_too() {
         "the blur changes the plain set by {} and the hovered set by {}",
         blurred - plain,
         hovered_blur - hovered_plain
+    );
+    // The set next to the hovered one keeps its light: the blur takes light across the boundary, and
+    // the hover must not dim what the neighbour receives from the hovered set
+    let other = |img: &Img| region_mean(&neighbour, |x, y| img.luma(x, y));
+    assert!(
+        (other(&hovered_blur_img) - other(&blurred_img)).abs() < 1.0,
+        "hovering set 0 changes set 1 from {} to {}",
+        other(&blurred_img),
+        other(&hovered_blur_img)
     );
 }
 

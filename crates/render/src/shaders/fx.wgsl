@@ -1,7 +1,8 @@
 // Scene effects between the scene pass and the post pass, appended to util.wgsl and post.wgsl
 // (uses `src`, `src_samp`, `post`, `fx_a`): the screen-space subsurface blur and depth of field.
 // Both read the G-buffer of `fs_gbuf` (mesh.wgsl): rgb the scattering part of the diffuse light,
-// a the view depth (0: background). Colors are linear HDR premultiplied by scene coverage.
+// a the view depth (0: background; negative where the hovered set shows when the subsurface blur
+// is on: read depths with abs). Colors are linear HDR premultiplied by scene coverage.
 
 @group(0) @binding(5) var fx_b: texture_2d<f32>;
 @group(0) @binding(6) var fx_c: texture_2d<f32>;
@@ -31,12 +32,14 @@ fn px_per_world(z: f32) -> f32 {
     return select(post.d.w / max(z, 1e-4), post.d.w, post.e.x > 0.5);
 }
 
-// One direction of the blur over `src` (rgb light, a depth) at pixel `p` (same-size target).
+// One direction of the blur over `src` (rgb light, a depth) at pixel `p` (same-size target). The
+// result keeps the centre's depth, sign included (negative: the hovered set).
 fn sss_blur(p: vec2<f32>, dir: vec2<f32>) -> vec4<f32> {
     let c = texel_at(src, p);
-    let sigma = post.d.xyz * px_per_world(c.a);
+    let z = abs(c.a);
+    let sigma = post.d.xyz * px_per_world(z);
     let smax = max(sigma.r, max(sigma.g, sigma.b));
-    if (c.a <= 0.0 || smax < 0.5) {
+    if (z <= 0.0 || smax < 0.5) {
         return c;
     }
     let stride = dir * (smax * 3.0 / f32(SSS_TAPS));
@@ -55,7 +58,8 @@ fn sss_blur(p: vec2<f32>, dir: vec2<f32>) -> vec4<f32> {
         let o = f32(k) + jitter;
         let t = texel_at(src, p + stride * o);
         let x = o * smax * 3.0 / f32(SSS_TAPS);
-        let wd = select(0.0, max(1.0 - abs(t.a - c.a) / depth_range, 0.0), t.a > 0.0);
+        let tz = abs(t.a);
+        let wd = select(0.0, max(1.0 - abs(tz - z) / depth_range, 0.0), tz > 0.0);
         let w = exp(-x * x * inv);
         sum += mix(c.rgb, t.rgb, wd) * w;
         wsum += w;
@@ -70,12 +74,15 @@ fn fs_sss_h(i: FsOut) -> @location(0) vec4<f32> {
 }
 
 // src: the horizontal pass, fx_a: the scene (without its scattering light, see `fs_mesh`). Adds
-// the blurred scattering light.
+// the blurred scattering light. On the hovered set (negative depth) the light is scaled like the
+// rest of the color the hover tint mixes in (post.e.z: the tint's opacity), so a neighbouring set
+// keeps the light it receives.
 @fragment
 fn fs_sss_v(i: FsOut) -> @location(0) vec4<f32> {
-    let blurred = sss_blur(i.pos.xy, vec2<f32>(0.0, 1.0)).rgb;
+    let blurred = sss_blur(i.pos.xy, vec2<f32>(0.0, 1.0));
     let scene = texel_at(fx_a, i.pos.xy);
-    return scene + vec4<f32>(blurred * clamp(scene.a, 0.0, 1.0), 0.0);
+    let keep = select(1.0, 1.0 - post.e.z, blurred.a < 0.0);
+    return scene + vec4<f32>(blurred.rgb * keep * clamp(scene.a, 0.0, 1.0), 0.0);
 }
 
 // ---- Depth of field: a thin lens. Scatter-as-gather over a golden-angle spiral at half
@@ -107,7 +114,7 @@ struct DofOut {
 @fragment
 fn fs_dof_gather(i: FsOut) -> DofOut {
     let px = 1.0 / vec2<f32>(textureDimensions(src));
-    let zc = texel(fx_a, i.uv).a;
+    let zc = abs(texel(fx_a, i.uv).a);
     let cc = abs(coc(zc));
     let rmax = post.c.z;
     // Half the spacing of the taps: the soft edge of each tap's reach.
@@ -123,7 +130,7 @@ fn fs_dof_gather(i: FsOut) -> DofOut {
         let r = rmax * sqrt((f32(k) + 0.5) / f32(DOF_TAPS));
         let a = f32(k) * GOLDEN_ANGLE + turn;
         let uv = i.uv + vec2<f32>(cos(a), sin(a)) * (r * px);
-        let z = texel(fx_a, uv).a;
+        let z = abs(texel(fx_a, uv).a);
         let nearer = z > 0.0 && (zc <= 0.0 || z < zc);
         var size = abs(coc(z));
         if (!nearer) {
@@ -145,7 +152,7 @@ const PI_FX: f32 = 3.14159265;
 @fragment
 fn fs_dof(i: FsOut) -> @location(0) vec4<f32> {
     let sharp = texel_at(src, i.pos.xy);
-    let f = max(smoothstep(0.5, 1.5, abs(coc(texel_at(fx_b, i.pos.xy).a))), textureSampleLevel(fx_c, src_samp, i.uv, 0.0).r);
+    let f = max(smoothstep(0.5, 1.5, abs(coc(abs(texel_at(fx_b, i.pos.xy).a)))), textureSampleLevel(fx_c, src_samp, i.uv, 0.0).r);
     // In focus with nothing blurred in front: the sharp pixel itself (no blend through the
     // half-resolution blur at all).
     if (f <= 0.0) {

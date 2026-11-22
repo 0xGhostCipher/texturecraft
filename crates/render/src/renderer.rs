@@ -2143,7 +2143,7 @@ impl Renderer {
             b: [fx(s.vignette), fx(s.sharpen), fx(s.grain), BLOOM_THRESHOLD],
             c: dof_c,
             d: sss_d,
-            e: [flag(cam.ortho), sample as f32, 0.0, 0.0],
+            e: [flag(cam.ortho), sample as f32, raw.set_hover[3], 0.0],
             back_top: [s.background[0][0], s.background[0][1], s.background[0][2], 0.0],
             back_bottom: [s.background[1][0], s.background[1][1], s.background[1][2], 0.0],
         };
@@ -2222,7 +2222,7 @@ impl Renderer {
         let geo = self.geometry(m, frame);
         pass.set_vertex_buffer(0, geo.vb.slice(..));
         pass.set_index_buffer(geo.ib.slice(..), wgpu::IndexFormat::Uint32);
-        // As in the main pass, instance index 1 marks the hovered set (fs_gbuf scales its scattering light)
+        // As in the main pass, instance index 1 marks the hovered set (fs_gbuf negates its depths for the blur pass)
         let hover_set = frame.shade.set_hover.filter(|_| frame.kind == ViewKind::Scene).map(|hover| hover.set);
         for (range, texture_set, set) in self.drawable(&geo.draws, &frame.visible, None) {
             pass.set_bind_group(1, &set.bind_group, &[]);
