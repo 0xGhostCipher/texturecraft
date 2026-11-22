@@ -16,6 +16,47 @@ use crate::commands::{CommandSpec, always, bad, normal_format_param, strp, u64p}
 use crate::session::{Document, Session};
 use crate::{EngineError, Result, cmd};
 
+fn project_with_resources<Resource>(
+    doc: &Document,
+    mesh: Option<&(String, Arc<Vec<u8>>)>,
+    bake_meshes: &crate::BakeMeshes,
+    resources: BTreeMap<String, Resource>,
+) -> ProjectFile<Resource> {
+    let mut pixels = doc.pixels.clone();
+
+    // Drop pixel images whose size no longer matches their texture set
+    let size_of = |id: texturecraft_core::LayerId| {
+        doc.project.locate(id).and_then(|(ts, _, _)| doc.project.texture_sets.get(ts)).map(TextureSet::size).or_else(|| {
+            doc.project
+                .effect(id)
+                .and_then(|(owner, _)| doc.project.locate(owner))
+                .and_then(|(ts, _, _)| doc.project.texture_sets.get(ts))
+                .map(TextureSet::size)
+        })
+    };
+    pixels.layers.retain(|(id, _), img| size_of(*id) == Some((img.width(), img.height())));
+    pixels.masks.retain(|id, img| size_of(*id) == Some((img.width(), img.height())));
+
+    let bake_mesh = |mesh: &crate::BakeMesh| (mesh.name.clone(), mesh.bytes.as_ref().clone());
+    let bake_paint = doc
+        .bake_paint
+        .iter()
+        .map(|(key, map)| (*key, texturecraft_formats::BakePaintData { width: map.width, height: map.height, values: map.values.clone() }))
+        .collect();
+    ProjectFile {
+        project: doc.project.clone(),
+        pixels,
+        baked: doc.baked.clone(),
+        mesh: mesh.map(|(extension, bytes)| (extension.clone(), bytes.as_ref().clone())),
+        high_poly: bake_meshes.high.iter().map(bake_mesh).collect(),
+        cage: bake_meshes.cage.as_ref().map(bake_mesh),
+        bake_paint,
+        thumbnail: None,
+        resources,
+        warnings: Vec::new(),
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -171,7 +212,7 @@ impl Session {
         // Packed mesh files can have spare capacity that the project would otherwise retain
         let mut source = bytes.into_owned();
         source.shrink_to_fit();
-        session.mesh_source = Some((extension, source));
+        session.mesh_source = Some((extension, Arc::new(source)));
         session.doc.project.mesh_file = leaf_of(file_name);
         session.doc.project.cameras = imported.cameras;
 
@@ -204,7 +245,7 @@ impl Session {
         };
 
         check_materials(&pf.project, &mesh)?;
-        let source = pf.mesh.clone();
+        let source = pf.mesh;
         let resources = pf.resources.into_iter().map(|(k, v)| (k, std::sync::Arc::new(v))).collect();
         let mut s =
             Session::new(Document { bake_paint: Default::default(), project: pf.project, pixels: pf.pixels, baked: pf.baked, resources }, mesh, source)?;
@@ -220,44 +261,12 @@ impl Session {
     /// The project with independently owned resource bytes.
     pub fn project_file(&self) -> ProjectFile {
         let resources = self.doc.resources.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().clone())).collect();
-        self.project_with_resources(resources)
+        project_with_resources(&self.doc, self.mesh_source.as_ref(), &self.bake_meshes, resources)
     }
 
     /// A save snapshot that shares immutable resource payloads with the document.
     pub fn project_snapshot(&self) -> ProjectFile<Arc<Vec<u8>>> {
-        self.project_with_resources(self.doc.resources.clone())
-    }
-
-    fn project_with_resources<Resource>(&self, resources: BTreeMap<String, Resource>) -> ProjectFile<Resource> {
-        let mut pixels = self.doc.pixels.clone();
-
-        // Drop pixel images whose size no longer matches their texture set
-        let size_of = |id: texturecraft_core::LayerId| {
-            self.doc.project.locate(id).and_then(|(ts, _, _)| self.doc.project.texture_sets.get(ts)).map(TextureSet::size).or_else(|| {
-                self.doc
-                    .project
-                    .effect(id)
-                    .and_then(|(owner, _)| self.doc.project.locate(owner))
-                    .and_then(|(ts, _, _)| self.doc.project.texture_sets.get(ts))
-                    .map(TextureSet::size)
-            })
-        };
-        pixels.layers.retain(|(id, _), img| size_of(*id) == Some((img.width(), img.height())));
-        pixels.masks.retain(|id, img| size_of(*id) == Some((img.width(), img.height())));
-
-        let (high_poly, cage) = self.saved_bake_meshes();
-        ProjectFile {
-            project: self.doc.project.clone(),
-            pixels,
-            baked: self.doc.baked.clone(),
-            mesh: self.mesh_source.clone(),
-            high_poly,
-            cage,
-            bake_paint: self.saved_bake_paint(),
-            thumbnail: None,
-            resources,
-            warnings: Vec::new(),
-        }
+        project_with_resources(&self.doc, self.mesh_source.as_ref(), &self.bake_meshes, self.doc.resources.clone())
     }
 
     pub fn to_project_bytes(&self) -> Result<Vec<u8>> {
@@ -449,6 +458,7 @@ fn plan(session: &mut Session, params: &Value) -> Result<Value> {
 mod native {
     use super::*;
     use std::path::Path;
+    use texturecraft_formats::project_file::SaveProgress;
 
     pub fn path_param<'a>(p: &'a Value, key: &str, cmd: &str) -> Result<&'a str> {
         strp(p, key).filter(|s| !s.trim().is_empty()).ok_or_else(|| bad(cmd, format!("`{key}` is required")))
@@ -484,21 +494,82 @@ mod native {
     }
 
     pub fn save_to(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
-        let path = if ext_of(path) == PROJECT_EXT { path.to_string() } else { format!("{path}.{PROJECT_EXT}") };
-        let mut reservation = texturecraft_formats::RamReservation::for_save().map_err(fe)?;
-        reservation.save(Path::new(&path), &s.project_snapshot()).map_err(fe)?;
+        let output = s.save_task(path, adopt).run(None)?;
+        output.apply(s);
+        Ok(json!({ "path": output.path }))
+    }
 
-        if adopt {
-            s.path = Some(path.clone());
-            s.modified = false;
+    struct SaveTarget {
+        project_id: u64,
+        revision: u64,
+        adopt: bool,
+        path: String,
+    }
+
+    /// A manual save of the document at the moment it was requested. Large payloads are shared
+    /// until the worker assembles the archive.
+    pub struct SaveTask {
+        target: SaveTarget,
+        doc: Document,
+        mesh: Option<(String, Arc<Vec<u8>>)>,
+        bake_meshes: crate::BakeMeshes,
+    }
+
+    impl Session {
+        pub fn save_task(&self, path: &str, adopt: bool) -> SaveTask {
+            let path = if ext_of(path) == PROJECT_EXT { path.to_string() } else { format!("{path}.{PROJECT_EXT}") };
+            SaveTask {
+                target: SaveTarget { project_id: self.project_id, revision: self.save_revision, adopt, path },
+                doc: self.doc.clone(),
+                mesh: self.mesh_source.clone(),
+                bake_meshes: self.bake_meshes.clone(),
+            }
         }
-        s.log.info("Project", format!("Saved {path}"));
-        Ok(json!({ "path": path }))
+    }
+
+    impl SaveTask {
+        /// Complete the atomic write on the worker. Waiting for a previous save to release the
+        /// RAM allowance also happens here.
+        pub fn run(self, progress: Option<&SaveProgress>) -> Result<SaveOutput> {
+            let mut reservation = texturecraft_formats::RamReservation::for_save().map_err(fe)?;
+            let snapshot = project_with_resources(&self.doc, self.mesh.as_ref(), &self.bake_meshes, self.doc.resources.clone());
+            let path = Path::new(&self.target.path);
+            match progress {
+                Some(progress) => reservation.save_with_progress(path, &snapshot, progress),
+                None => reservation.save(path, &snapshot),
+            }
+            .map_err(fe)?;
+            Ok(SaveOutput { path: self.target.path, project_id: self.target.project_id, revision: self.target.revision, adopt: self.target.adopt })
+        }
+    }
+
+    /// An archive that was written successfully. Only the same project can adopt its path.
+    pub struct SaveOutput {
+        pub path: String,
+        project_id: u64,
+        revision: u64,
+        adopt: bool,
+    }
+
+    impl SaveOutput {
+        /// Apply the saved path without clearing edits made since the snapshot.
+        pub fn apply(&self, session: &mut Session) {
+            if session.project_id != self.project_id {
+                return;
+            }
+            if self.adopt {
+                session.path = Some(self.path.clone());
+                if session.save_revision == self.revision && !session.stroke_active() {
+                    session.modified = false;
+                }
+            }
+            session.log.info("Project", format!("Saved {}", self.path));
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{absolute, open_path, read_mesh};
+pub use native::{SaveOutput, SaveTask, absolute, open_path, read_mesh};
 
 /// `file.new {mesh, name?, resolution?, uvTiles?, template?, importCameras?}`: a new project from the
 /// mesh file `mesh`, remembering its path for Reimport mesh.
@@ -597,7 +668,7 @@ impl Session {
         let (mesh, source, warnings, mesh_file) = match file {
             Some(f) => {
                 let m = texturecraft_formats::import_mesh_bytes(&f.name, &f.bytes).map_err(fe)?.mesh;
-                (m, Some((ext_of(&f.name), f.bytes)), f.warnings, leaf_of(&f.name))
+                (m, Some((ext_of(&f.name), Arc::new(f.bytes))), f.warnings, leaf_of(&f.name))
             }
             None => match &self.mesh_source {
                 Some((ext, bytes)) => {
@@ -612,7 +683,7 @@ impl Session {
             doc.project.mesh = format!("mesh.{ext}");
             doc.project.mesh_file = mesh_file;
         }
-        let mut next = Session::new(doc, mesh, source)?;
+        let mut next = Session::new_with_source(doc, mesh, source)?;
         next.log.warnings("Importer", warnings);
         next.path = self.path.clone();
         next.sync_images();

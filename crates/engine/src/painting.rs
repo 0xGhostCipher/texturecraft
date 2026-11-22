@@ -576,8 +576,7 @@ impl Session {
             self.undo.remove(0);
         }
         self.redo.clear();
-        self.modified = true;
-        self.revision = self.revision.wrapping_add(1);
+        self.mark_modified();
         // The live preview already shows the committed result: the stroke's tiles recomposite
         // from the committed pixels at low priority, without holding up this frame.
         self.mark_settle(st.ts, st.target, st.canvas.dirty.iter().copied());

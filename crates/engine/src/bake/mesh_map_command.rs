@@ -56,7 +56,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         cmd!("bake.cage.set", "Load cage mesh", [], None, "{path} — a mesh with the low poly's triangles", always, cage_set),
         cmd!("bake.cage.clear", "Remove cage mesh", [], None, "{}", always, |s, _| {
             s.bake_meshes.cage = None;
-            s.modified = true;
+            s.mark_modified();
             Ok(meshes_json(s))
         }),
     ]
@@ -274,7 +274,7 @@ impl Session {
         for set in &mut self.doc.project.texture_sets {
             set.bake.high_poly.use_low_as_high = false;
         }
-        self.modified = true;
+        self.mark_modified();
         Ok(name)
     }
 
@@ -285,7 +285,7 @@ impl Session {
         }
         let removed = self.bake_meshes.high.remove(index);
         self.bake_meshes.rebuild();
-        self.modified = true;
+        self.mark_modified();
         Ok(removed)
     }
 
@@ -303,7 +303,7 @@ impl Session {
         m.base_color.clear();
         let name = m.name.clone();
         self.bake_meshes.cage = Some(m);
-        self.modified = true;
+        self.mark_modified();
         Ok(name)
     }
 
@@ -347,20 +347,6 @@ impl Session {
             }
         }
     }
-
-    pub(crate) fn saved_bake_paint(&self) -> BTreeMap<(usize, BakePaintTarget), texturecraft_formats::BakePaintData> {
-        self.doc
-            .bake_paint
-            .iter()
-            .map(|(key, map)| (*key, texturecraft_formats::BakePaintData { width: map.width, height: map.height, values: map.values.clone() }))
-            .collect()
-    }
-
-    /// The bake meshes for a project file: (high polys, cage).
-    pub(crate) fn saved_bake_meshes(&self) -> (Vec<MeshFile>, Option<MeshFile>) {
-        let entry = |m: &BakeMesh| (m.name.clone(), m.bytes.as_ref().clone());
-        (self.bake_meshes.high.iter().map(entry).collect(), self.bake_meshes.cage.as_ref().map(entry))
-    }
 }
 
 /// `bake.highPoly.list`: the high polys and the cage (also part of `project.inspect`).
@@ -392,7 +378,7 @@ fn high_remove(s: &mut Session, p: &Value) -> Result<Value> {
     if boolp(p, "all") == Some(true) {
         s.bake_meshes.high.clear();
         s.bake_meshes.rebuild();
-        s.modified = true;
+        s.mark_modified();
         return Ok(meshes_json(s));
     }
     let index = match (u64p(p, "index"), strp(p, "name")) {

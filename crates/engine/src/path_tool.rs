@@ -922,8 +922,7 @@ impl Session {
         } else {
             self.invalidate_changed(&before);
         }
-        self.revision = self.revision.wrapping_add(1);
-        self.modified = true;
+        self.mark_modified();
         Ok((painted, before))
     }
 

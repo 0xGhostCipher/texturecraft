@@ -536,6 +536,11 @@ pub fn status_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::NONE.fill(tk.chrome).inner_margin(egui::Margin::symmetric(10, 0)))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(progress) = app.save_progress() {
+                    ui.add(egui::ProgressBar::new(progress).desired_width(160.0).desired_height(10.0).text(RichText::new(tr("Saving project")).size(10.0)));
+                    ui.separator();
+                }
                 if let Some(p) = app.bake_progress() {
                     ui.add(egui::ProgressBar::new(p).desired_width(160.0).desired_height(10.0).text(RichText::new(tr("Baking")).size(10.0)));
                     if ui.small_button(tr("Cancel")).clicked() {

@@ -38,10 +38,12 @@ mod load_budget;
 mod project_open_limit;
 mod ram_operation;
 mod ram_reservation;
+mod save_progress;
 #[cfg(not(target_arch = "wasm32"))]
 pub use entries::{DEFAULT_RAM_PERCENT, DEFAULT_RESERVED_CORES, available_save_resources, configured_ram_budget, save_ram_budget, set_save_resources};
 pub use project_open_limit::{DEFAULT_PROJECT_OPEN_LIMIT_GIB, project_open_limit_gib, set_project_open_limit_gib};
 pub use ram_reservation::RamReservation;
+pub use save_progress::SaveProgress;
 
 const KIND: &str = "project file";
 #[cfg(test)]
@@ -109,11 +111,11 @@ pub fn save_project(path: &std::path::Path, project_file: &ProjectFile) -> Resul
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_project_atomic(path: &std::path::Path, project_file: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<()> {
+fn write_project_atomic(path: &std::path::Path, project_file: &ProjectFile<impl Borrow<Vec<u8>>>, progress: Option<&SaveProgress>) -> Result<()> {
     let (temporary_path, file) = crate::create_temp(path)?;
     let result = (|| -> Result<()> {
         let mut file = std::io::BufWriter::new(file);
-        write_project(&mut file, project_file)?;
+        write_project(&mut file, project_file, progress)?;
         file.into_inner().map_err(|error| error.into_error())?.sync_all()?;
         std::fs::rename(&temporary_path, path)?;
         Ok(())
@@ -276,9 +278,13 @@ fn entries(pf: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<Vec<Entry<'_>>> {
     Ok(out)
 }
 
-fn write_project<W: Write + Seek>(out: W, pf: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<()> {
+fn write_project<W: Write + Seek>(out: W, pf: &ProjectFile<impl Borrow<Vec<u8>>>, progress: Option<&SaveProgress>) -> Result<()> {
     let mut zip = ZipWriter::new(out);
-    entries::write_entries(&mut zip, entries(pf)?)?;
+    let mut entries = entries(pf)?;
+    if let Some(progress) = progress {
+        progress.track(&mut entries);
+    }
+    entries::write_entries(&mut zip, entries)?;
     zip.finish().map_err(zip_err)?;
     Ok(())
 }

@@ -92,7 +92,19 @@ pub(crate) fn close_request(app: &mut TextureCraftApp, ctx: &egui::Context) {
     {
         app.toast(error.to_string(), true);
     }
-    if closing && ask_to_save(app, crate::state::Unsaved::Quit) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let waiting_for_save = if closing
+        && !app.session.modified
+        && let Some(job) = &mut app.save_job
+    {
+        job.quit_after_save = true;
+        true
+    } else {
+        false
+    };
+    #[cfg(target_arch = "wasm32")]
+    let waiting_for_save = false;
+    if closing && (waiting_for_save || ask_to_save(app, crate::state::Unsaved::Quit)) {
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         if ctx.input(|i| i.viewport().minimized == Some(true)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -110,7 +122,7 @@ fn unsaved(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let Some(pending) = app.ui.windows.unsaved.clone() else { return };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let (waiting_for_save, saved_by_dialog) = (app.saving_for_prompt, std::mem::take(&mut app.prompt_saved));
+    let (waiting_for_save, saved_by_dialog) = (app.saving_for_prompt || app.save_job.is_some(), std::mem::take(&mut app.prompt_saved));
     #[cfg(target_arch = "wasm32")]
     let (waiting_for_save, saved_by_dialog) = (false, false);
 
@@ -129,7 +141,7 @@ fn unsaved(app: &mut TextureCraftApp, ctx: &egui::Context) {
 
         // One row keeps the window to its contents; a bare right-to-left layout fills the screen height
         ui.horizontal(|ui| {
-            // The answers wait while the Save dialog is open
+            // Wait for the path picker or an active save to finish.
             ui.add_enabled_ui(!waiting_for_save, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.add(primary_button(ui, tr("Save"))).clicked() {
@@ -156,11 +168,13 @@ fn unsaved(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let discard_after_create = matches!(pending, Unsaved::CreateProject(_)) && save_first == Some(false) && app.session.modified;
     match save_first {
         Some(true) => {
-            // An untitled project is saved from a dialog that answers on a later frame
             #[cfg(not(target_arch = "wasm32"))]
             {
-                app.saving_for_prompt = app.session.path.is_none();
+                app.saving_for_prompt = true;
+                file_action(app, ctx, "file.save");
+                return;
             }
+            #[cfg(target_arch = "wasm32")]
             file_action(app, ctx, "file.save");
         }
         // Going ahead anyway: the changes are let go
@@ -484,15 +498,16 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             });
             true
         }
-        "file.save" if app.session.path.is_some() => {
-            if let Some(result) = app.run("file.save", json!({})) {
-                let saved_path = result["path"].as_str().unwrap_or_default();
-                app.toast(trf("Saved {path}", &[("path", &saved_path)]), false);
-            }
-            true
-        }
         "file.save" | "file.saveAs" => {
-            ask_save_project(app, "file.saveAs");
+            if id == "file.save"
+                && let Some(path) = app.session.path.clone()
+            {
+                if !app.start_save(&path, true, app.saving_for_prompt, false) {
+                    app.saving_for_prompt = false;
+                }
+            } else {
+                ask_save_project(app, "file.saveAs");
+            }
             true
         }
         "file.saveCopy" => {
@@ -568,7 +583,7 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
     }
 }
 
-/// Asks where to save the project and runs `cmd` with the answer. Each caller is its own dialog
+/// Asks where to save the project and starts the worker with the answer. Each caller is its own dialog
 /// request, so Save As and Save a Copy queue separately.
 #[cfg(not(target_arch = "wasm32"))]
 #[track_caller]
@@ -578,19 +593,11 @@ fn ask_save_project(app: &mut TextureCraftApp, cmd: &'static str) {
     // Save a Copy leaves the project unsaved, so it never answers the unsaved-changes prompt.
     let for_prompt = app.saving_for_prompt && cmd == "file.saveAs";
     let asked = app.ask_file(dialog, Bound::Project, move |app, paths| {
-        let mut saved = false;
-        if let Some(p) = paths.first() {
-            let path = p.display().to_string();
-            saved = app.run(cmd, json!({"path": path})).is_some();
-            if saved {
-                remember(app, &path);
-                app.toast(trf("Saved {path}", &[("path", &path)]), false);
-            }
-        }
-        // The answer ends the wait. A canceled or failed save leaves the prompt open for an answer.
-        if for_prompt {
+        let for_prompt = for_prompt && app.saving_for_prompt;
+        let started = paths.first().is_some_and(|p| app.start_save(&p.display().to_string(), cmd != "file.saveCopy", for_prompt, true));
+        // Canceled dialogs and failures leave the prompt open for another answer.
+        if for_prompt && !started {
             app.saving_for_prompt = false;
-            app.prompt_saved = saved && !app.session.modified;
         }
     });
     // A Save As already on its way answers for itself: the prompt's buttons stay usable.
