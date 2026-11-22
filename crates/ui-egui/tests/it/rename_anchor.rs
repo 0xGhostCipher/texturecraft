@@ -45,7 +45,11 @@ fn save_to(h: &mut Harness<'_, TextureCraftApp>, file: &Path) {
     // The save runs on a worker: step frames until the app has collected it, as the app does
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     h.step();
-    while h.state().session.modified || !texturecraft_ui_egui::menus::enabled(h.state(), "file.saveAs") {
+    let target = file.display().to_string();
+    while !(file.exists() && h.state().session.path.as_deref() == Some(target.as_str()) && texturecraft_ui_egui::menus::enabled(h.state(), "file.saveAs")) {
+        if let Some(toast) = h.state().toasts.iter().find(|toast| toast.error) {
+            panic!("the save failed: {}", toast.text);
+        }
         assert!(std::time::Instant::now() < deadline, "the save did not finish");
         h.step();
         std::thread::yield_now();
