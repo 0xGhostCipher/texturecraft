@@ -311,7 +311,9 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
 /// Whether effect `effect` can be selected on layer `id`: one of its own, or one in the mask it draws with.
 fn selectable_effect(project: &texturecraft_core::Project, id: LayerId, effect: LayerId) -> bool {
     let Some((owner, _)) = project.effect(effect) else { return false };
-    owner == id || (owner == project.mask_owner(id) && project.layers.get(&owner).and_then(|l| l.mask.as_ref()).is_some_and(|mask| mask.effects.iter().any(|e| e.id == effect)))
+    owner == id
+        || (owner == project.mask_owner(id)
+            && project.layers.get(&owner).and_then(|l| l.mask.as_ref()).is_some_and(|mask| mask.effects.iter().any(|e| e.id == effect)))
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {

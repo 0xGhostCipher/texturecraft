@@ -79,6 +79,24 @@ fn an_instance_mask_thumbnail_opens_the_inherited_mask_effects() {
     assert!(h.query_by_label("Effect M").is_some(), "selecting an effect leaves its stack open");
 }
 
+/// An instance with a mask of its own lists that mask's effects, not its source's.
+#[test]
+fn an_instance_with_its_own_mask_opens_its_own_mask_effects() {
+    let (mut h, source) = harness();
+    let instance = LayerId(id(execute(&mut h.state_mut().session, "layer.instance", &json!({"layer": source.0})).unwrap(), "layer"));
+    execute(&mut h.state_mut().session, "layer.rename", &json!({"layer": instance.0, "name": "Instance row"})).unwrap();
+    execute(&mut h.state_mut().session, "layer.select", &json!({"layer": instance.0})).unwrap();
+    execute(&mut h.state_mut().session, "mask.add.black", &Value::Null).unwrap();
+    execute(&mut h.state_mut().session, "effect.add.generator", &json!({"generator": "position", "level": 0.5, "name": "Own effect"})).unwrap();
+    execute(&mut h.state_mut().session, "layer.select", &json!({"layer": instance.0})).unwrap();
+    h.run_steps(4);
+
+    let mask = thumb(&h, "Instance row", true);
+    click(&mut h, mask);
+    assert!(h.query_by_label("Own effect").is_some(), "the instance's own mask effect is listed");
+    assert!(h.query_by_label("Effect M").is_none(), "the source's mask effect is not");
+}
+
 #[test]
 fn mask_and_content_thumbnails_toggle_their_own_stacks() {
     let (mut h, layer) = harness();
