@@ -1083,10 +1083,9 @@ fn the_hover_tint_covers_the_blurred_scattering_light_too() {
     let blur = shaded(&lit, |s| s.sss_blur = Some([0.06, 0.024, 0.015]));
     let hover = |f: &Frame| shaded(f, |s| s.set_hover = Some(texturecraft_render::SetHighlight { set: 0, color: [1.0, 0.5, 0.0] }));
     let mean = |img: &Img| region_mean(&mask, |x, y| img.luma(x, y));
-    let plain_img = render(&mut h, &lit, "hover_sss_plain");
-    let blurred_img = render(&mut h, &blur, "hover_sss_blur");
-    let hovered_blur_img = render(&mut h, &hover(&blur), "hover_sss_blur_hovered");
-    let (plain, blurred, hovered_blur) = (mean(&plain_img), mean(&blurred_img), mean(&hovered_blur_img));
+    let plain = mean(&render(&mut h, &lit, "hover_sss_plain"));
+    let blurred = mean(&render(&mut h, &blur, "hover_sss_blur"));
+    let hovered_blur = mean(&render(&mut h, &hover(&blur), "hover_sss_blur_hovered"));
     let hovered_plain = mean(&render(&mut h, &hover(&lit), "hover_sss_plain_hovered"));
     assert!(hovered_plain != plain, "the hover tint changes the set");
     // The blur only moves light around, so it must change a hovered set as little as a plain one
@@ -1098,14 +1097,25 @@ fn the_hover_tint_covers_the_blurred_scattering_light_too() {
         hovered_blur - hovered_plain
     );
     // The set next to the hovered one keeps its light: the blur takes light across the boundary, and
-    // the hover must not dim what the neighbour receives from the hovered set
-    let other = |img: &Img| region_mean(&neighbour, |x, y| img.luma(x, y));
-    assert!(
-        (other(&hovered_blur_img) - other(&blurred_img)).abs() < 1.0,
-        "hovering set 0 changes set 1 from {} to {}",
-        other(&blurred_img),
-        other(&hovered_blur_img)
-    );
+    // the hover must not dim what the neighbour receives from the hovered set. Only the pixels of
+    // set 1 within the blur's reach of set 0 can differ.
+    let wide = shaded(&lit, |s| s.sss_blur = Some([0.2, 0.08, 0.05]));
+    let blurred_img = render(&mut h, &wide, "hover_sss_wide");
+    let hovered_blur_img = render(&mut h, &hover(&wide), "hover_sss_wide_hovered");
+    const REACH: i32 = 25;
+    let (w, ht) = (480i32, 360i32);
+    let near = |i: usize| {
+        let (x, y) = (i as i32 % w, i as i32 / w);
+        (-REACH..=REACH)
+            .any(|dy| (-REACH..=REACH).any(|dx| (0..w).contains(&(x + dx)) && (0..ht).contains(&(y + dy)) && mask[((y + dy) * w + x + dx) as usize]))
+    };
+    let diffs: Vec<f32> = (0..neighbour.len())
+        .filter(|&i| neighbour[i] && !mask[i] && near(i))
+        .map(|i| (hovered_blur_img.luma(i as u32 % 480, i as u32 / 480) - blurred_img.luma(i as u32 % 480, i as u32 / 480)).abs())
+        .collect();
+    let (count, max) = (diffs.iter().filter(|d| **d > 1.0).count(), diffs.iter().copied().fold(0.0, f32::max));
+    assert!(!diffs.is_empty(), "set 1 touches set 0");
+    assert!(max <= 1.0, "hovering set 0 changes {count} of {} pixels of set 1 next to it (max {max})", diffs.len());
 }
 
 /// An environment that is bright only around `dir` (world space, rotation 0).
