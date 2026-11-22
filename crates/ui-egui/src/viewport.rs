@@ -372,9 +372,12 @@ fn shade(app: &TextureCraftApp) -> Shade {
 /// The texture set a shelf material or image dragged over the 3D view `response` would drop on, its edges drawn in the accent color
 fn drop_highlight(app: &TextureCraftApp, ui: &Ui, response: &egui::Response) -> Option<SetHighlight> {
     let set = crate::shelf::drop_set(app, ui, response)?;
-    let accent = egui::Rgba::from(Tokens::get(ui.ctx()).viewport_accent);
+    Some(set_highlight(ui, set))
+}
 
-    Some(SetHighlight { set, color: [accent.r(), accent.g(), accent.b()] })
+fn set_highlight(ui: &Ui, set: usize) -> SetHighlight {
+    let accent = egui::Rgba::from(Tokens::get(ui.ctx()).viewport_accent);
+    SetHighlight { set, color: [accent.r(), accent.g(), accent.b()] }
 }
 
 /// Show what the GPU side reported (each message once while its toast is up).
@@ -1010,12 +1013,16 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         }
     }
 
+    let set_hover = app
+        .hovered_texture_set
+        .filter(|&(project_id, _)| project_id == app.session.project_id && !app.ui.hide_ui && !crate::docking::input_blocked(app, ui.ctx()))
+        .map(|(_, set)| set_highlight(ui, set));
     let frame = Frame {
         view_id: crate::viewport::VIEW_3D,
         size: frame_size_in_pixels(ui, rect),
         kind: ViewKind::Scene,
         camera: app.session.camera,
-        shade: Shade { highlight: drop_highlight(app, ui, &response), ..shade(app) },
+        shade: Shade { highlight: drop_highlight(app, ui, &response), set_hover, ..shade(app) },
         visible: app.session.doc.project.texture_sets.iter().map(|texture_set| texture_set.visible).collect(),
         overlay: crate::symmetry::scene_overlay(app, ui, rect),
     };

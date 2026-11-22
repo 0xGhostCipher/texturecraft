@@ -85,6 +85,7 @@ pub(crate) fn texture_set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().id_salt("ts_scroll").show(ui, |ui| {
         for (i, (name, size, visible)) in sets.into_iter().enumerate() {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, ui.is_enabled(), i == active, &name));
             let p = ui.painter();
             let bg = if i == active {
                 tk.row_selected
@@ -99,6 +100,9 @@ pub(crate) fn texture_set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
             }
             let eye = Rect::from_min_size(rect.min + vec2(4.0, 3.0), vec2(16.0, 16.0));
             let eye_resp = ui.interact(eye, ui.scope_id().with(("ts_eye", i)), Sense::click()).on_hover_text(tr("Show or hide the texture set"));
+            if ui.is_enabled() && (resp.contains_pointer() || eye_resp.contains_pointer()) {
+                app.next_hovered_texture_set = Some((app.session.project_id, i));
+            }
             p.text(eye.center(), egui::Align2::CENTER_CENTER, if visible { ic::EYE } else { ic::EYE_SLASH }, egui::FontId::proportional(13.0), tk.text);
 
             // Narrow panels drop the shader label, then the resolution, before cutting the name
