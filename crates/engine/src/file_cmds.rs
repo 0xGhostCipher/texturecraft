@@ -640,8 +640,8 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = native::path_param(p, "dir", "file.exportTextures")?.to_string();
     let opts = export_options(s, p, "file.exportTextures")?;
     let sets = sets_param(s, p, "file.exportTextures")?;
-    std::fs::create_dir_all(&dir).map_err(|e| bad("file.exportTextures", format!("cannot create {dir}: {e}")))?;
     let reserved = reserved_names(p)?;
+    std::fs::create_dir_all(&dir).map_err(|e| bad("file.exportTextures", format!("cannot create {dir}: {e}")))?;
     let files = s.export_files(&sets, &opts)?;
 
     // A file an earlier command of the same export wrote keeps its name: the export window runs
@@ -664,7 +664,7 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
         let material_opts = extra.as_ref().unwrap_or(&opts);
         if extra.is_some() {
             taken.extend(own);
-            let mut maps = s.export_files(&sets, material_opts)?;
+            let maps = s.export_files(&sets, material_opts)?;
             for file in &maps {
                 for warning in &file.warnings {
                     if !warnings.contains(warning) {
@@ -674,12 +674,11 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
             }
 
             // A file of the chosen template, or of an earlier command of this export, is never replaced; the material leaves out the map it would have used
-            let before = maps.len();
-            maps.retain(|f| !taken.contains(&f.name.to_ascii_lowercase()));
-            if maps.len() < before {
-                warnings
-                    .push("MaterialX: a map of the OpenPBR template has the file name of a map of the chosen template or of an earlier file of this export, so the material does not use it".into());
-            }
+            let (kept, dropped): (Vec<_>, Vec<_>) = maps.into_iter().partition(|f| !taken.contains(&f.name.to_ascii_lowercase()));
+            warnings.extend(dropped.iter().map(|f| {
+                format!("MaterialX: \"{}\" was not written: a file of the chosen template or of an earlier command of this export has the name, so the material does not use it", f.name)
+            }));
+            let maps = kept;
             written.extend(texturecraft_formats::write_files(&maps, std::path::Path::new(&dir)).map_err(fe)?);
         }
         written.extend(write_materialx(s, &sets, material_opts, std::path::Path::new(&dir), &mut warnings, taken, extra.is_some())?);

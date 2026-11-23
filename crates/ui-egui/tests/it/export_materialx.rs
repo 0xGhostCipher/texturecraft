@@ -182,14 +182,14 @@ fn texture_sets_of_one_export_never_overwrite_each_others_files() {
     const SHARED: &str = "material_ball_a_base_color.png";
 
     // (names of set 0 and set 1, the template whose export of set 0 must be what SHARED holds,
-    // the material that refers to SHARED)
+    // the template whose export of set 1 would replace it, the material that refers to SHARED)
     let cases = [
         // Set 0's own file has the name set 1's OpenPBR base colour would get
-        ("a_base_color", "a", "base colour only", None),
+        ("a_base_color", "a", "base colour only", "OpenPBR (separate maps)", None),
         // Set 0's OpenPBR base colour has the name set 1's own file would get
-        ("a", "a_base_color", "OpenPBR (separate maps)", Some("material_ball_a.mtlx")),
+        ("a", "a_base_color", "OpenPBR (separate maps)", "base colour only", Some("material_ball_a.mtlx")),
     ];
-    for (index, (first, second, template_of_set_0, referred_by)) in cases.into_iter().enumerate() {
+    for (index, (first, second, template_of_set_0, template_of_set_1, referred_by)) in cases.into_iter().enumerate() {
         let (mut h, dir) = harness(&format!("overwrite-{index}"));
         let project = &mut h.state_mut().session.doc.project;
         project.texture_sets[0].name = first.into();
@@ -204,7 +204,16 @@ fn texture_sets_of_one_export_never_overwrite_each_others_files() {
         export(&mut h);
 
         let want = expected(&mut h, 0, template_of_set_0, SHARED, &index.to_string());
+        let rival = expected(&mut h, 1, template_of_set_1, SHARED, &format!("{index}-rival"));
+        assert_ne!(want, rival, "case {index}: the two files differ, so a replacement shows");
         assert_eq!(std::fs::read(dir.join(SHARED)).unwrap(), want, "case {index}: the earlier texture set's file was replaced");
+
+        let console = h.state().ui.export.console.iter().filter_map(|line| if let ConsoleLine::Step(text) = line { Some(text.as_str()) } else { None });
+        assert!(
+            console.clone().any(|text| text.starts_with("Warning: ") && text.contains("\"material_ball_a_base_color.png\" was not written")),
+            "case {index}: {:?}",
+            console.collect::<Vec<_>>()
+        );
 
         // A material only points at files that exist, and only the earlier set's material at SHARED
         let materials = mtlx_files(&dir);

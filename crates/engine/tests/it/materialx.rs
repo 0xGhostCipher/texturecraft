@@ -244,7 +244,7 @@ fn a_file_of_the_template_is_never_replaced_by_an_openpbr_map() {
     let dir = temp("clash");
     let r = execute(&mut s, "file.exportTextures", &params(&dir, true)).unwrap();
     assert_eq!(std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap(), std::fs::read(plain.join("material_ball_a_base_color.png")).unwrap());
-    assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("file name of a map of the chosen template")), "{r}");
+    assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("material_ball_a_base_color.png\" was not written")), "{r}");
     let first = std::fs::read_to_string(dir.join("material_ball_a.mtlx")).unwrap();
     assert!(!referenced(&first).contains(&"material_ball_a_base_color.png".to_string()), "{first}");
 }
@@ -288,7 +288,7 @@ fn an_openpbr_map_never_replaces_a_file_an_earlier_command_of_the_export_wrote()
     let kept = std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap();
     let second = export_set(&mut s, &dir, 1, &names(&first));
     assert_eq!(std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap(), kept, "the earlier file is untouched");
-    assert!(warned(&second, "has the file name of a map of the chosen template or of an earlier file of this export"), "{second}");
+    assert!(warned(&second, "\"material_ball_a_base_color.png\" was not written: a file of the chosen template or of an earlier command"), "{second}");
     let material = std::fs::read_to_string(dir.join("material_ball_a.mtlx")).unwrap();
     assert!(!referenced(&material).contains(&"material_ball_a_base_color.png".to_string()), "{material}");
     for file in referenced(&material) {
@@ -337,6 +337,7 @@ fn reserved_names_must_be_a_list_of_names() {
         let params = json!({"dir": dir.display().to_string(), "preset": OPENPBR, "reservedNames": bad});
         assert!(execute(&mut s, "file.exportTextures", &params).is_err());
     }
+    assert!(!dir.exists(), "a bad parameter creates no folder");
 }
 
 #[test]
