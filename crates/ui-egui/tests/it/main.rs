@@ -80,7 +80,6 @@ mod shelf_hover_preview;
 mod shelf_panel;
 mod shift_lines_2d;
 mod shift_lines_3d;
-mod shortcut_gestures;
 mod shortcut_keys;
 mod shortcut_list;
 mod side_panels;

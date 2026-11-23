@@ -448,7 +448,7 @@ mod tests {
     fn no_bindable_command_asks_for_a_parameter() {
         // Effect commands need a selected effect, which this session lacks
         for spec in command_specs().iter().filter(|c| c.bindable() && c.shortcut.is_none() && !c.id.starts_with("effect.")) {
-            let mut session = crate::sample_session(256, 64).unwrap();
+            let mut session = crate::sample_session(texturecraft_core::MIN_RESOLUTION, 16).unwrap();
             if (spec.enabled)(&session).is_ok()
                 && let Err(err) = execute(&mut session, spec.id, &Value::Null)
             {
