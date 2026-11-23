@@ -5,13 +5,18 @@ use egui::Ui;
 use crate::TextureCraftApp;
 use crate::i18n::tr;
 use crate::unavailable;
-use crate::widgets::primary_button;
 
 /// Indent of an option's checkbox under its choice
 const OPTION_INDENT: f32 = 20.0;
 
 /// Width of the Cancel and Export buttons
-const BUTTON_WIDTH: f32 = 130.0;
+const BUTTON_WIDTH: f32 = 110.0;
+
+/// The reference dialog's content width
+const DIALOG_WIDTH: f32 = 510.0;
+
+/// Gap between the two option groups, as in the reference
+const GROUP_GAP: f32 = 25.0;
 
 /// The prompt, while File > Export Mesh waits on it
 pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
@@ -23,9 +28,12 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let (mut export, mut cancel) = (false, false);
     crate::windows::dialog("mesh_export_options", tr("Mesh Export Options"), &mut open).show(ctx, |ui| {
+        ui.set_width(DIALOG_WIDTH);
+
         // TextureCraft exports the mesh as it is: triangulated, without displacement
         ui.add(egui::RadioButton::new(true, tr("Without displacement/tessellation")));
         option(ui, true, tr("Apply triangulation"));
+        ui.add_space(GROUP_GAP);
         unavailable::greyed(ui, |ui| ui.add(egui::RadioButton::new(false, tr("With displacement/tessellation"))));
         option(ui, true, tr("Recompute vertex normals"));
         ui.add_space(8.0);
@@ -34,7 +42,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let size = egui::vec2(BUTTON_WIDTH, ui.spacing().interact_size.y);
-                export = ui.add(primary_button(ui, tr("Export")).min_size(size)).clicked();
+                export = ui.add(egui::Button::new(tr("Export")).min_size(size)).clicked();
                 cancel = ui.add(egui::Button::new(tr("Cancel")).min_size(size)).clicked();
             });
         });

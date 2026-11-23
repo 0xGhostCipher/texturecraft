@@ -99,3 +99,12 @@ fn the_unavailable_checkboxes_carry_the_reference_texts() {
     );
     checkbox_tooltip_is(&mut h, "Export shaders parameters", "Exports a JSON file with the settings for all shader instances");
 }
+
+#[test]
+fn the_bottom_bar_buttons_share_one_width() {
+    let h = harness(egui::vec2(1600.0, 960.0));
+
+    let widths: Vec<f32> = ["Reset all", "Cancel", "Save settings", "Export"].iter().map(|label| window_button_rect(&h, label, 1600.0).width()).collect();
+
+    assert!(widths.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 1.0), "{widths:?}");
+}

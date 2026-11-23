@@ -14,7 +14,7 @@ use crate::i18n::{n_, tr, trf};
 use crate::state::{ConsoleLine, ExportSetPlan, ExportUi, FileType, MapExport, SIZE_OF_LARGEST_SET, SetExport};
 use crate::theme::{Tokens, caption};
 use crate::unavailable::NOT_AVAILABLE;
-use crate::widgets::{icon_button, primary_button};
+use crate::widgets::icon_button;
 
 mod inherited_settings;
 mod map_row;
@@ -34,6 +34,8 @@ const LIST_WIDTH: f32 = 180.0;
 const ICON: f32 = 20.0;
 /// Width of the value column of the parameter rows
 const VALUE_WIDTH: f32 = 360.0;
+/// Width of the bottom bar's buttons, the same for all as in the reference
+const FOOTER_BUTTON_WIDTH: f32 = 125.0;
 
 /// The output sizes the Size list offers, in texels per side
 pub(crate) const SIZES: [u32; 7] = [128, 256, 512, 1024, 2048, 4096, 8192];
@@ -582,6 +584,11 @@ fn selected_texture_count(app: &mut TextureCraftApp) -> usize {
         count += plan.as_array().map_or(0, Vec::len);
     }
     count
+}
+
+/// A bottom bar button, as wide as the others
+fn footer_button(text: &str) -> egui::Button<'_> {
+    egui::Button::new(text).min_size(vec2(FOOTER_BUTTON_WIDTH, 0.0))
 }
 
 /// A header with a menu or tool at its right end
@@ -1359,7 +1366,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             // Not on LIST OF EXPORTS
             if app.ui.export.tab != 2
-                && ui.button(tr("Reset all")).on_hover_text(tr("Resets all settings to their default values, including all textures.")).clicked()
+                && ui.add(footer_button(tr("Reset all"))).on_hover_text(tr("Resets all settings to their default values, including all textures.")).clicked()
             {
                 // Keep ownership so Cancel can restore the opening settings
                 let e = &mut app.ui.export;
@@ -1369,15 +1376,15 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Nothing to write without a ticked texture set
                 let any = !export_selection(app).is_empty();
-                if ui.add_enabled(any, primary_button(ui, tr("Export"))).on_hover_text(tr("Exports all selected textures and additional files")).clicked() {
+                if ui.add_enabled(any, footer_button(tr("Export"))).on_hover_text(tr("Exports all selected textures and additional files")).clicked() {
                     do_export = true;
                 }
 
                 // Saving closes the window without starting an export
-                if ui.button(tr("Save settings")).on_hover_text(tr("Closes the export window and saves changes")).clicked() {
+                if ui.add(footer_button(tr("Save settings"))).on_hover_text(tr("Closes the export window and saves changes")).clicked() {
                     app.ui.windows.export = false;
                 }
-                if ui.button(tr("Cancel")).on_hover_text(tr("Closes the export window and undoes all recent changes")).clicked() {
+                if ui.add(footer_button(tr("Cancel"))).on_hover_text(tr("Closes the export window and undoes all recent changes")).clicked() {
                     canceled = true;
                 }
                 ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
