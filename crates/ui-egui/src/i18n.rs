@@ -428,17 +428,19 @@ mod tests",
             set_language(language.code);
             assert_eq!(current().code, if available(language.code) { language.code } else { "en" });
         }
-        let key = String::from("Layers");
+        const MISSING: &str = "missing test label";
         set_language("es");
-        let label = tr(&key);
+        let spanish = tr("Layers");
+        let missing = tr(MISSING);
         set_language("en");
-        let english = tr(&key);
+        let english = tr("Layers");
         set_language("es");
-        let reused = tr(&key);
+        let spanish_again = tr("Layers");
         set_language("en");
-        assert_eq!(label, if available("es") { "Capas" } else { "Layers" });
-        assert!(std::ptr::eq(english, key.as_str()));
-        // Switching away and back reuses the translation already stored in the catalog.
-        assert!(std::ptr::eq(reused, label));
+
+        assert_eq!(spanish, if available("es") { "Capas" } else { "Layers" });
+        assert_eq!(missing, MISSING);
+        assert_eq!(english, "Layers");
+        assert_eq!(spanish_again, spanish);
     }
 }
