@@ -69,7 +69,8 @@ that closes it back onto the bar; the float is saved with the UI state.
   *Mesh Export Options* prompt, then the file choice) and *Export Textures...* (the Export textures
   window: *Global settings* above the texture sets, *General Export Parameters*, *Export USD asset*
   and *Export shaders parameters* greyed, *Include all*, *Save settings* and "N textures selected
-  for export"). The prompt's *With displacement/tessellation* choice and both option checkboxes are
+  for export"). *Export MaterialX* beside them is a TextureCraft addition: it adds `materialX: true`
+  to the export. The prompt's *With displacement/tessellation* choice and both option checkboxes are
   greyed; TextureCraft exports the mesh as it is.
 - **Window menu:** Views lists *Renderer Settings* (a panel of its own: the tracer in use, the
   samples so far and a note; it floats when first opened and is not opened by itself in Rendering
@@ -220,7 +221,7 @@ built-in `udim_plane`, a uniform fill and a tile-1002 resolution override.
 - The shelf displayed four columns at the larger size, with type controls and search. Do not
   treat every older shelf-layout request as a currently missing implementation.
 - A missing mask-thumbnail menu does not mean mask effects are unavailable: the layer-name menu
-  worked. A missing MaterialX UI option does not mean the exporter is absent.
+  worked.
 
 ## Still unverified
 

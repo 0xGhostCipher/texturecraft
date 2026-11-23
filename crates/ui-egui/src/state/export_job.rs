@@ -13,6 +13,10 @@ pub struct ExportJob {
     pub directory: String,
     /// File names written so far.
     pub written: Vec<String>,
+    /// UDIM file patterns referenced by materials written earlier in this export.
+    pub material_udim_patterns: Vec<String>,
     /// The frame that wrote the last texture set (a frame's second pass writes none).
     pub frame: u64,
+    /// Warning messages already shown in this export.
+    pub shown_warnings: Vec<String>,
 }

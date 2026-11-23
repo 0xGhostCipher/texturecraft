@@ -357,6 +357,10 @@ pub struct ExportUi {
     /// "" (by file format: sRGB, or linear for float files), or a colour space name.
     #[serde(default)]
     pub color_space: String,
+    /// Also write an OpenPBR MaterialX (`.mtlx`) file per texture set (`materialX` of
+    /// `file.exportTextures`).
+    #[serde(default)]
+    pub materialx: bool,
     /// Texture sets excluded from export.
     pub skip: Vec<usize>,
     /// Per texture set (by index) overrides of the settings above.
@@ -418,6 +422,7 @@ impl Default for ExportUi {
             size: 0,
             normal_format: String::new(),
             color_space: String::new(),
+            materialx: false,
             skip: Vec::new(),
             sets: Default::default(),
             owner: Vec::new(),
