@@ -12,6 +12,9 @@ use crate::i18n::n_;
 /// One entry of a map list: its name and what it reads (None: not available yet).
 pub type MapEntry = (&'static str, Option<SourceRef>);
 
+/// A group of the Input maps pane: its name and entries.
+pub type MapGroup = (&'static str, Vec<MapEntry>);
+
 fn channel(channel: Channel) -> Option<SourceRef> {
     Some(SourceRef::Channel { channel, component: 0 })
 }
@@ -26,7 +29,7 @@ fn mesh(map: BakedMap) -> Option<SourceRef> {
 
 /// Input maps in groups, as the reference lists them up to Fuzz/Sheen; the groups after it are
 /// cut off in the reference screenshots and use the OpenPBR names of the channels left over.
-pub static INPUT_MAPS: LazyLock<Vec<(&'static str, Vec<MapEntry>)>> = LazyLock::new(|| {
+pub static INPUT_MAPS: LazyLock<Vec<MapGroup>> = LazyLock::new(|| {
     vec![
         (
             n_("Base"),
@@ -67,7 +70,11 @@ pub static INPUT_MAPS: LazyLock<Vec<(&'static str, Vec<MapEntry>)>> = LazyLock::
         ),
         (
             n_("Fuzz/Sheen"),
-            vec![(n_("Fuzz weight"), channel(Channel::SheenWeight)), (n_("Fuzz color"), channel(Channel::SheenColor)), (n_("Fuzz roughness"), channel(Channel::SheenRoughness))],
+            vec![
+                (n_("Fuzz weight"), channel(Channel::SheenWeight)),
+                (n_("Fuzz color"), channel(Channel::SheenColor)),
+                (n_("Fuzz roughness"), channel(Channel::SheenRoughness)),
+            ],
         ),
         (n_("Emission"), vec![(n_("Emission color"), channel(Channel::Emissive))]),
         (n_("Geometry"), vec![(n_("Geometry opacity"), channel(Channel::Opacity)), (n_("Geometry normal"), channel(Channel::Normal))]),
@@ -134,8 +141,8 @@ mod tests {
 
     #[test]
     fn every_channel_and_map_can_be_dragged() {
-        let listed: Vec<SourceRef> =
-            INPUT_MAPS.iter().flat_map(|(_, entries)| entries.iter()).chain(MESH_MAPS.iter()).chain(CONVERTED_MAPS.iter()).filter_map(|(_, s)| s.clone()).collect();
+        let entries = INPUT_MAPS.iter().flat_map(|(_, entries)| entries.iter()).chain(MESH_MAPS.iter()).chain(CONVERTED_MAPS.iter());
+        let listed: Vec<SourceRef> = entries.filter_map(|(_, source)| source.clone()).collect();
 
         for channel in Channel::ALL {
             assert!(listed.contains(&SourceRef::Channel { channel, component: 0 }), "{channel:?}");

@@ -1500,7 +1500,8 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 }
 
                 // Saving closes the window without starting an export
-                if ui.add_enabled(!templates_tab, footer_button(tr("Save settings"))).on_hover_text(tr("Closes the export window and saves changes")).clicked() {
+                let save = ui.add_enabled(!templates_tab, footer_button(tr("Save settings")));
+                if save.on_hover_text(tr("Closes the export window and saves changes")).clicked() {
                     app.ui.windows.export = false;
                 }
                 if ui.add(footer_button(tr("Cancel"))).on_hover_text(tr("Closes the export window and undoes all recent changes")).clicked() {

@@ -1069,7 +1069,9 @@ fn source_name(source: &SourceRef, target: ChannelTarget) -> Option<String> {
     let map = tr(map_lists::name_of(source)?);
     let picked = source_choices(source).into_iter().find(|(_, component)| *component == Some(component_of(source)));
     match picked {
-        Some((channel, _)) if source.components() == 3 && target != ChannelTarget::Rgb => Some(trf("{map} ({channel})", &[("map", &map), ("channel", &tr(channel))])),
+        Some((channel, _)) if source.components() == 3 && target != ChannelTarget::Rgb => {
+            Some(trf("{map} ({channel})", &[("map", &map), ("channel", &tr(channel))]))
+        }
         _ => Some(map.to_string()),
     }
 }
@@ -1173,7 +1175,8 @@ fn swatch(ui: &mut Ui, label: &str, name: &str, fill: Option<Color32>, bars: &[C
     let painter = ui.painter();
     let border = if response.hovered() { tokens.accent } else { tokens.button_border };
     painter.rect(rect, tokens.radius, fill.unwrap_or(tokens.button), egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
-    painter.text(rect.center_top() + vec2(0.0, SWATCH_TEXT_TOP), egui::Align2::CENTER_TOP, label, egui::FontId::proportional(SWATCH_TEXT_SIZE), tokens.text_strong);
+    let label_font = egui::FontId::proportional(SWATCH_TEXT_SIZE);
+    painter.text(rect.center_top() + vec2(0.0, SWATCH_TEXT_TOP), egui::Align2::CENTER_TOP, label, label_font, tokens.text_strong);
     let bar_width = SWATCH_BAR_WIDTH / bars.len().max(1) as f32;
     let left = rect.center().x - SWATCH_BAR_WIDTH / 2.0;
     for (k, color) in bars.iter().enumerate() {
@@ -1221,15 +1224,15 @@ fn split_or_collapse(map: &mut MapSpec, split: &mut bool, shows_split: bool) -> 
 /// "From <map>": which channel of the dropped map the output channel reads. True when the map
 /// changed.
 fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [MapSpec], active: &mut Option<usize>) -> bool {
-    let Some(drop) = pending.clone() else { return false };
-    let Some(map) = maps.get_mut(drop.map) else {
+    let Some(waiting) = pending.clone() else { return false };
+    let Some(map) = maps.get_mut(waiting.map) else {
         *pending = None;
         return false;
     };
 
-    let name = map_lists::name_of(&drop.source).map_or_else(String::new, |name| tr(name).to_string());
+    let name = map_lists::name_of(&waiting.source).map_or_else(String::new, |name| tr(name).to_string());
     let mut picked = None;
-    let shown = egui::Popup::new(egui::Id::new("exp_source_channel"), ui.ctx().clone(), egui::PopupAnchor::Position(drop.position), ui.layer_id())
+    let shown = egui::Popup::new(egui::Id::new("exp_source_channel"), ui.ctx().clone(), egui::PopupAnchor::Position(waiting.position), ui.layer_id())
         .kind(egui::PopupKind::Menu)
         .layout(egui::Layout::top_down_justified(egui::Align::Min))
         .style(egui::containers::menu::menu_style)
@@ -1237,7 +1240,7 @@ fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.label(RichText::new(trf("From {map}", &[("map", &name)])).strong());
-            for (label, component) in source_choices(&drop.source) {
+            for (label, component) in source_choices(&waiting.source) {
                 match component {
                     Some(component) => {
                         if ui.button(tr(label)).clicked() {
@@ -1255,13 +1258,13 @@ fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [
     }
     let Some(component) = picked else { return false };
 
-    let source = with_component(&drop.source, component);
+    let source = with_component(&waiting.source, component);
     for (dest, channel_source) in &mut map.channels {
-        if drop.target.dests().contains(dest) {
+        if waiting.target.dests().contains(dest) {
             *channel_source = source.clone();
         }
     }
-    *active = Some(drop.map);
+    *active = Some(waiting.map);
     true
 }
 
@@ -1334,7 +1337,8 @@ fn map_entry(ui: &mut Ui, name: &str, source: Option<&SourceRef>, text_color: Co
         && let Some(at) = response.interact_pointer_pos()
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        egui::Area::new(egui::Id::new(("exp_map_drag", name))).order(egui::Order::Tooltip).fixed_pos(at + vec2(8.0, 8.0)).show(ui.ctx(), |ui| chip(ui, name, true));
+        let dragged = egui::Area::new(egui::Id::new(("exp_map_drag", name))).order(egui::Order::Tooltip).fixed_pos(at + vec2(8.0, 8.0));
+        dragged.show(ui.ctx(), |ui| chip(ui, name, true));
     }
 }
 
