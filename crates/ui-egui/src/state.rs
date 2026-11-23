@@ -361,6 +361,10 @@ pub struct ExportUi {
     /// textures (`usdAsset` of `file.exportTextures`).
     #[serde(default)]
     pub usd_asset: bool,
+    /// Also write an OpenPBR MaterialX (`.mtlx`) file per texture set (`materialX` of
+    /// `file.exportTextures`).
+    #[serde(default)]
+    pub materialx: bool,
     /// Texture sets excluded from export.
     pub skip: Vec<usize>,
     /// Per texture set (by index) overrides of the settings above.
@@ -423,6 +427,7 @@ impl Default for ExportUi {
             normal_format: String::new(),
             color_space: String::new(),
             usd_asset: false,
+            materialx: false,
             skip: Vec::new(),
             sets: Default::default(),
             owner: Vec::new(),
