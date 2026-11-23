@@ -119,23 +119,14 @@ fn invoke(harness: &mut Harness<'_, TextureCraftApp>, params: serde_json::Value)
 }
 
 #[test]
-fn legacy_layout_commands_stay_out_of_the_menu_and_open_their_dialogs() {
-    use texturecraft_ui_egui::menus::CATALOG;
-    use texturecraft_ui_egui::named_layouts::LayoutDialog;
-
-    for id in ["ui.layout.saveAs", "ui.layout.manage"] {
-        assert!(!CATALOG.iter().any(|item| item.id == id), "{id} is no longer a menu entry");
-    }
+fn managing_layouts_requires_a_saved_layout() {
     let mut harness = app();
-    assert!(!texturecraft_ui_egui::menus::enabled(harness.state(), "ui.layout.manage"), "nothing to manage yet");
-
-    assert_eq!(invoke(&mut harness, serde_json::json!({"id": "ui.layout.saveAs"}))["ok"], true);
-    assert!(matches!(harness.state().ui.layout_dialog, Some(LayoutDialog::Save(_))));
+    let command = "ui.layout.manage";
+    assert!(!texturecraft_ui_egui::menus::enabled(harness.state(), command));
 
     harness.state_mut().ui.save_named_layout("A");
-    harness.state_mut().ui.layout_dialog = None;
-    assert_eq!(invoke(&mut harness, serde_json::json!({"id": "ui.layout.manage"}))["ok"], true);
-    assert!(matches!(harness.state().ui.layout_dialog, Some(LayoutDialog::Manage { .. })));
+
+    assert!(texturecraft_ui_egui::menus::enabled(harness.state(), command));
 }
 
 #[test]

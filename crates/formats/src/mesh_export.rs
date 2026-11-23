@@ -7,6 +7,7 @@ pub(crate) mod usd;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use craft_image_codecs::{DecodeOptions, Format, Limits, SampleType, decode_as_with, png_probe};
 use texturecraft_core::{Channel, NormalFormat};
 use texturecraft_geom::{Mesh, SubMesh};
 
@@ -17,17 +18,18 @@ use crate::{ExportOptions, ExportPreset, ExportedFile, FileFormat, FormatError, 
 pub use usd::{NamedFiles, UsdExport, UsdFormat, usd_bytes, usd_export_options};
 
 /// The mesh as OBJ text (UV v flipped back to OBJ's bottom-up convention).
-pub fn obj_bytes(mesh: &Mesh, name: &str) -> Vec<u8> {
+/// Invalid mesh data or shared writer limits return an error, never an empty successful export.
+pub fn obj_bytes(mesh: &Mesh, name: &str) -> Result<Vec<u8>> {
     let scene = to_craft_scene(mesh, &token(name), mesh.materials.iter().map(|m| craft_mesh::Material::plain(token(m), [1.0; 4])).collect(), Vec::new());
-    craft_mesh::obj::write(&scene, None, &craft_mesh::Limits::default()).unwrap_or_default().into_bytes()
+    craft_mesh::obj::write(&scene, None, &craft_mesh::Limits::default()).map(String::into_bytes).map_err(|e| FormatError::Invalid(e.to_string()))
 }
 
 /// The mesh as OBJ with a material library: the OBJ (naming `<stem>.mtl`, `stem` being the
 /// OBJ file's own, so exports beside each other keep their files apart) and the files to write
 /// next to it, the MTL first, then each material's maps (`textures[m]`, rendered with
 /// [`usd_export_options`], named like USD's). Roughness, metallic, normal and coat maps use the
-/// MTL PBR extension's keys.
-pub fn obj_with_mtl(mesh: &Mesh, name: &str, stem: &str, textures: &[Vec<ExportedFile>]) -> (Vec<u8>, NamedFiles) {
+/// MTL PBR extension's keys. Writer failures return an error without companion files.
+pub fn obj_with_mtl(mesh: &Mesh, name: &str, stem: &str, textures: &[Vec<ExportedFile>]) -> Result<(Vec<u8>, NamedFiles)> {
     let clean = sanitize_file_stem(stem);
     // OBJ names that sanitize alike (`ball 1`, `ball_1`) must not overwrite each other's files:
     // a changed name gets a hash of the original (FNV-1a).
@@ -62,8 +64,8 @@ pub fn obj_with_mtl(mesh: &Mesh, name: &str, stem: &str, textures: &[Vec<Exporte
         }
     }
     files.insert(0, (format!("{stem}.mtl"), mtl.into_bytes()));
-    let obj = craft_mesh::obj::write(&scene, Some(&format!("{stem}.mtl")), &craft_mesh::Limits::default()).unwrap_or_default();
-    (obj.into_bytes(), files)
+    let obj = craft_mesh::obj::write(&scene, Some(&format!("{stem}.mtl")), &craft_mesh::Limits::default()).map_err(|e| FormatError::Invalid(e.to_string()))?;
+    Ok((obj.into_bytes(), files))
 }
 
 fn to_craft_scene(mesh: &Mesh, name: &str, materials: Vec<craft_mesh::Material>, images: Vec<craft_mesh::Image>) -> craft_mesh::Scene {
@@ -181,12 +183,25 @@ fn png8_options(preset: ExportPreset, normal: NormalFormat) -> ExportOptions {
 }
 
 fn is_black(png: &[u8]) -> bool {
-    image::load_from_memory_with_format(png, image::ImageFormat::Png).map_or(true, |img| img.to_rgb8().iter().all(|v| *v == 0))
+    // Keep the previous PNG decoder's 512 MiB allocation ceiling.
+    let options = DecodeOptions { limits: Limits { max_alloc: 512 << 20, ..Limits::none() }, keep_orientation: true };
+    let Ok(image) = decode_as_with(Format::Png, png, &options) else { return true };
+    let sample = image.sample_type();
+    let layout = image.layout();
+    let pixel_bytes = layout.channels() * sample.bytes();
+    let color_bytes = layout.color_channels() * sample.bytes();
+    let mut colors = image.data().chunks_exact(pixel_bytes).map(|pixel| &pixel[..color_bytes]);
+    match sample {
+        SampleType::U8 => colors.all(|color| color.iter().all(|&value| value == 0)),
+        // The prior RGB8 conversion rounds 16-bit values through 128 to zero.
+        SampleType::U16 => colors.all(|color| color.as_chunks::<2>().0.iter().all(|&value| u16::from_ne_bytes(value) <= 128)),
+        _ => true,
+    }
 }
 
 /// PNG color type 4 (gray + alpha) or 6 (RGBA), from the IHDR chunk.
 fn png_has_alpha(png: &[u8]) -> bool {
-    matches!(png.get(25), Some(4 | 6))
+    png_probe::pixel_model(png).is_ok_and(|model| matches!(model.color_type, 4 | 6))
 }
 
 /// The mesh as binary glTF (GLB) named `name`, with `textures[i]` on material `i` (materials
@@ -251,7 +266,11 @@ pub fn glb_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Ve
         })
         .collect();
     let scene = to_craft_scene(mesh, name, materials, images);
-    craft_mesh::gltf::write_glb(&scene, &craft_mesh::Limits::default()).map_err(|e| FormatError::Invalid(e.to_string()))
+    let options = craft_mesh::gltf::GlbWriteOptions {
+        mag_filter: Some(craft_mesh::gltf::MagFilter::Linear),
+        min_filter: Some(craft_mesh::gltf::MinFilter::LinearMipmapLinear),
+    };
+    craft_mesh::gltf::write_glb_with_options(&scene, &craft_mesh::Limits::default(), &options).map_err(|e| FormatError::Invalid(e.to_string()))
 }
 
 /// OBJ names end at whitespace.
@@ -265,12 +284,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn obj_writers_report_invalid_corner_indices() {
+        let mut mesh = texturecraft_geom::primitives::cube(1.0);
+        mesh.indices[0] = u32::MAX;
+        for error in [obj_bytes(&mesh, "invalid").unwrap_err(), obj_with_mtl(&mesh, "invalid", "m", &[]).unwrap_err()] {
+            assert!(matches!(error, FormatError::Invalid(_)));
+            assert!(error.to_string().contains("corner index is out of range"), "{error}");
+        }
+    }
+
+    #[test]
+    fn glb_writer_rejects_empty_mesh_and_invalid_corner_indices() {
+        let mut empty = texturecraft_geom::primitives::cube(1.0);
+        empty.positions.clear();
+        assert!(matches!(glb_bytes(&empty, "empty", &[]).unwrap_err(), FormatError::Invalid(_)));
+
+        let mut invalid = texturecraft_geom::primitives::cube(1.0);
+        invalid.indices[0] = u32::MAX;
+        let error = glb_bytes(&invalid, "invalid", &[]).unwrap_err();
+        assert!(matches!(error, FormatError::Invalid(_)));
+        assert!(error.to_string().contains("corner index is out of range"), "{error}");
+    }
+
+    #[test]
+    fn obj_with_mtl_links_all_material_texture_slots() {
+        let mesh = texturecraft_geom::primitives::cube(1.0);
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::write_buffer_with_format(&mut png, &[200u8, 200, 200], 1, 1, image::ColorType::Rgb8, image::ImageFormat::Png).unwrap();
+        let png_bytes = png.into_inner();
+        let file = |name: &str| ExportedFile { name: name.into(), bytes: png_bytes.clone(), width: 1, height: 1, warnings: Vec::new() };
+        let textures = vec![vec![
+            file("BaseColor.png"),
+            file("Roughness.png"),
+            file("Metallic.png"),
+            file("Normal.png"),
+            file("Emissive.png"),
+            file("Opacity.png"),
+            file("Clearcoat.png"),
+            file("ClearcoatRoughness.png"),
+        ]];
+        let (obj, files) = obj_with_mtl(&mesh, "project", "cube", &textures).unwrap();
+        let obj = String::from_utf8(obj).unwrap();
+        assert!(obj.contains("mtllib cube.mtl\n"));
+        assert!(obj.contains("usemtl Cube\n"));
+        let mtl = String::from_utf8(files[0].1.clone()).unwrap();
+        assert_eq!(files[0].0, "cube.mtl");
+        for (key, slot) in [
+            ("map_Kd", "BaseColor"),
+            ("map_Pr", "Roughness"),
+            ("map_Pm", "Metallic"),
+            ("norm", "Normal"),
+            ("map_Bump", "Normal"),
+            ("map_Ke", "Emissive"),
+            ("map_d", "Opacity"),
+            ("map_Pc", "Clearcoat"),
+            ("map_Pcr", "ClearcoatRoughness"),
+        ] {
+            let expected = format!("{key} cube_Cube_{slot}.png");
+            assert!(mtl.lines().any(|line| line == expected), "missing `{expected}` in:\n{mtl}");
+        }
+        assert!(mtl.contains("Ke 1 1 1\nmap_Ke cube_Cube_Emissive.png"));
+        assert_eq!(files.len(), 9);
+    }
+
+    #[test]
     fn name_with_newline_stays_in_the_header_comment() {
         let mesh = texturecraft_geom::primitives::cube(1.0);
         let name = "a\nv 9 9 9\r\nmtllib x";
-        let obj = String::from_utf8(obj_bytes(&mesh, name)).unwrap();
+        let obj = String::from_utf8(obj_bytes(&mesh, name).unwrap()).unwrap();
         assert!(obj.lines().all(|l| !l.starts_with("v 9 9 9") && !l.starts_with("mtllib x")));
-        let (obj, files) = obj_with_mtl(&mesh, name, "m", &[]);
+        let (obj, files) = obj_with_mtl(&mesh, name, "m", &[]).unwrap();
         let obj = String::from_utf8(obj).unwrap();
         assert!(obj.lines().all(|l| !l.starts_with("v 9 9 9") && !l.starts_with("mtllib x")));
         let mtl = String::from_utf8(files[0].1.clone()).unwrap();
@@ -286,7 +369,7 @@ mod tests {
             SubMesh { name: "b".into(), material: 1, start: 18, count: mesh.indices.len() as u32 - 18 },
         ];
         let png = |name: &str| ExportedFile { name: name.into(), bytes: vec![1, 2, 3], width: 1, height: 1, warnings: Vec::new() };
-        let (obj, files) = obj_with_mtl(&mesh, "project", "m", &[vec![png("BaseColor.png")], vec![png("BaseColor.png")]]);
+        let (obj, files) = obj_with_mtl(&mesh, "project", "m", &[vec![png("BaseColor.png")], vec![png("BaseColor.png")]]).unwrap();
         let obj = String::from_utf8(obj).unwrap();
         assert!(obj.contains("mtllib m.mtl\n") && obj.contains("usemtl Mat_A\n") && obj.contains("usemtl mat_a_2\n"));
         let names: Vec<_> = files.iter().map(|f| f.0.as_str()).collect();
@@ -307,7 +390,7 @@ mod tests {
             SubMesh { name: "b".into(), material: 1, start: 18, count: mesh.indices.len() as u32 - 18 },
         ];
         let png = || ExportedFile { name: "BaseColor.png".into(), bytes: vec![1], width: 1, height: 1, warnings: Vec::new() };
-        let (obj, files) = obj_with_mtl(&mesh, "project", "m", &[vec![png()], vec![png()]]);
+        let (obj, files) = obj_with_mtl(&mesh, "project", "m", &[vec![png()], vec![png()]]).unwrap();
         let obj = String::from_utf8(obj).unwrap();
         let mtl = String::from_utf8(files[0].1.clone()).unwrap();
         let used: Vec<_> = obj.lines().filter_map(|line| line.strip_prefix("usemtl ")).collect();
@@ -322,7 +405,7 @@ mod tests {
     fn obj_names_that_sanitize_alike_keep_their_companions_apart() {
         let mesh = texturecraft_geom::primitives::cube(1.0);
         let png = || vec![ExportedFile { name: "BaseColor.png".into(), bytes: vec![1], width: 1, height: 1, warnings: Vec::new() }];
-        let names = |stem: &str| obj_with_mtl(&mesh, "p", stem, &[png()]).1.into_iter().map(|f| f.0).collect::<Vec<_>>();
+        let names = |stem: &str| obj_with_mtl(&mesh, "p", stem, &[png()]).unwrap().1.into_iter().map(|f| f.0).collect::<Vec<_>>();
         let (spaced, plain) = (names("ball 1"), names("ball_1"));
         assert_eq!(plain, ["ball_1.mtl", "ball_1_Cube_BaseColor.png"], "a clean name is kept");
         assert!(spaced.iter().all(|n| n.starts_with("ball_1_") && !plain.contains(n)), "{spaced:?}");
@@ -332,7 +415,7 @@ mod tests {
     #[test]
     fn obj_round_trips_through_the_importer() {
         let mesh = texturecraft_geom::primitives::rounded_box(texturecraft_geom::glam::Vec3::splat(1.0), 0.1);
-        let bytes = obj_bytes(&mesh, "My box");
+        let bytes = obj_bytes(&mesh, "My box").unwrap();
         let back = crate::import_mesh_bytes("box.obj", &bytes).unwrap().mesh;
         assert_eq!(back.triangle_count(), mesh.triangle_count());
         let (a, b) = (mesh.bounds(), back.bounds());
@@ -340,6 +423,88 @@ mod tests {
         let uv_sum = |m: &Mesh| m.indices.iter().map(|&i| m.uvs[i as usize].y as f64).sum::<f64>();
         assert!((uv_sum(&mesh) - uv_sum(&back)).abs() < 1e-3 * mesh.indices.len() as f64);
         assert!(String::from_utf8(bytes).unwrap().contains("o My_box"));
+    }
+
+    #[test]
+    fn glb_texture_export_keeps_filtering() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::write_buffer_with_format(&mut png, &[127, 63, 31], 1, 1, image::ColorType::Rgb8, image::ImageFormat::Png).unwrap();
+        let textures = GlbTextures { base_color: Some(png.into_inner()), ..GlbTextures::default() };
+        let mesh = texturecraft_geom::primitives::cube(1.0);
+        let glb = glb_bytes(&mesh, "Textured cube", &[textures]).unwrap();
+
+        let document = gltf::Gltf::from_slice(&glb).unwrap();
+        let material = document.materials().next().unwrap();
+        let sampler = material.pbr_metallic_roughness().base_color_texture().unwrap().texture().sampler();
+        let expected = (Some(gltf::texture::MagFilter::Linear), Some(gltf::texture::MinFilter::LinearMipmapLinear));
+        assert_eq!((sampler.mag_filter(), sampler.min_filter()), expected);
+    }
+
+    #[test]
+    fn mesh_png_maps_keep_only_nonblack_color() {
+        let png = |color, samples: &[u8]| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            image::write_buffer_with_format(&mut out, samples, 1, 1, color, image::ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        let mesh = texturecraft_geom::primitives::cube(1.0);
+        for (bytes, keep) in [
+            (png(image::ColorType::Rgba8, &[0, 0, 0, 255]), false),
+            (png(image::ColorType::Rgba8, &[0, 1, 0, 0]), true),
+            (png(image::ColorType::L16, &128u16.to_ne_bytes()), false),
+            (png(image::ColorType::L16, &129u16.to_ne_bytes()), true),
+            (b"PNG without image data".to_vec(), false),
+        ] {
+            let file = |name: &str, bytes: &[u8]| ExportedFile { name: name.into(), bytes: bytes.to_vec(), width: 1, height: 1, warnings: Vec::new() };
+            let emissive = file("Emissive.png", &bytes);
+            let textures = GlbTextures::from_files(vec![emissive.clone()]);
+            assert_eq!(textures.emissive.as_deref(), keep.then_some(bytes.as_slice()));
+            let glb = glb_bytes(&mesh, "PNG maps", &[textures]).unwrap();
+            let glb = gltf::Gltf::from_slice(&glb).unwrap();
+            assert_eq!(glb.materials().next().unwrap().emissive_texture().is_some(), keep);
+
+            let roughness = png(image::ColorType::L8, &[64]);
+            let usd_maps = vec![emissive, file("Clearcoat.png", &bytes), file("ClearcoatRoughness.png", &roughness)];
+            let usd = usd_bytes(&mesh, "PNG maps", &[usd_maps], UsdFormat::Usda).unwrap();
+            if keep {
+                assert_eq!(usd.textures.len(), 3);
+                for (suffix, expected) in [("_Emissive.png", &bytes), ("_Clearcoat.png", &bytes), ("_ClearcoatRoughness.png", &roughness)] {
+                    let (_, written) = usd.textures.iter().find(|(name, _)| name.ends_with(suffix)).unwrap();
+                    assert_eq!(written, expected);
+                }
+            } else {
+                assert!(usd.textures.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn mesh_png_alpha_requires_a_png_with_stored_alpha() {
+        let encode = |color: png::ColorType, samples: &[u8], color_key: bool| {
+            let mut output = Vec::new();
+            let mut encoder = png::Encoder::new(&mut output, 1, 1);
+            encoder.set_color(color);
+            if color_key {
+                encoder.set_trns(vec![0; 6]);
+            }
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(samples).unwrap();
+            writer.finish().unwrap();
+            output
+        };
+        let mut impostor = vec![0; 26];
+        impostor[25] = 6;
+        let mesh = texturecraft_geom::primitives::cube(1.0);
+        for (bytes, expected) in [
+            (encode(png::ColorType::Rgba, &[0, 1, 2, 120], false), gltf::material::AlphaMode::Blend),
+            (encode(png::ColorType::Rgb, &[0, 0, 0], true), gltf::material::AlphaMode::Opaque),
+            (impostor, gltf::material::AlphaMode::Opaque),
+        ] {
+            let textures = GlbTextures { base_color: Some(bytes), ..GlbTextures::default() };
+            let glb = glb_bytes(&mesh, "PNG alpha", &[textures]).unwrap();
+            let glb = gltf::Gltf::from_slice(&glb).unwrap();
+            assert_eq!(glb.materials().next().unwrap().alpha_mode(), expected);
+        }
     }
 
     #[test]
@@ -371,6 +536,9 @@ mod tests {
         let doc = json_of(GlbTextures::from_files(vec![file("Sheen.png", png(image::ColorType::Rgba8))]));
         assert_eq!(doc["extensionsUsed"], json!([KHR_SHEEN]));
         assert_eq!(doc["materials"][0]["extensions"][KHR_SHEEN]["sheenRoughnessTexture"], doc["materials"][0]["extensions"][KHR_SHEEN]["sheenColorTexture"]);
-        assert!(json_of(GlbTextures::default()).get("extensionsUsed").is_none());
+        let untextured = json_of(GlbTextures::default());
+        for key in ["extensionsUsed", "textures", "samplers"] {
+            assert!(untextured.get(key).is_none(), "unexpected {key} on an untextured export");
+        }
     }
 }

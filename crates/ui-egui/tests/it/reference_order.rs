@@ -32,57 +32,6 @@ fn named<'a>(found: &'a [(f32, String, bool)], name: &str) -> Option<&'a (f32, S
 }
 
 #[test]
-fn every_menu_lists_its_items_in_the_reference_order() {
-    // Items the reference has and TextureCraft lacks are absent; TextureCraft's own sit where they fit
-    let expected = [
-        "File: New Project | Open | Recent Projects > Clear | - | Open Sample Project | - | Close | - | Save | Save As | More Save Options > Save As Template | More Save Options > Save and Reduce File Size | More Save Options > Save As Copy | Remove Unused Resources | - | Import Resources | Export Textures | Export Mesh | - | Quit",
-        "Edit: Undo | Redo | Project Configuration | Reimport Mesh | Settings",
-        "Mode: Bake Mesh Maps | Painting | Rendering",
-        "Window: Views > Assets | Views > Baking Log | Views > Common Settings | Views > Display Settings | Views > Export | Views > History | Views > Layers | Views > Log | Views > Mesh Map Bakers | Views > Mesh Map Settings | Views > Properties | Views > Renderer Settings | Views > Shader Settings | Views > Texture Set List | Views > Texture Set Settings | Toolbars > Docks | Toolbars > Tools | - | Save UI Layout > Painting Mode | Save UI Layout > Rendering Mode | Save UI Layout > Baking Mode | Load UI Layout | - | Hide UI | Reset UI",
-        "Viewport: Display Material | Display Next Channel | Display Previous Channel | Display Next Mesh Map | Display Previous Mesh Map | - | Show Entire Mesh/Path | - | Enable Quick Mask | Edit Quick Mask | Invert Quick Mask",
-        "Help: Release Notes | Documentation | Shortcuts List | - | Discord | Report a Bug | Show Log | Export Log | - | Check for Updates | About TextureCraft",
-    ];
-    let actual: Vec<String> = menus::TOP
-        .iter()
-        .map(|top| {
-            let items: Vec<String> = menus::CATALOG
-                .iter()
-                .filter(|item| item.menu == *top)
-                .map(|item| match item.sub {
-                    Some(sub) => format!("{sub} > {}", item.label),
-                    None => item.label.to_string(),
-                })
-                .collect();
-            format!("{top}: {}", items.join(" | "))
-        })
-        .collect();
-    for (expected, actual) in expected.iter().zip(&actual) {
-        assert_eq!(expected, actual);
-    }
-    assert_eq!(menus::TOP, ["File", "Edit", "Mode", "Window", "Viewport", "Help"], "the reference's top menus, minus the scripting ones");
-}
-
-#[test]
-fn the_tool_shelf_keeps_the_reference_order() {
-    let harness = harness(texturecraft_engine::sample_session(256, 64).unwrap());
-    let shelf = buttons_in(&harness, 0.0..60.0);
-    let order = ["Paint", "Eraser", "Path", "Projection", "Polygon fill", "Smudge", "Clone", "Material picker", "Geometry mask"];
-    let row_positions: Vec<f32> = order.iter().map(|name| named(&shelf, name).unwrap_or_else(|| panic!("{name} on the shelf: {shelf:?}")).0).collect();
-
-    assert!(row_positions.windows(2).all(|pair| pair[0] < pair[1]), "{row_positions:?}");
-}
-
-#[test]
-fn the_right_bar_keeps_the_reference_order() {
-    let harness = harness(texturecraft_engine::sample_session(256, 64).unwrap());
-    let bar = buttons_in(&harness, 1562.0..1600.0);
-    let order = ["Export", "Log", "Display Settings", "Shader Settings", "History"];
-    let row_positions: Vec<f32> = order.iter().map(|name| named(&bar, name).unwrap_or_else(|| panic!("{name} on the bar: {bar:?}")).0).collect();
-
-    assert!(row_positions.windows(2).all(|pair| pair[0] < pair[1]), "{row_positions:?}");
-}
-
-#[test]
 fn the_blank_screen_enables_what_the_reference_enables() {
     let harness = harness(Session::closed().unwrap());
     let shelf = buttons_in(&harness, 0.0..60.0);

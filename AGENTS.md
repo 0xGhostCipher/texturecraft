@@ -63,7 +63,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119
 ## This repository
 <!-- craft-agents:end -->
 
-TextureCraft is an open-source, native 3D texture painter in Rust: a native egui/eframe app on wgpu, a headless CLI and MCP server, and the same app in the browser (trunk, wasm-bindgen). The project extension is `.tcraft`. Crates are `texturecraft-*`; the product name is written TextureCraft. MaterialCraft's `.mcmat` portable materials are read here with our own code (`formats::mcmat`); the apps share no crates. Start with `docs/architecture.md`, `docs/control-protocol.md`, `ROADMAP.md` and `docs/parity.md`.
+TextureCraft is an open-source, native 3D texture painter in Rust: a native egui/eframe app on wgpu, a headless CLI and MCP server, and the same app in the browser (trunk, wasm-bindgen). The project extension is `.tcraft`. Crates are `texturecraft-*`; the product name is written TextureCraft. MaterialCraft's `.mcmat` portable materials are read here through the shared `craft-mcmat` format crate (craft-libs), with the app's own checks in `formats::mcmat`; each app keeps its own models and policy. Start with `docs/architecture.md`, `docs/control-protocol.md`, `ROADMAP.md` and `docs/parity.md`.
 
 ### Layout
 ```text

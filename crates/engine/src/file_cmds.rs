@@ -3,12 +3,15 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 #[cfg(not(target_arch = "wasm32"))]
 use texturecraft_core::{NormalFormat, PROJECT_EXT};
 use texturecraft_core::{Project, TextureSet};
+use texturecraft_formats::PlannedFile;
 use texturecraft_formats::{ExportInput, ExportOptions, ExportedFile, FileFormat, MapOverride, Padding, ProjectFile};
 use texturecraft_geom::{Mesh, primitives};
 
@@ -55,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), materialX?: bool (also write a .mtlx OpenPBR material per texture set; needs the \"OpenPBR (separate maps)\" preset)}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs)} → {files, warnings, materialUdimPatterns?}",
             always,
             export_textures
         ),
@@ -106,8 +109,8 @@ fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8]) -> Result<textur
 
 impl Session {
     /// The working mesh as Wavefront OBJ (with its own UVs, UDIM tiles included).
-    pub fn mesh_obj_bytes(&self) -> Vec<u8> {
-        texturecraft_formats::obj_bytes(&self.source_mesh(), &self.doc.project.name)
+    pub fn mesh_obj_bytes(&self) -> Result<Vec<u8>> {
+        texturecraft_formats::obj_bytes(&self.source_mesh(), &self.doc.project.name).map_err(fe)
     }
 
     /// [`Session::mesh_obj_bytes`] with an MTL material library and each material's maps (like
@@ -121,7 +124,7 @@ impl Session {
             mesh.materials.push("default".into());
         }
         let files = self.material_files(texturecraft_formats::usd_export_options(), false, mesh.materials.len())?;
-        Ok(texturecraft_formats::obj_with_mtl(&mesh, &self.doc.project.name, stem, &files))
+        texturecraft_formats::obj_with_mtl(&mesh, &self.doc.project.name, stem, &files).map_err(fe)
     }
 
     /// The working mesh as binary glTF with each material's textures (from its texture set's
@@ -269,6 +272,17 @@ impl Session {
     /// named like one an earlier set exports is left out, with a warning (see
     /// [`texturecraft_formats::skip_repeated_names`]).
     pub fn export_files(&mut self, sets: &[usize], opts: &ExportOptions) -> Result<Vec<ExportedFile>> {
+        let mut files = self.render_export_files(sets, opts, |_, plans| plans)?;
+        texturecraft_formats::skip_repeated_names(&mut files);
+        Ok(files)
+    }
+
+    fn render_export_files(
+        &mut self,
+        sets: &[usize],
+        options: &ExportOptions,
+        mut select: impl FnMut(usize, Vec<PlannedFile>) -> Vec<PlannedFile>,
+    ) -> Result<Vec<ExportedFile>> {
         if self.solo.is_none() {
             self.update();
         }
@@ -276,23 +290,28 @@ impl Session {
         let mesh_name = stem_of(self.doc.project.mesh.trim_start_matches("builtin:"));
         let mut out = Vec::new();
         let empty = Default::default();
-        for &ts in sets {
-            let cache = self.caches.get(ts).ok_or_else(|| EngineError::Other(format!("no texture set {ts}")))?;
-            let composite = self.document_composite(ts, &cache.covered_tiles).ok_or_else(|| EngineError::Other(format!("no texture set {ts}")))?;
+        for &set_index in sets {
+            let cache = self.caches.get(set_index).ok_or_else(|| EngineError::Other(format!("no texture set {set_index}")))?;
+            let plans = texturecraft_formats::list_outputs(&self.doc.project, set_index, &mesh_name, options).map_err(fe)?;
+            let plans = select(set_index, plans);
+            if plans.is_empty() {
+                continue;
+            }
+
+            let composite =
+                self.document_composite(set_index, &cache.covered_tiles).ok_or_else(|| EngineError::Other(format!("no texture set {set_index}")))?;
             let coverage = cache.gbuf.coverage_mask();
             let input = ExportInput {
                 project: &self.doc.project,
-                ts,
+                ts: set_index,
                 composite: &composite,
-                baked: self.doc.baked.get(&ts).unwrap_or(&empty),
+                baked: self.doc.baked.get(&set_index).unwrap_or(&empty),
                 coverage: &coverage,
                 mesh_name: &mesh_name,
             };
-            out.extend(texturecraft_formats::render_maps(&input, opts).map_err(fe)?);
+            out.extend(texturecraft_formats::export::render_planned_maps(&input, options, plans).map_err(fe)?);
         }
 
-        // A later set's file would replace an earlier set's of the same name
-        texturecraft_formats::skip_repeated_names(&mut out);
         Ok(out)
     }
 }
@@ -636,108 +655,384 @@ impl Session {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
-    let dir = native::path_param(p, "dir", "file.exportTextures")?.to_string();
-    let opts = export_options(s, p, "file.exportTextures")?;
-    let sets = sets_param(s, p, "file.exportTextures")?;
-    std::fs::create_dir_all(&dir).map_err(|e| bad("file.exportTextures", format!("cannot create {dir}: {e}")))?;
-    let files = s.export_files(&sets, &opts)?;
-    let mut warnings: Vec<String> = files.iter().flat_map(|f| f.warnings.iter().cloned()).collect();
-    let mut written = texturecraft_formats::write_files(&files, std::path::Path::new(&dir)).map_err(fe)?;
-    if p.get("materialX").and_then(Value::as_bool).unwrap_or(false) {
-        written.extend(write_materialx(s, &sets, &opts, std::path::Path::new(&dir), &mut warnings)?);
+fn export_textures(session: &mut Session, params: &Value) -> Result<Value> {
+    let dir = std::path::Path::new(native::path_param(params, "dir", "file.exportTextures")?);
+    let options = export_options(session, params, "file.exportTextures")?;
+    let sets = sets_param(session, params, "file.exportTextures")?;
+    let mut taken_names = reserved_names(params)?;
+    let reserved_patterns: Vec<_> = taken_names.keys().filter(|name| name.contains("<udim>")).cloned().collect();
+    let material = params.get("materialX").and_then(Value::as_bool).unwrap_or(false);
+    let mut warnings = Vec::new();
+    let mut udim_patterns = Vec::new();
+
+    std::fs::create_dir_all(dir).map_err(|error| bad("file.exportTextures", format!("cannot create {}: {error}", dir.display())))?;
+
+    let written = if material {
+        let (fallback, selected_inputs, fallback_inputs) = material_map_options(&options, session.doc.project.normal_format)?;
+        let mut textures = BTreeMap::new();
+
+        let selected = session.render_export_files(&sets, &options, |set, mut plans| {
+            let blocked = reserve_export_names(set, &mut plans, &mut taken_names, &reserved_patterns, &mut warnings, false);
+            collect_material_maps(&options, &selected_inputs, &plans, &blocked, textures.entry(set).or_default(), &mut warnings);
+            plans
+        })?;
+
+        append_export_warnings(&mut warnings, &selected);
+        let mut written = texturecraft_formats::write_files(&selected, dir).map_err(fe)?;
+        drop(selected);
+
+        if !fallback_inputs.is_empty() {
+            let maps = session.render_export_files(&sets, &fallback, |set, mut plans| {
+                let blocked = reserve_export_names(set, &mut plans, &mut taken_names, &reserved_patterns, &mut warnings, true);
+                collect_material_maps(&fallback, &fallback_inputs, &plans, &blocked, textures.entry(set).or_default(), &mut warnings);
+                plans
+            })?;
+
+            if options.normal_format == Some(NormalFormat::DirectX)
+                && options.preset.maps.iter().any(|map| texturecraft_formats::materialx::input_of_template(&map.file) == Some("geometry_normal"))
+                && fallback_inputs.values().any(|input| *input == "geometry_normal")
+                && textures.values().flatten().any(|texture| texture.input == "geometry_normal")
+            {
+                warnings.push(
+                    "MaterialX: the normalmap node reads OpenGL (+Y) normals. The material uses a separate OpenGL map alongside the selected DirectX map"
+                        .into(),
+                );
+            }
+
+            append_export_warnings(&mut warnings, &maps);
+            written.extend(texturecraft_formats::write_files(&maps, dir).map_err(fe)?);
+        }
+
+        written.extend(write_materialx(session, &sets, &mut textures, dir, &mut taken_names, &mut warnings, &mut udim_patterns)?);
+        written
+    } else if taken_names.is_empty() {
+        let files = session.export_files(&sets, &options)?;
+        warnings.extend(files.iter().flat_map(|file| file.warnings.iter().cloned()));
+        texturecraft_formats::write_files(&files, dir).map_err(fe)?
+    } else {
+        let files = session.render_export_files(&sets, &options, |set, mut plans| {
+            reserve_export_names(set, &mut plans, &mut taken_names, &reserved_patterns, &mut warnings, false);
+            plans
+        })?;
+        append_export_warnings(&mut warnings, &files);
+        texturecraft_formats::write_files(&files, dir).map_err(fe)?
+    };
+
+    session.log.info("MapExporter", format!("Exported {} textures to {}", written.len(), dir.display()));
+    let mut response = json!({ "files": written.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(), "warnings": warnings });
+    if !udim_patterns.is_empty() {
+        response["materialUdimPatterns"] = json!(udim_patterns);
     }
-    s.log.info("MapExporter", format!("Exported {} textures to {dir}", written.len()));
-    Ok(json!({ "files": written.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(), "warnings": warnings }))
+
+    Ok(response)
 }
 
-/// One `<mesh>_<set>.mtlx` per texture set, next to the textures `opts` just wrote: the
-/// OpenPBR inputs those textures feed (see `texturecraft_formats::materialx`). UDIM sets name
-/// their files with the `<UDIM>` token. Sets with no recognised map, or whose name gives the
-/// same file name as an earlier set's, are skipped with a warning.
+/// Reserve paths and UDIM patterns from earlier commands without assigning them to a current set.
 #[cfg(not(target_arch = "wasm32"))]
-fn write_materialx(s: &Session, sets: &[usize], opts: &ExportOptions, dir: &std::path::Path, warnings: &mut Vec<String>) -> Result<Vec<std::path::PathBuf>> {
-    use texturecraft_formats::materialx::{self, Texture};
-    let mesh_name = stem_of(s.doc.project.mesh.trim_start_matches("builtin:"));
-    let mut out = Vec::new();
-    let mut stems = std::collections::HashSet::new();
-    let mut written_names = std::collections::HashSet::new();
-    let mut normal_map_written = false;
-    let aces2065_tag = materialx::colorspace_name(texturecraft_texel::ColorSpace::Aces2065);
-    let mut aces2065_written = false;
-    for &ts in sets {
-        let set = s.doc.project.texture_set(ts).map_err(|e| EngineError::Other(e.to_string()))?;
-        let files = texturecraft_formats::list_outputs(&s.doc.project, ts, &mesh_name, opts).map_err(fe)?;
+fn reserved_names(params: &Value) -> Result<HashMap<String, Option<usize>>> {
+    match params.get("reservedNames") {
+        None | Some(Value::Null) => Ok(HashMap::new()),
+        Some(Value::Array(names)) => names
+            .iter()
+            .map(|name| {
+                name.as_str()
+                    .map(|name| (name.to_ascii_lowercase(), None))
+                    .ok_or_else(|| bad("file.exportTextures", "`reservedNames` must be a list of file names"))
+            })
+            .collect(),
+        Some(_) => Err(bad("file.exportTextures", "`reservedNames` must be a list of file names")),
+    }
+}
 
-        // If any tile of a map was skipped, its UDIM reference could pick up another set's pixels
-        let mut skipped_maps = std::collections::HashSet::new();
-        for file in &files {
-            if !written_names.insert(file.name.to_ascii_lowercase()) {
-                skipped_maps.insert(file.map);
-            }
+#[cfg(not(target_arch = "wasm32"))]
+fn reserve_export_names(
+    set_index: usize,
+    plans: &mut Vec<PlannedFile>,
+    taken_names: &mut HashMap<String, Option<usize>>,
+    reserved_patterns: &[String],
+    warnings: &mut Vec<String>,
+    fallback: bool,
+) -> HashSet<usize> {
+    let mut blocked_maps = HashSet::new();
+    plans.retain(|plan| {
+        let name = plan.name.to_ascii_lowercase();
+        if reserved_patterns.iter().any(|pattern| udim_matches(pattern, &name)) {
+            blocked_maps.insert(plan.map);
+            warnings.push(format!(
+                "\"{}\" was not written: an earlier MaterialX document uses that UDIM pattern. Rename a texture set or change the template file names",
+                plan.name
+            ));
+            return false;
         }
 
-        let mut textures: Vec<Texture> = Vec::new();
-        for file in files.into_iter().filter(|file| !skipped_maps.contains(&file.map)) {
-            let Some(map) = opts.preset.maps.get(file.map) else { continue };
-            let Some(input) = materialx::input_of_template(&map.file) else { continue };
-
-            // The first tile stands for all the tiles with the same naming pattern
-            let filename = file.udim_name.unwrap_or(file.name);
-            let space = opts.space_for_map(map, file.format, file.bit_depth);
-            let colorspace = materialx::colorspace_name(space);
-            if !textures.iter().any(|texture| texture.input == input) {
-                textures.push(Texture { input: input.to_owned(), file: filename, colorspace });
-            }
+        if let Entry::Vacant(entry) = taken_names.entry(name) {
+            entry.insert(Some(set_index));
+            return true;
         }
-        normal_map_written |= textures.iter().any(|t| t.input == "geometry_normal");
-        if textures.is_empty() {
-            warnings.push(format!("MaterialX: texture set \"{}\" has no OpenPBR maps; use the \"OpenPBR (separate maps)\" preset", set.name));
+
+        blocked_maps.insert(plan.map);
+        if fallback {
+            warnings.push(format!(
+                "MaterialX: \"{}\" was not written: a file of the chosen template or of an earlier command of this export has the name. Rename a texture set or change the template file names",
+                plan.name
+            ));
+        } else {
+            warnings.push(format!(
+                "\"{}\" was not written: an earlier file of this export has the same name. Rename a texture set or change the template file names",
+                plan.name
+            ));
+        }
+        false
+    });
+    blocked_maps
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn udim_matches(pattern: &str, filename: &str) -> bool {
+    let Some((prefix, suffix)) = pattern.split_once("<udim>") else { return false };
+
+    filename
+        .strip_prefix(prefix)
+        .and_then(|name| name.strip_suffix(suffix))
+        .is_some_and(|tile| tile.len() == 4 && tile.parse::<u32>().is_ok_and(|tile| texturecraft_core::project::UDIM_RANGE.contains(&tile)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn append_export_warnings(warnings: &mut Vec<String>, files: &[ExportedFile]) {
+    for warning in files.iter().flat_map(|file| &file.warnings) {
+        if !warnings.contains(warning) {
+            warnings.push(warning.clone());
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type MaterialInputs = BTreeMap<usize, &'static str>;
+
+/// Identify reusable maps and prepare separate, canonical maps for the remaining inputs.
+#[cfg(not(target_arch = "wasm32"))]
+fn material_map_options(options: &ExportOptions, project_normal: NormalFormat) -> Result<(ExportOptions, MaterialInputs, MaterialInputs)> {
+    use texturecraft_formats::materialx::input_of_template;
+
+    let canonical = texturecraft_formats::builtin_preset("OpenPBR (separate maps)")
+        .ok_or_else(|| bad("file.exportTextures", "the OpenPBR export preset is unavailable"))?;
+    let mut fallback = ExportOptions::new(texturecraft_formats::ExportPreset { name: canonical.name, maps: Vec::new() });
+    fallback.padding = options.padding;
+    fallback.size = options.size;
+    fallback.normal_format = Some(NormalFormat::OpenGl);
+    fallback.atlas = options.atlas;
+    fallback.color_space = options.color_space;
+    fallback.dither = options.dither;
+    let mut reusable = BTreeMap::new();
+    let mut generated = BTreeMap::new();
+
+    for mut map in canonical.maps {
+        let Some(input) = input_of_template(&map.file) else { continue };
+
+        let selected = options.preset.maps.iter().enumerate().filter(|(_, selected)| selected.file == map.file);
+        let selected_format = |index: usize| {
+            options.maps.get(&index).and_then(|settings| settings.format).or(options.format_override).unwrap_or(options.preset.maps[index].format)
+        };
+        let enabled = |index: usize| options.maps.get(&index).is_none_or(|settings| settings.enabled);
+        let compatible = selected.clone().find(|(index, selected)| {
+            enabled(*index) && material_format(selected_format(*index)) && compatible_material_map(&map, selected, options.normal_format, project_normal)
+        });
+        if let Some((index, _)) = compatible {
+            reusable.insert(index, input);
             continue;
         }
 
-        let stem = texturecraft_formats::export::sanitize_file_stem(&format!("{mesh_name}_{}", set.name));
+        let replacement = selected.clone().find(|(index, _)| enabled(*index));
+        if replacement.is_none() && selected.clone().next().is_some() {
+            continue;
+        }
 
-        // Case-insensitive: Windows and macOS file systems are
-        if !stems.insert(stem.to_ascii_lowercase()) {
+        let mut overrides = MapOverride::default();
+        let requested_format = replacement.map(|(index, _)| selected_format(index)).or(options.format_override);
+        if requested_format.is_none_or(material_format) {
+            overrides.format = requested_format;
+            let settings = replacement.and_then(|(index, _)| options.maps.get(&index));
+            overrides.bit_depth =
+                settings.and_then(|settings| settings.bit_depth).or(options.bit_depth_override).or_else(|| replacement.map(|(_, selected)| selected.bit_depth));
+            overrides.dither = settings.and_then(|settings| settings.dither);
+        }
+
+        // A replacement with the same format needs its own name beside the selected output
+        if selected.filter(|(index, _)| enabled(*index)).any(|(index, _)| selected_format(index) == overrides.format.unwrap_or(map.format)) {
+            map.file.push_str("_mtlx");
+        }
+
+        let index = fallback.preset.maps.len();
+        generated.insert(index, input);
+        fallback.maps.insert(index, overrides);
+        fallback.preset.maps.push(map);
+    }
+
+    Ok((fallback, reusable, generated))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn material_format(format: FileFormat) -> bool {
+    !matches!(format, FileFormat::Psd | FileFormat::Jng | FileFormat::Pgm | FileFormat::Webp)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compatible_material_map(
+    canonical: &texturecraft_formats::MapSpec,
+    selected: &texturecraft_formats::MapSpec,
+    normal_override: Option<NormalFormat>,
+    project_normal: NormalFormat,
+) -> bool {
+    use texturecraft_formats::{Dest, SourceRef, VirtualMap};
+
+    canonical.channels.iter().all(|(dest, expected)| {
+        !selected.inverted.contains(dest)
+            && selected.channels.iter().any(|(actual_dest, actual)| {
+                if actual_dest != dest {
+                    return false;
+                }
+
+                match (expected, actual) {
+                    (
+                        SourceRef::Virtual { map: VirtualMap::NormalOpenGl, component },
+                        SourceRef::Virtual { map: VirtualMap::NormalOpenGl | VirtualMap::NormalDirectX, component: selected_component },
+                    ) => {
+                        let default = if matches!(actual, SourceRef::Virtual { map: VirtualMap::NormalDirectX, .. }) {
+                            NormalFormat::DirectX
+                        } else {
+                            NormalFormat::OpenGl
+                        };
+                        component == selected_component && normal_override.unwrap_or(default) == NormalFormat::OpenGl
+                    }
+                    (
+                        SourceRef::Virtual { map: VirtualMap::NormalOpenGl, component },
+                        SourceRef::Channel { channel: texturecraft_core::Channel::Normal, component: selected_component },
+                    ) => component == selected_component && normal_override.unwrap_or(project_normal) == NormalFormat::OpenGl,
+                    _ => expected == actual,
+                }
+            })
+    }) && selected.channels.iter().all(|(dest, _)| *dest == Dest::A || canonical.channels.iter().any(|(canonical_dest, _)| canonical_dest == dest))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_material_maps(
+    options: &ExportOptions,
+    inputs: &MaterialInputs,
+    plans: &[PlannedFile],
+    blocked_maps: &HashSet<usize>,
+    textures: &mut Vec<texturecraft_formats::materialx::Texture>,
+    warnings: &mut Vec<String>,
+) {
+    use texturecraft_formats::materialx::{Texture, colorspace_name};
+
+    for (&map_index, &input) in inputs {
+        // A UDIM pattern is safe only if every tile was retained
+        if blocked_maps.contains(&map_index) {
+            continue;
+        }
+
+        let mut tiles = plans.iter().filter(|plan| plan.map == map_index);
+        let Some(first) = tiles.next() else { continue };
+
+        let filename = if first.tile.is_none() {
+            &first.name
+        } else if let Some(pattern) = &first.udim_name
+            && tiles.all(|plan| plan.udim_name.as_ref() == Some(pattern))
+        {
+            pattern
+        } else {
+            warnings.push(format!("MaterialX: \"{}\" has no consistent UDIM pattern. Shorten the texture set or template name", first.name));
+            continue;
+        };
+
+        let space = options.space_for_map(&options.preset.maps[map_index], first.format, first.bit_depth);
+        textures.push(Texture { input: input.into(), file: filename.clone(), colorspace: colorspace_name(space) });
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_materialx(
+    session: &Session,
+    sets: &[usize],
+    textures: &mut BTreeMap<usize, Vec<texturecraft_formats::materialx::Texture>>,
+    dir: &std::path::Path,
+    taken_names: &mut HashMap<String, Option<usize>>,
+    warnings: &mut Vec<String>,
+    udim_patterns: &mut Vec<String>,
+) -> Result<Vec<std::path::PathBuf>> {
+    use texturecraft_formats::materialx::{self, Kind};
+
+    let mesh_name = stem_of(session.doc.project.mesh.trim_start_matches("builtin:"));
+    let mut paths = Vec::new();
+    let mut aces2065_written = false;
+    let aces2065_tag = materialx::colorspace_name(texturecraft_texel::ColorSpace::Aces2065);
+    for &index in sets {
+        let set = session.doc.project.texture_set(index).map_err(|error| EngineError::Other(error.to_string()))?;
+        let Some(inputs) = textures.get_mut(&index) else { continue };
+
+        inputs.retain(|texture| {
+            if !texture.file.contains("<UDIM>") {
+                return true;
+            }
+
+            let pattern = texture.file.to_ascii_lowercase();
+            if taken_names.iter().any(|(filename, owner)| *owner != Some(index) && udim_matches(&pattern, filename)) {
+                warnings.push(format!(
+                    "MaterialX: \"{}\" also matches another texture set's files. Rename a texture set or change the template file names",
+                    texture.file
+                ));
+                return false;
+            }
+
+            true
+        });
+        if inputs.is_empty() {
+            warnings.push(format!("MaterialX: texture set \"{}\" has no OpenPBR maps to refer to", set.name));
+            continue;
+        }
+
+        let material_name = format!("{mesh_name}_{}", set.name);
+        let stem = texturecraft_formats::export::sanitize_file_stem(&material_name);
+        let filename = format!("{stem}.mtlx");
+        let Entry::Vacant(entry) = taken_names.entry(filename.to_ascii_lowercase()) else {
             warnings.push(format!(
-                "MaterialX: texture set \"{}\" exports as \"{stem}\" like an earlier set, so its .mtlx was not written; rename one of them",
+                "MaterialX: texture set \"{}\" exports as \"{filename}\" like an earlier file of this export, so its .mtlx was not written. Rename one of the texture sets",
                 set.name
             ));
             continue;
-        }
+        };
 
-        let path = dir.join(format!("{stem}.mtlx"));
-        texturecraft_formats::write_atomic(&path, materialx::write(&format!("{mesh_name}_{}", set.name), &textures, None).as_bytes()).map_err(fe)?;
+        entry.insert(Some(index));
+
+        let path = dir.join(filename);
+        texturecraft_formats::write_atomic(&path, materialx::write(&material_name, inputs, None).as_bytes()).map_err(fe)?;
+        udim_patterns.extend(inputs.iter().filter(|texture| texture.file.contains("<UDIM>")).map(|texture| texture.file.clone()));
         aces2065_written |=
-            textures.iter().any(|texture| texture.colorspace == aces2065_tag && materialx::INPUTS.contains(&(texture.input.as_str(), materialx::Kind::Color)));
-        out.push(path);
+            inputs.iter().any(|texture| texture.colorspace == aces2065_tag && materialx::INPUTS.contains(&(texture.input.as_str(), Kind::Color)));
+        paths.push(path);
     }
 
     if aces2065_written {
         warnings.push("MaterialX: version 1.39 has no ACES2065-1 colour space; the colour maps are tagged lin_ap0_scene, its name in later versions, which older readers may not know".into());
     }
 
-    // The normalmap node only exists in a material that has a normal map
-    if normal_map_written && opts.normal_format == Some(NormalFormat::DirectX) {
-        warnings.push("MaterialX: the normalmap node reads OpenGL (+Y) normals; this export wrote DirectX normals, so flip the green channel".into());
-    }
-    Ok(out)
+    Ok(paths)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn export_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let path = native::path_param(p, "path", "file.exportMesh")?;
     let out = s.mesh_export(path, strp(p, "format"))?;
-    let write = |path: &str, bytes: &[u8]| std::fs::write(path, bytes).map_err(|e| bad("file.exportMesh", format!("cannot write {path}: {e}")));
     let dir = std::path::Path::new(&out.path).parent().unwrap_or(std::path::Path::new(""));
-    let mut textures = Vec::new();
-    for (name, bytes) in &out.textures {
-        let file = dir.join(name).display().to_string();
-        write(&file, bytes)?;
-        textures.push(file);
-    }
-    write(&out.path, &out.bytes)?;
+    let texture_paths: Vec<std::path::PathBuf> = out.textures.iter().map(|(name, _)| dir.join(name)).collect();
+    let main_path = std::path::PathBuf::from(&out.path);
+    let entries = texture_paths
+        .iter()
+        .zip(&out.textures)
+        .map(|(file, (_, bytes))| (file.as_path(), bytes.as_slice()))
+        .chain(std::iter::once((main_path.as_path(), out.bytes.as_slice())));
+    texturecraft_formats::write_batch_atomic(entries).map_err(|e| bad("file.exportMesh", format!("cannot write {}: {e}", out.path)))?;
+    let textures = texture_paths.into_iter().map(|file| file.display().to_string()).collect();
     s.log.info("Exporter", format!("Exported mesh to {}", out.path));
     Ok(out.reply(textures))
 }
@@ -898,6 +1193,39 @@ f 1/1 2/2 3/3
     }
 
     #[test]
+    fn rejected_obj_export_preserves_existing_files_and_publishes_nothing() {
+        let mut s = Session::new_project("t", primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
+        let dir = std::env::temp_dir().join(format!("tc_rejected_obj_export_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cube.obj");
+        // The same command first writes a valid mesh and all its companions.
+        crate::execute(&mut s, "file.exportMesh", &json!({ "path": path })).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("\nf "));
+        let snapshot = || {
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|entry| {
+                    let path = entry.unwrap().path();
+                    let bytes = std::fs::read(&path).unwrap();
+                    (path, bytes)
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let before = snapshot();
+        assert!(before.len() > 2, "the valid export includes its MTL and maps");
+        // Keep the working/render mesh valid; corrupt only the source exported by both APIs.
+        Arc::make_mut(&mut s.source).indices[0] = u32::MAX;
+        assert!(s.mesh_obj_bytes().unwrap_err().to_string().contains("corner index is out of range"));
+        assert!(s.mesh_obj_with_mtl("cube").unwrap_err().to_string().contains("corner index is out of range"));
+        for destination in [path, dir.join("new.obj")] {
+            let error = crate::execute(&mut s, "file.exportMesh", &json!({ "path": destination })).unwrap_err();
+            assert!(error.to_string().contains("corner index is out of range"), "{error}");
+            assert_eq!(snapshot(), before, "a rejected mesh must neither overwrite nor publish any file");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn export_mesh_writes_obj_by_default_and_textured_glb() {
         let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
         let dir = std::env::temp_dir().join(format!("tc_export_mesh_{}", std::process::id()));
@@ -930,7 +1258,48 @@ f 1/1 2/2 3/3
         assert_eq!(back.mesh.materials, s.mesh.materials);
         // Base color, ORM and normal per texture set.
         assert_eq!(bytes.windows(9).filter(|w| *w == b"image/png").count(), 3 * s.mesh.materials.len());
+        let reopened = Session::from_mesh_bytes("ball.glb", &bytes, 128, "ball").unwrap();
+        assert_eq!(reopened.mesh.triangle_count(), s.mesh.triangle_count());
+        assert_eq!(reopened.mesh.materials, s.mesh.materials);
         assert!(crate::execute(&mut s, "file.exportMesh", &json!({ "path": base, "format": "fbx" })).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejected_glb_export_preserves_existing_files_and_publishes_nothing() {
+        let mut s = Session::new_project("t", primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
+        let dir = std::env::temp_dir().join(format!("tc_rejected_glb_export_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cube.glb");
+        crate::execute(&mut s, "file.exportMesh", &json!({ "path": path, "format": "glb" })).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        std::sync::Arc::make_mut(&mut s.mesh).indices[0] = u32::MAX;
+        assert!(s.mesh_glb_bytes().unwrap_err().to_string().contains("corner index is out of range"));
+        for destination in [path.clone(), dir.join("new.glb")] {
+            let error = crate::execute(&mut s, "file.exportMesh", &json!({ "path": destination, "format": "glb" })).unwrap_err();
+            assert!(error.to_string().contains("corner index is out of range"), "{error}");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!dir.join("new.glb").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_mesh_publishes_nothing_when_final_target_is_a_directory() {
+        let mut s = Session::new_project("t", primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
+        let dir = std::env::temp_dir().join(format!("tc_atomic_obj_export_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("blocked.obj")).unwrap();
+        let existing_mtl = dir.join("blocked.mtl");
+        std::fs::write(&existing_mtl, b"keep-existing-mtl").unwrap();
+
+        let error = crate::execute(&mut s, "file.exportMesh", &json!({ "path": dir.join("blocked.obj") })).unwrap_err();
+        assert!(error.to_string().contains("cannot write"), "{error}");
+        assert_eq!(std::fs::read(&existing_mtl).unwrap(), b"keep-existing-mtl");
+        let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(entries.len(), 2, "no companion textures or temp files should be published: {entries:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

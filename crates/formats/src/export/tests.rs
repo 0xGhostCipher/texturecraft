@@ -142,6 +142,48 @@ fn exr_values_are_linear() {
 }
 
 #[test]
+fn exr_exports_luminance_and_alpha_at_both_depths() {
+    use exr::prelude::{FlatSamples, ReadChannels, ReadLayers};
+
+    let mut fx = Fx::new(&[Channel::Roughness]);
+    fx.set_all(Channel::Roughness, |_, _| [1.0; 3]);
+    let mut preset = builtin_preset("Separate maps").unwrap();
+    preset.maps = vec![MapSpec {
+        file: "luminance_alpha".into(),
+        format: FileFormat::Exr,
+        bit_depth: 16,
+        channels: vec![(Dest::L, SourceRef::Channel { channel: Channel::Roughness, component: 0 }), (Dest::A, SourceRef::Constant(0.75))],
+        inverted: Vec::new(),
+    }];
+    let mut opts = ExportOptions::new(preset);
+
+    for depth in [16, 32] {
+        opts.bit_depth_override = Some(depth);
+        let files = fx.render(&opts);
+        assert_eq!(files.len(), 1);
+        let image = exr::prelude::read()
+            .no_deep_data()
+            .largest_resolution_level()
+            .all_channels()
+            .first_valid_layer()
+            .all_attributes()
+            .from_buffered(Cursor::new(&files[0].bytes))
+            .unwrap();
+        let layer = image.layer_data;
+        assert_eq!((layer.size.0, layer.size.1), (RES as usize, RES as usize));
+        assert_eq!(layer.channel_data.list.len(), 2);
+
+        for (name, value) in [("Y", 1.0), ("A", 0.75)] {
+            let channel = layer.channel_data.list.iter().find(|channel| channel.name.eq(name)).unwrap_or_else(|| panic!("missing EXR channel {name}"));
+            let samples = &channel.sample_data;
+            assert!(matches!((depth, samples), (16, FlatSamples::F16(_)) | (32, FlatSamples::F32(_))), "{depth}-bit {name} sample type");
+            assert_eq!(samples.len(), (RES * RES) as usize);
+            assert!(samples.values_as_f32().all(|sample| sample == value), "{depth}-bit {name} samples");
+        }
+    }
+}
+
+#[test]
 fn directx_flips_green() {
     let mut fx = Fx::new(&default_channels());
     let n = Vec3::new(0.3, 0.4, 0.0);
@@ -335,7 +377,7 @@ fn every_format_encodes_and_decodes() {
             for f in &files {
                 assert!(f.name.ends_with(format.extension()));
                 if format == FileFormat::Exr && f.name.starts_with("la") {
-                    continue; // Y/A EXR: covered by `exr_values_are_linear`.
+                    continue; // Y/A EXR is checked with the EXR crate in `exr_exports_luminance_and_alpha_at_both_depths`.
                 }
 
                 assert_eq!(decode(f).dimensions(), (RES, RES), "{}", f.name);
@@ -351,6 +393,87 @@ fn every_format_encodes_and_decodes() {
             }
         }
     }
+}
+
+#[test]
+fn jpeg_texture_export_keeps_full_chroma() {
+    let mut channels = default_channels();
+    channels.push(Channel::Opacity);
+    let fx = Fx::new(&channels);
+    let mut opts = ExportOptions::new(builtin_preset("glTF PBR Metal Roughness").unwrap());
+    opts.format_override = Some(FileFormat::Jpeg);
+    let files = fx.render(&opts);
+    let base = find(&files, "_BaseColor.jpg");
+
+    // Find the baseline JPEG frame for the generated 64 × 64 RGB export.
+    let frame_header = [0xff, 0xc0, 0, 17, 8, 0, RES as u8, 0, RES as u8, 3];
+    let frame = base.bytes.windows(19).find(|segment| segment.starts_with(&frame_header)).expect("RGB JPEG frame");
+    assert_eq!([frame[11], frame[14], frame[17]], [0x11; 3], "JPEG component sampling factors");
+    assert_eq!(craft_image_codecs::jpeg_quality(&base.bytes), Some(95));
+    assert!(base.warnings.iter().any(|w| w.contains("alpha")));
+}
+
+#[test]
+fn jpeg_grayscale_and_depth_policy_preserve_8bit_output() {
+    let mut fx = Fx::new(&[Channel::Roughness]);
+    fx.set_all(Channel::Roughness, |_, _| [0.4; 3]);
+    let mut preset = builtin_preset("Separate maps").unwrap();
+    preset.maps = vec![
+        MapSpec {
+            file: "gray".into(),
+            format: FileFormat::Jpeg,
+            bit_depth: 8,
+            channels: vec![(Dest::L, SourceRef::Channel { channel: Channel::Roughness, component: 0 })],
+            inverted: Vec::new(),
+        },
+        MapSpec {
+            file: "gray_alpha".into(),
+            format: FileFormat::Jpeg,
+            bit_depth: 8,
+            channels: vec![(Dest::L, SourceRef::Channel { channel: Channel::Roughness, component: 0 }), (Dest::A, SourceRef::Constant(0.5))],
+            inverted: Vec::new(),
+        },
+    ];
+    for depth in [8, 16, 32] {
+        let mut opts = ExportOptions::new(preset.clone());
+        opts.bit_depth_override = Some(depth);
+        let planned = list_outputs(&fx.project, 0, "m", &opts).unwrap();
+        assert!(planned.iter().all(|p| p.bit_depth == 8), "JPEG always plans 8-bit even for override {depth}");
+        let files = fx.render(&opts);
+        assert_eq!(files.len(), 2);
+        for file in &files {
+            // SOF0 header for 1-component 8-bit baseline JPEG: FF C0 00 0B 08 HH HH WW WW 01
+            let sof0 = [0xff, 0xc0, 0, 11, 8, 0, RES as u8, 0, RES as u8, 1];
+            assert!(file.bytes.windows(sof0.len()).any(|w| w == sof0), "missing 8-bit 1-component JPEG SOF0 in {}", file.name);
+        }
+        assert!(files[1].warnings.iter().any(|w| w.contains("alpha")));
+    }
+}
+
+#[test]
+fn format_extension_aliases_and_repeated_names_policy() {
+    for (alias, expected) in [
+        ("jpeg", FileFormat::Jpeg),
+        ("jpg", FileFormat::Jpeg),
+        (".JPG", FileFormat::Jpeg),
+        ("tiff", FileFormat::Tiff),
+        ("tif", FileFormat::Tiff),
+        (".TIF", FileFormat::Tiff),
+        ("targa", FileFormat::Tga),
+        ("tga", FileFormat::Tga),
+        (".TGA", FileFormat::Tga),
+    ] {
+        assert_eq!(FileFormat::from_extension(alias), Some(expected), "alias `{alias}`");
+    }
+
+    let mut files = vec![
+        ExportedFile { name: "Mesh_BaseColor.png".into(), bytes: vec![1], width: 1, height: 1, warnings: Vec::new() },
+        ExportedFile { name: "mesh_basecolor.png".into(), bytes: vec![2], width: 1, height: 1, warnings: Vec::new() },
+    ];
+    crate::skip_repeated_names(&mut files);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].bytes, vec![1]);
+    assert!(files[0].warnings.iter().any(|w| w.contains("mesh_basecolor.png")));
 }
 
 #[test]
@@ -399,6 +522,20 @@ fn write_files_is_atomic_and_refuses_paths() {
     assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
     let evil = ExportedFile { name: "../evil.png".into(), ..files[0].clone() };
     assert!(write_files(&[evil], &dir).is_err());
+
+    // Batch failure: invalid second entry or directory target must publish nothing and preserve existing files.
+    let sentinel = ExportedFile { name: files[0].name.clone(), bytes: b"new-bytes".to_vec(), ..files[0].clone() };
+    let bad_second = ExportedFile { name: "../bad.png".into(), ..files[1].clone() };
+    assert!(write_files(&[sentinel.clone(), bad_second], &dir).is_err());
+    assert_eq!(std::fs::read(&paths[0]).unwrap(), files[0].bytes);
+
+    let blocked_dir = dir.join("blocked.png");
+    std::fs::create_dir_all(&blocked_dir).unwrap();
+    let dir_target = ExportedFile { name: "blocked.png".into(), ..files[1].clone() };
+    assert!(write_files(&[sentinel, dir_target], &dir).is_err());
+    assert_eq!(std::fs::read(&paths[0]).unwrap(), files[0].bytes);
+    assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
