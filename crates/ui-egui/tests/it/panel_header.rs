@@ -91,14 +91,15 @@ const HEADER_RISE: f32 = 4.0;
 /// Room between a later tab's box and its tab's left edge (docking/shown_group_tab.rs, private to the crate)
 const BOX_INSET: f32 = 4.0;
 
-/// Rounded boxes painted this frame over `tab` whose top is `rise` above it: the raised box of a shown tab
+/// Rounded boxes painted this frame over `tab` whose top is `rise` above it: the raised box of a shown tab.
+/// A shape clipped away from the tab (a layer thumbnail scrolled under it) is not seen, so it is no box.
 fn tab_boxes(harness: &Harness<'_, TextureCraftApp>, tab: egui::Rect, rise: f32) -> Vec<egui::Rect> {
     harness
         .output()
         .shapes
         .iter()
         .filter_map(|shape| match &shape.shape {
-            egui::Shape::Rect(rect) => {
+            egui::Shape::Rect(rect) if shape.clip_rect.intersects(tab) => {
                 let rises = (rect.rect.top() - (tab.top() - rise)).abs() < 0.5;
                 let raised = rises && rect.corner_radius != egui::CornerRadius::ZERO && tab.x_range().contains(rect.rect.center().x);
                 raised.then_some(rect.rect)
