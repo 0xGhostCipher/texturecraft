@@ -428,28 +428,17 @@ mod tests",
             set_language(language.code);
             assert_eq!(current().code, if available(language.code) { language.code } else { "en" });
         }
+        let key = String::from("Layers");
         set_language("es");
-        assert_eq!(tr("Layers"), if available("es") { "Capas" } else { "Layers" });
+        let label = tr(&key);
         set_language("en");
-    }
-
-    #[test]
-    fn lookup_is_fast() {
-        let _lock = LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let keys = keys();
-        set_language("ja");
-        let started = std::time::Instant::now();
-        let mut total_chars = 0usize;
-        for _ in 0..100 {
-            for key in &keys {
-                total_chars += tr(key).len();
-            }
-        }
-        let ns_per_lookup = started.elapsed().as_secs_f64() * 1e9 / (100 * keys.len()) as f64;
+        let english = tr(&key);
+        set_language("es");
+        let reused = tr(&key);
         set_language("en");
-        assert!(total_chars > 0);
-
-        // A frame looks up a few hundred strings, each expected below one microsecond
-        assert!(ns_per_lookup < 1000.0, "{ns_per_lookup:.0} ns per lookup");
+        assert_eq!(label, if available("es") { "Capas" } else { "Layers" });
+        assert!(std::ptr::eq(english, key.as_str()));
+        // Switching away and back reuses the translation already stored in the catalog.
+        assert!(std::ptr::eq(reused, label));
     }
 }

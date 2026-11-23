@@ -8,6 +8,11 @@ license.workspace = true
 [lints]
 workspace = true
 
+[[bench]]
+name = "translation_lookup"
+harness = false
+test = false
+
 [dependencies]
 chrono = { workspace = true }
 texturecraft-engine = { workspace = true }
