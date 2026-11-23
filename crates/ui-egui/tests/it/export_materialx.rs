@@ -70,6 +70,31 @@ fn ticking_export_materialx_writes_one_mtlx_per_texture_set() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn ticking_export_materialx_with_any_template_writes_the_openpbr_maps_beside_its_files() {
+    let (mut h, dir) = harness("any-template");
+    assert_eq!(h.state().ui.export.preset, texturecraft_engine::formats::DEFAULT_PRESET);
+    checkbox(&h).click();
+    h.run_steps(3);
+    export(&mut h);
+
+    let files = mtlx_files(&dir);
+    assert_eq!(files.len(), h.state().session.set_count(), "one material per texture set: {files:?}");
+    let mut references = 0;
+    for file in &files {
+        for reference in std::fs::read_to_string(file).unwrap().split("name=\"file\" type=\"filename\" value=\"").skip(1) {
+            let name = reference.split('"').next().unwrap();
+            assert!(dir.join(name).is_file(), "{name} is not next to the material");
+            references += 1;
+        }
+    }
+    assert!(references > 0);
+    let written: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(written.iter().any(|f| f.ends_with("_baseColor.png")), "the template's own maps are still written: {written:?}");
+    assert!(written.iter().any(|f| f.ends_with("_base_color.png")), "{written:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The option is off by default, so a plain export writes no `.mtlx` even with the OpenPBR template
 #[test]
 fn no_mtlx_is_written_when_the_option_is_off() {

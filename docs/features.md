@@ -179,8 +179,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   between texture sets).
 - **MaterialX export:** the *Export MaterialX* checkbox on the Export textures window's Global
   settings (off by default, remembered with the other settings) writes one OpenPBR `.mtlx` per
-  texture set next to the exported maps. It reads the maps of output templates that use the
-  OpenPBR file names, such as *OpenPBR (separate maps)*. Not covered yet: MaterialX
+  texture set next to the exported maps. The material always uses OpenPBR maps, whatever output
+  template is selected: a template without their file names gets them written beside its own
+  files. Not covered yet: MaterialX
   standard_surface, Coat Normal, Specular Level, Anisotropy Angle and constants such as IOR. In
   the browser the option is greyed.
 - **Mesh export** to OBJ with an MTL material library and its maps (PBR extension keys for

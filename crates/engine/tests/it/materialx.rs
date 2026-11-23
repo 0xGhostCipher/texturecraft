@@ -5,6 +5,7 @@ use texturecraft_engine::geom::primitives;
 use texturecraft_engine::{Session, execute};
 
 const OPENPBR: &str = "OpenPBR (separate maps)";
+const DEFAULT: &str = "Document channels + Normal + AO (No Alpha)";
 
 /// A scratch folder that is removed when it goes out of scope, so a failing test leaves nothing behind.
 struct Scratch(std::path::PathBuf);
@@ -64,14 +65,179 @@ fn writes_a_material_that_names_the_exported_textures() {
 }
 
 #[test]
-fn off_by_default_and_warns_without_openpbr_maps() {
+fn off_by_default() {
     let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
     let dir = temp("off");
     assert!(!files(&export(&mut s, &dir, OPENPBR, false)).iter().any(|f| f.ends_with(".mtlx")));
-    let dir = temp("other");
-    let r = export(&mut s, &dir, "Document channels + Normal + AO", true);
+    let dir = temp("off-other");
+    assert!(!files(&export(&mut s, &dir, DEFAULT, false)).iter().any(|f| f.ends_with(".mtlx") || f.ends_with("_base_color.png")));
+}
+
+#[test]
+fn warns_when_a_template_with_openpbr_names_has_no_channels_to_write() {
+    use texturecraft_engine::formats::{Dest, ExportPreset, FileFormat, MapSpec, SourceRef};
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+
+    // The default set has no coat
+    let preset = ExportPreset {
+        name: "coat".into(),
+        maps: vec![MapSpec {
+            file: "$mesh_$textureSet_coat_weight".into(),
+            format: FileFormat::Png,
+            bit_depth: 8,
+            channels: vec![(Dest::L, SourceRef::Channel { channel: texturecraft_engine::core::Channel::CoatWeight, component: 0 })],
+            inverted: Vec::new(),
+        }],
+    };
+    let dir = temp("nocoat");
+    let r = execute(&mut s, "file.exportTextures", &json!({"dir": dir.display().to_string(), "preset": preset, "materialX": true})).unwrap();
     assert!(!files(&r).iter().any(|f| f.ends_with(".mtlx")));
     assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("OpenPBR")), "{r}");
+}
+
+/// The `file` values a `.mtlx` refers to
+fn referenced(text: &str) -> Vec<String> {
+    text.split("name=\"file\" type=\"filename\" value=\"").skip(1).map(|part| part.split('"').next().unwrap().to_string()).collect()
+}
+
+fn names(r: &Value) -> Vec<String> {
+    files(r).iter().map(|f| f.rsplit(['/', '\\']).next().unwrap().to_string()).collect()
+}
+
+#[test]
+fn any_template_gets_the_openpbr_maps_beside_its_own_files() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    let plain = temp("plain");
+    let own = names(&export(&mut s, &plain, DEFAULT, false));
+    let dir = temp("default-template");
+    let r = export(&mut s, &dir, DEFAULT, true);
+    let all = names(&r);
+    for file in &own {
+        assert!(all.contains(file), "the template's own file {file} is still written: {all:?}");
+    }
+
+    let mtlx: Vec<String> = files(&r).into_iter().filter(|f| f.ends_with(".mtlx")).collect();
+    assert_eq!(mtlx.len(), s.set_count(), "{all:?}");
+    for path in &mtlx {
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("<open_pbr_surface") && text.contains("name=\"base_color\"") && text.contains("name=\"geometry_normal\""), "{text}");
+        let refs = referenced(&text);
+        assert!(refs.len() >= 3, "{text}");
+        for file in refs {
+            assert!(dir.join(&file).is_file(), "{file} is not in {all:?}");
+            assert!(!own.contains(&file), "{file} is a file of the chosen template");
+        }
+    }
+
+    // Every file is written once
+    let mut sorted = all.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), all.len(), "{all:?}");
+}
+
+#[test]
+fn the_openpbr_template_writes_no_second_set_of_maps() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    let without = temp("openpbr-without");
+    let plain = names(&export(&mut s, &without, OPENPBR, false));
+    let dir = temp("openpbr-with");
+    let mut all = names(&export(&mut s, &dir, OPENPBR, true));
+    all.retain(|f| !f.ends_with(".mtlx"));
+    let mut plain = plain;
+    plain.sort();
+    all.sort();
+    assert_eq!(all, plain);
+}
+
+#[test]
+fn per_map_overrides_of_the_template_do_not_reach_the_openpbr_maps() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    let dir = temp("override");
+
+    // Map 0 is the base colour of the default template and also of the OpenPBR template; map 19 is the default template's normal map
+    let r = execute(
+        &mut s,
+        "file.exportTextures",
+        &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "materialX": true, "maps": [{"map": 0, "enabled": false}, {"map": 19, "format": "tiff", "bitDepth": 16}]}),
+    )
+    .unwrap();
+    let all = names(&r);
+    assert!(!all.iter().any(|f| f.ends_with("_baseColor.png")), "the template's base colour was left out: {all:?}");
+    assert!(all.iter().any(|f| f.ends_with("_base_color.png")), "the material's base colour is still written: {all:?}");
+    assert!(all.iter().any(|f| f.ends_with("_geometry_normal.png")), "{all:?}");
+    assert!(all.iter().any(|f| f.ends_with("_normal.tif")), "the override applies to the template's own normal map: {all:?}");
+    assert!(!all.iter().any(|f| f.ends_with(".tif") && f.contains("_geometry_")), "{all:?}");
+}
+
+#[test]
+fn a_file_type_a_material_cannot_use_falls_back_to_png() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    for (format, bit_depth, ext) in [("psd", 16, "psd"), ("pgm", 8, "pgm"), ("jng", 8, "jng"), ("tiff", 16, "tif")] {
+        let dir = temp(format);
+        let r = execute(
+            &mut s,
+            "file.exportTextures",
+            &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "format": format, "bitDepth": bit_depth, "materialX": true}),
+        )
+        .unwrap();
+        let all = names(&r);
+        assert!(all.iter().any(|f| f.ends_with(&format!("_baseColor.{ext}"))), "{format}: the template's files keep the file type: {all:?}");
+        let mtlx = files(&r).into_iter().find(|f| f.ends_with(".mtlx")).unwrap_or_else(|| panic!("{format}: no .mtlx in {all:?}"));
+        let text = std::fs::read_to_string(mtlx).unwrap();
+        let wanted = if format == "tiff" { "tif" } else { "png" };
+        assert!(text.contains(&format!("_base_color.{wanted}\"")), "{format}: {text}");
+        for file in referenced(&text) {
+            assert!(dir.join(&file).is_file(), "{format}: {file} is not in {all:?}");
+        }
+    }
+}
+
+#[test]
+fn the_openpbr_maps_follow_the_size_and_colour_space_of_the_export() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    let dir = temp("size");
+    let r = execute(
+        &mut s,
+        "file.exportTextures",
+        &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "size": 64, "colorSpace": "ACEScg", "materialX": true}),
+    )
+    .unwrap();
+    let png = files(&r).into_iter().find(|f| f.ends_with("_base_color.png")).unwrap();
+    assert_eq!(image::image_dimensions(png).unwrap(), (64, 64));
+    let text = std::fs::read_to_string(files(&r).into_iter().find(|f| f.ends_with(".mtlx")).unwrap()).unwrap();
+    assert!(text.contains("_base_color.png\" colorspace=\"acescg\""), "{text}");
+    assert!(text.contains("_specular_roughness.png\" colorspace=\"lin_rec709\""), "{text}");
+}
+
+#[test]
+fn a_file_of_the_template_is_never_replaced_by_an_openpbr_map() {
+    use texturecraft_engine::formats::{Dest, ExportPreset, FileFormat, MapSpec, SourceRef};
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    execute(&mut s, "textureSet.rename", &json!({"ts": 0, "name": "a"})).unwrap();
+
+    // Set 1's file from the template has the name set 0's OpenPBR base colour would get
+    execute(&mut s, "textureSet.rename", &json!({"ts": 1, "name": "a_base_color"})).unwrap();
+    let source = |component| SourceRef::Channel { channel: texturecraft_engine::core::Channel::BaseColor, component };
+    let preset = ExportPreset {
+        name: "base colour only".into(),
+        maps: vec![MapSpec {
+            file: "$mesh_$textureSet".into(),
+            format: FileFormat::Png,
+            bit_depth: 8,
+            channels: vec![(Dest::R, source(0)), (Dest::G, source(1)), (Dest::B, source(2))],
+            inverted: Vec::new(),
+        }],
+    };
+    let params = |dir: &std::path::Path, mtlx: bool| json!({"dir": dir.display().to_string(), "preset": preset, "ts": [0, 1], "materialX": mtlx});
+    let plain = temp("clash-plain");
+    execute(&mut s, "file.exportTextures", &params(&plain, false)).unwrap();
+    let dir = temp("clash");
+    let r = execute(&mut s, "file.exportTextures", &params(&dir, true)).unwrap();
+    assert_eq!(std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap(), std::fs::read(plain.join("material_ball_a_base_color.png")).unwrap());
+    assert!(r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("file name of a map of the chosen template")), "{r}");
+    let first = std::fs::read_to_string(dir.join("material_ball_a.mtlx")).unwrap();
+    assert!(!referenced(&first).contains(&"material_ball_a_base_color.png".to_string()), "{first}");
 }
 
 #[test]
