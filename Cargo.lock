@@ -5215,7 +5215,6 @@ dependencies = [
  "gltf",
  "half",
  "image",
- "lz4_flex",
  "png",
  "quick-xml 0.41.0",
  "rayon",

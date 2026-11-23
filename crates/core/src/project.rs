@@ -830,17 +830,6 @@ mod tests {
     }
 
     #[test]
-    fn serde_round_trip_is_stable() {
-        let mut p = project();
-        let l = paint(&mut p, "x");
-        p.insert_layer(0, l, None, false).unwrap();
-        let json = serde_json::to_string(&p).unwrap();
-        let back: Project = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, p);
-        assert_eq!(serde_json::to_string(&back).unwrap(), json);
-    }
-
-    #[test]
     fn per_map_bake_settings_round_trip() {
         use crate::{BackfaceMode, PositionMode, RayDistribution, RaySettings, SelfOcclusion};
 

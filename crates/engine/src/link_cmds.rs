@@ -359,7 +359,7 @@ pub fn source_extension(name: &str) -> &'static str {
 fn cook_source(
     bytes: Vec<u8>,
     size: u32,
-    baked: Option<texturecraft_compose::BakedMaps>,
+    #[cfg(not(target_arch = "wasm32"))] baked: Option<texturecraft_compose::BakedMaps>,
     mut budget: LinkMemoryBudget,
     canceled: Arc<std::sync::atomic::AtomicBool>,
     reservation: CookReservation,
@@ -384,7 +384,9 @@ fn cook_source(
         size,
         values: Map::new(),
         input_identifiers: Vec::new(),
+        #[cfg(not(target_arch = "wasm32"))]
         baked,
+        #[cfg(not(target_arch = "wasm32"))]
         budget,
         canceled,
     };
@@ -439,7 +441,15 @@ impl Session {
         let mut source = Vec::new();
         source.try_reserve_exact(bytes.len()).map_err(|error| EngineError::Other(format!("cannot allocate linked source: {error}")))?;
         source.extend_from_slice(bytes);
-        let (job, material) = cook_source(source, size, self.doc.baked.get(&ts).cloned(), budget, Arc::default(), reservation)?;
+        let (job, material) = cook_source(
+            source,
+            size,
+            #[cfg(not(target_arch = "wasm32"))]
+            self.doc.baked.get(&ts).cloned(),
+            budget,
+            Arc::default(),
+            reservation,
+        )?;
         self.add_cooked_material(&material, job.package, job.source_ext, place)
     }
 
@@ -542,6 +552,7 @@ impl Session {
     /// Prepare a re-cook with current parameter values and matching baked mesh maps
     pub fn link_job(&self, id: LayerId, overrides: &Map<String, Value>) -> Result<LinkJob> {
         let link = link_of(self, "material.link", id)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let (texture_set, _, _) = self.doc.project.locate(id).ok_or_else(|| EngineError::Other(format!("layer {} is not in a stack", id.0)))?;
         let mut values = self.link_values(id)?;
         values.extend(overrides.clone());
@@ -554,7 +565,9 @@ impl Session {
             size: self.link_size(id)?,
             values,
             input_identifiers: link.inputs.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
             baked: self.doc.baked.get(&texture_set).cloned(),
+            #[cfg(not(target_arch = "wasm32"))]
             budget: self.link_memory_budget(),
             canceled: Arc::default(),
         })

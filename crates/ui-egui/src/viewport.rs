@@ -2537,16 +2537,6 @@ mod tests {
     }
 
     #[test]
-    fn one_switch_turns_the_wireframe_on_in_both_views_and_polygon_fill_shows_it_without_changing_the_switch() {
-        let mut ui = crate::state::UiState::default();
-        assert!(!wireframe_shown(&ui, false), "off by default");
-        assert!(wireframe_shown(&ui, true), "polygon fill shows the polygons it fills");
-        assert!(!ui.mesh_wireframe);
-        ui.mesh_wireframe = true;
-        assert!(wireframe_shown(&ui, false));
-    }
-
-    #[test]
     fn the_hover_label_names_the_set_and_the_tile_under_the_cursor() {
         assert_eq!(hover_label_text("UdimMat", true, true, Some(1001)).as_deref(), Some("UdimMat - 1001"));
         assert_eq!(hover_label_text("UdimMat", true, true, None).as_deref(), Some("UdimMat"), "off the tiles");

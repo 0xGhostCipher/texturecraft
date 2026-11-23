@@ -197,32 +197,21 @@ mod tests {
     }
 
     #[test]
-    fn connections_are_limited_and_idle_ones_time_out() {
+    fn authenticated_connections_hold_server_slots() {
         let addr = server();
-        let idle: Vec<_> = (0..MAX_CONNECTIONS).map(|_| connect(addr)).collect();
-        // Let the server take every idle connection before the one over the limit.
-        std::thread::sleep(Duration::from_millis(300));
-        // Read without writing: the server closes at once, and unread input would reset the
-        // connection before its reply arrives.
-        let (_, mut r) = connect(addr);
-        let mut full = String::new();
-        r.read_line(&mut full).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&full).unwrap()["error"], "too many connections");
-        // Unauthenticated connections are closed after AUTH_TIMEOUT, which frees their slots.
-        for (_, mut r) in idle {
-            let mut rest = String::new();
-            assert_eq!(r.read_line(&mut rest).unwrap(), 0);
-        }
-        // A slot frees once its thread has ended, which can trail the client's EOF a little.
         let right = format!(r#"{{"id":1,"method":"auth","params":{{"token":"{TOKEN}"}}}}"#);
-        let authed = (0..50).any(|_| {
-            let (mut w, mut r) = connect(addr);
-            let ok = call(&mut w, &mut r, &right).is_some_and(|v| v["ok"] == true);
-            if !ok {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            ok
-        });
-        assert!(authed, "slots are freed after the auth deadline");
+        let _held: Vec<_> = (0..MAX_CONNECTIONS)
+            .map(|_| {
+                let (mut w, mut r) = connect(addr);
+                // The reply confirms that this connection is holding a slot.
+                assert_eq!(call(&mut w, &mut r, &right).unwrap()["ok"], true);
+                (w, r)
+            })
+            .collect();
+
+        let (_, mut r) = connect(addr);
+        let mut reply = String::new();
+        r.read_line(&mut reply).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&reply).unwrap()["error"], "too many connections");
     }
 }

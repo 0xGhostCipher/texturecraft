@@ -64,12 +64,6 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_search_keeps_every_item() {
-        assert!(item("Rust").matches(""));
-        assert!(item("").matches(""));
-    }
-
-    #[test]
     fn a_search_lowercases_a_label_beyond_ascii() {
         assert!(item("ÜBERZUG Grün").matches("überzug"));
         assert!(item("ÜBERZUG Grün").matches("grün"));

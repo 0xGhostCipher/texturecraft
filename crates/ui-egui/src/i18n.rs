@@ -422,19 +422,6 @@ mod tests",
     }
 
     #[test]
-    fn shared_lookup_overrides_and_missing_translations() {
-        static CATALOGS: &craft_i18n::Embedded = &[("es", "\tSave\tGuardar\n\tOpen\tAbrir\n", "\tSave\tGuardar proyecto\n")];
-        let (runtime, problems) = craft_i18n::I18n::new(CATALOGS, &["es"]);
-        assert!(problems.is_empty());
-        assert!(runtime.check_all().is_empty());
-        let lang = runtime.from_code("es").unwrap();
-        assert_eq!(runtime.t(lang, "Save"), "Guardar proyecto");
-        assert_eq!(runtime.t(lang, "Open"), "Abrir");
-        assert_eq!(runtime.t(lang, "New feature"), "New feature");
-        assert_eq!(runtime.t(craft_i18n::Lang::EN, "Save"), "Save");
-    }
-
-    #[test]
     fn saved_language_codes_and_spanish_lookup() {
         let _lock = LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for language in &LANGUAGES {

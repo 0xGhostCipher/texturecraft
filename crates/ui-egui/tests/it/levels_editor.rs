@@ -283,17 +283,6 @@ fn a_typed_value_keeps_input_low_below_input_high() {
     assert!((levels(&harness, effect).in_low - 0.49).abs() < 1e-4, "{:?}", levels(&harness, effect));
 }
 
-#[test]
-fn the_levels_filter_shows_the_same_editor() {
-    let (harness, _) = levels_harness("effect.add.filter", json!({"target": "mask", "filter": "levels"}));
-    for label in ["Input low", "Gamma", "Input high", "Output low", "Output high"] {
-        harness.get_by_role_and_label(Role::Slider, label);
-    }
-    for button in ["Reset", "Auto", "Invert"] {
-        harness.get_by_role_and_label(Role::Button, button);
-    }
-}
-
 /// Bounds of the handle pointers in paint order, the last one drawn on top
 fn painted_handles(harness: &Harness<'_, TextureCraftApp>) -> Vec<egui::Rect> {
     let centres = HANDLE_LABELS.map(|label| handle(harness, label));

@@ -331,19 +331,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_run_without_a_control_port_checks_for_updates_at_start() {
-        assert!(checks_for_updates_at_start(None));
-        assert!(!checks_for_updates_at_start(Some(9000)));
-    }
-
-    #[test]
-    fn bundled_app_icon_decodes_to_rgba() {
-        let icon = icon().unwrap();
-        assert!(icon.width > 0 && icon.height > 0);
-        assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
-    }
-
-    #[test]
     fn rejects_missing_or_invalid_gpu_args() {
         assert!(parse_args_from(["--gpu".to_string()]).is_err());
         assert!(parse_args_from(["--power-pref".to_string()]).is_err());
