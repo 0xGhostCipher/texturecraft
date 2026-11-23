@@ -68,7 +68,7 @@ that closes it back onto the bar; the float is saved with the UI state.
   *Mesh Export Options* prompt, then the file choice) and *Export Textures...* (the Export textures
   window: *Global settings* above the texture sets, *General Export Parameters*, *Export USD asset*
   and *Export shaders parameters* greyed, *Include all*, *Save settings* and "N textures selected
-  for export"). *Export MaterialX* beside them is a TextureCraft addition: it adds `materialX: true`
+  for export"). *Export MaterialX* below *Export USD asset* is a TextureCraft addition: it adds `materialX: true`
   to the export. The prompt's *With displacement/tessellation* choice and both option checkboxes are
   greyed; TextureCraft exports the mesh as it is.
 - **Window menu:** Views lists *Renderer Settings* (a panel of its own: the tracer in use, the

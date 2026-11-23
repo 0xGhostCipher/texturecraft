@@ -733,13 +733,13 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
 
     // Unavailable export controls stay disabled
     unavailable_checkbox(ui, tr("Export USD asset"), tr("Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise"));
-    unavailable_checkbox(ui, tr("Export shaders parameters"), tr("Exports a JSON file with the settings for all shader instances"));
 
-    // The browser downloads the textures only
+    // The MaterialX export sits below the USD one; the browser downloads the textures only
     #[cfg(not(target_arch = "wasm32"))]
     ui.checkbox(&mut app.ui.export.materialx, tr("Export MaterialX"));
     #[cfg(target_arch = "wasm32")]
     crate::unavailable::checkbox(ui, false, tr("Export MaterialX"));
+    unavailable_checkbox(ui, tr("Export shaders parameters"), tr("Exports a JSON file with the settings for all shader instances"));
     ui.add_space(8.0);
     egui::Grid::new("exp_grid_more").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
         let settings = &mut app.ui.export;
