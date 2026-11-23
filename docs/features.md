@@ -178,14 +178,15 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   Export shows the progress, a console of its steps, the written files and the export's
   warnings (each once), and can be canceled between texture sets).
 - **MaterialX export:** the *Export MaterialX* checkbox on the Export textures window's Global
-  settings (off by default, remembered with the other settings) writes one OpenPBR `.mtlx` per
-  texture set next to the exported maps. The material always uses OpenPBR maps, whatever output
-  template is selected: a template without OpenPBR file names gets the maps of *OpenPBR (separate
-  maps)* written beside its own files, with the export's size, padding, colour space, file type
-  and bit depth (PNG when that file type has no use in a material) and always an OpenGL normal
-  map. A file of one texture set never replaces a file of an earlier one in the same export, the
-  material's maps included. Not covered yet: MaterialX standard_surface, Coat Normal, Specular
-  Level, Anisotropy Angle and constants such as IOR. In the browser the option is greyed.
+  settings (off by default, remembered with the other settings) writes an OpenPBR `.mtlx` for
+  each selected texture set with usable maps. Materials reference textures beside the document.
+  The export reuses compatible OpenPBR maps and writes dedicated maps for the other supported
+  inputs using the set's effective settings. Dedicated maps use PNG when the chosen file type
+  is unsuitable, and a DirectX export keeps its selected normal alongside a separate OpenGL
+  normal for the material. The export console identifies collisions and skipped files.
+  The browser shows the option disabled. The exporter supports OpenPBR maps including base
+  color, roughness and normals. Standard Surface, coat normal, specular level, anisotropy angle
+  and constants such as IOR remain open.
 - **Mesh export** to OBJ with an MTL material library and its maps (PBR extension keys for
   roughness, metallic, normal and coat; UV-tiled sets keep their UDIM UVs and export their maps
   through Export textures), textured GLB (with clear coat and sheen) and USD (with clear coat).
