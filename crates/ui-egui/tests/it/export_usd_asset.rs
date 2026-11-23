@@ -254,3 +254,24 @@ fn the_sent_command_of_a_texture_set_that_leaves_the_export_is_dropped() {
     h.run_steps(1);
     assert_eq!((sent_ts(&h, 0), sent_ts(&h, 1)), (vec![0], vec![]));
 }
+
+#[test]
+fn each_sent_command_keeps_the_names_it_reserved_for_the_asset() {
+    let (mut app_harness, dir) = harness("sent-reserved");
+    let params = serde_json::json!({"dir": dir.display().to_string()});
+    let pending = vec![(0, params.clone()), (1, params)];
+    let settings = &mut app_harness.state_mut().ui.export;
+    settings.tab = 2;
+    settings.job = Some(ExportJob { total: pending.len(), pending, usd_asset: true, written: vec!["earlier.png".into()], ..ExportJob::default() });
+
+    for _ in 0..8 {
+        app_harness.run_steps(1);
+        if app_harness.state().ui.export.job.as_ref().is_none_or(|job| !job.sent.is_empty()) {
+            break;
+        }
+    }
+
+    let job = app_harness.state().ui.export.job.as_ref().expect("the export is still running");
+    let reserved = job.sent.first().and_then(|params| params["reservedNames"].as_array()).expect("the sent command carries its reserved names");
+    assert!(reserved.iter().any(|name| name == "earlier.png"), "the asset skips what the texture export skipped: {reserved:?}");
+}

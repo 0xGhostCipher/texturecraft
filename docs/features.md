@@ -184,8 +184,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   set was exported with (its own output template, file type, size and normal format) by relative
   file name. Base colour, roughness, metallic, normal, emissive colour, opacity, clear coat and clear
   coat roughness are bound; a packed template (ORM, mask map) binds several inputs to different
-  channels of one file. A UDIM map that lost a tile to an earlier texture set's file name gets no
-  binding, and a mesh with no materials gets one implicit "default" material bound to the Default
+  channels of one file. A UDIM map that lost a tile to an earlier texture set's file name or to a
+  UDIM pattern an earlier MaterialX document of the export uses gets no binding, and a mesh with no materials gets one implicit "default" material bound to the Default
   texture set. Ambient occlusion, height and specular are not bound (the material has occlusion,
   displacement and specularColor inputs, but TextureCraft does not fill them), nor are glossiness
   (no matching input) and baked maps; sheen, anisotropy, transmission, scatter and coat normal have no

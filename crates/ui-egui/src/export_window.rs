@@ -339,8 +339,7 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         params["reservedNames"] = job.written.iter().chain(&job.material_udim_patterns).map(|name| json!(name)).collect();
     }
 
-    // The USD asset covers the whole mesh and refers to the textures of every texture set: the last command writes it, given
-    // the params every command of the export ran with, so a canceled or failed export writes none
+    // The last command writes the USD asset from the params of every command, so a canceled or failed export writes none
     if let Some(job) = app.ui.export.job.as_mut().filter(|job| job.usd_asset) {
         job.sent.push(params.clone());
         if job.pending.is_empty() {
@@ -353,8 +352,8 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         return;
     };
 
-    // The one warning the window shows: the USD asset that could not be written
-    let usd_failure = response_strings(&response, "warnings").find(|w| w.starts_with(texturecraft_engine::file_cmds::USD_ASSET_FAILED));
+    // A USD asset that could not be written also shows as an error toast
+    let usd_failure = response_strings(&response, "warnings").find(|warning| warning.starts_with(texturecraft_engine::file_cmds::USD_ASSET_FAILED));
     if let Some(warning) = usd_failure {
         app.toast(warning.to_string(), true);
     }

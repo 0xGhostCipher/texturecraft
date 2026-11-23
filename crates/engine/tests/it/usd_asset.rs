@@ -318,19 +318,32 @@ fn a_material_without_a_texture_set_has_no_textures() {
     assert!(materials[1].0.is_empty(), "{:?}", materials[1]);
 }
 
-/// A material per half of a two-tile plane: the first material covers tiles 1001 and 1002, the second 1002 and 1003
-fn overlapping_tiles() -> Session {
+/// Two two-tile planes, a material each: the first covers tiles 1001 and 1002, the second starts `shift_tiles` tiles to the right
+fn two_udim_sets(shift_tiles: f32) -> Session {
     let mut mesh = primitives::udim_plane();
     let mut second = primitives::udim_plane();
     second.materials[0] = "Other".into();
     for uv in &mut second.uvs {
-        uv.x += 1.0;
+        uv.x += shift_tiles;
     }
     mesh.append(&second);
-    let s = Session::new_project("t", mesh, "builtin:udim_plane", None, 128).unwrap();
+    Session::new_project("t", mesh, "builtin:udim_plane", None, 128).unwrap()
+}
+
+/// A material per half of a two-tile plane: the first material covers tiles 1001 and 1002, the second 1002 and 1003
+fn overlapping_tiles() -> Session {
+    let s = two_udim_sets(1.0);
     assert_eq!(s.doc.project.texture_sets[0].uv_tiles, [1001, 1002]);
     assert_eq!(s.doc.project.texture_sets[1].uv_tiles, [1002, 1003]);
     s
+}
+
+/// The shared colour map plus a roughness map whose names tell the texture sets apart
+fn colour_and_own_roughness_template() -> Value {
+    let gray = json!([["L", {"Channel": {"channel": "Roughness", "component": 0}}]]);
+    let mut preset = shared_name_template();
+    preset["maps"].as_array_mut().unwrap().push(json!({"file": "rough_$textureSet", "format": "Png", "bit_depth": 8, "channels": gray}));
+    preset
 }
 
 #[test]
@@ -340,10 +353,7 @@ fn a_udim_map_that_lost_a_tile_to_a_name_clash_is_not_bound_but_the_other_maps_a
 
     // The colour map's names do not tell the sets apart, so tile 1002 of the second set is not written;
     // the roughness map's names do.
-    let gray = json!([["L", {"Channel": {"channel": "Roughness", "component": 0}}]]);
-    let mut preset = shared_name_template();
-    preset["maps"].as_array_mut().unwrap().push(json!({"file": "rough_$textureSet", "format": "Png", "bit_depth": 8, "channels": gray}));
-    export(&mut s, &dir, json!({"ts": [0, 1], "preset": preset, "usdAsset": true}));
+    export(&mut s, &dir, json!({"ts": [0, 1], "preset": colour_and_own_roughness_template(), "usdAsset": true}));
 
     let materials = materials(&std::fs::read(dir.join("udim_plane.usd")).unwrap(), &s.mesh.materials);
     let (first, second) = (&materials[material_of(&s, 0)].0, &materials[material_of(&s, 1)].0);
@@ -352,6 +362,31 @@ fn a_udim_map_that_lost_a_tile_to_a_name_clash_is_not_bound_but_the_other_maps_a
     assert!(!second.contains_key("diffuseColor"), "tile 1002 would read the first set's file: {second:?}");
     assert!(second["roughness"].file.starts_with("rough_") && second["roughness"].file.contains("<UDIM>"), "{second:?}");
     assert_ne!(first["roughness"].file, second["roughness"].file);
+}
+
+#[test]
+fn a_udim_map_whose_tiles_the_window_reserved_for_an_earlier_command_is_not_bound() {
+    let mut session = two_udim_sets(2.0);
+    assert_eq!(session.doc.project.texture_sets[1].uv_tiles, [1003, 1004]);
+    let dir = temp("reserved");
+    let first = json!({"ts": 0, "preset": colour_and_own_roughness_template()});
+    let written = export(&mut session, &dir, first.clone());
+
+    // The window reserves the earlier files and the UDIM patterns of earlier MaterialX documents
+    let mut reserved: Vec<Value> = files(&written).iter().map(|file| json!(std::path::Path::new(file).file_name().unwrap().to_str().unwrap())).collect();
+    reserved.push(json!("colour.<UDIM>.png"));
+    let second = json!({"ts": 1, "preset": colour_and_own_roughness_template(), "reservedNames": reserved});
+    let mut last = second.clone();
+    last["usdAsset"] = json!([first, second]);
+    export(&mut session, &dir, last);
+
+    let materials = materials(&std::fs::read(dir.join("udim_plane.usd")).unwrap(), &session.mesh.materials);
+    let (first, second) = (&materials[material_of(&session, 0)].0, &materials[material_of(&session, 1)].0);
+    assert_eq!(first["diffuseColor"].file, "colour.<UDIM>.png", "{first:?}");
+    assert!(!dir.join("colour.1003.png").exists(), "the texture export skipped the reserved pattern");
+    assert!(!second.contains_key("diffuseColor"), "the second set's colour tiles were not written: {second:?}");
+    assert!(second["roughness"].file.starts_with("rough_") && second["roughness"].file.contains("<UDIM>"), "{second:?}");
+    assert!(dir.join(second["roughness"].file.replace("<UDIM>", "1003")).is_file());
 }
 
 #[test]
