@@ -21,8 +21,14 @@ mod map_row;
 use inherited_settings::InheritedSettings;
 use map_row::MapRow;
 
-/// Height of the window's tab body, above its buttons
-const BODY_HEIGHT: f32 = 660.0;
+/// The reference window's size; a smaller screen gets a smaller window
+const REFERENCE_WINDOW_SIZE_POINTS: egui::Vec2 = egui::vec2(1100.0, 740.0);
+/// Space kept free around the content on a small screen: the title bar, the frame and a gap
+const WINDOW_VIEWPORT_MARGIN_POINTS: f32 = 72.0;
+/// Height of the tab row, the separators and the bottom bar around the tab body
+const WINDOW_CHROME_HEIGHT_POINTS: f32 = 80.0;
+/// The smallest tab body, so the lists and pages stay usable
+const MIN_BODY_HEIGHT_POINTS: f32 = 160.0;
 /// Width of the texture set list
 const LIST_WIDTH: f32 = 180.0;
 const ICON: f32 = 20.0;
@@ -732,7 +738,11 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     });
 
     // Unavailable export controls stay disabled
-    unavailable_checkbox(ui, tr("Export USD asset"), tr("Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise"));
+    unavailable_checkbox(
+        ui,
+        tr("Export USD asset"),
+        tr("Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise"),
+    );
 
     // The MaterialX export sits below the USD one; the browser downloads the textures only
     #[cfg(not(target_arch = "wasm32"))]
@@ -769,7 +779,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
 
 /// The left column: Global settings, then a row per texture set with its export tick; a click
 /// on a row shows the set's page, "*" marks a set with overrides
-fn set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
+fn set_list(app: &mut TextureCraftApp, ui: &mut Ui, body_height: f32) {
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| list_menu(ui, |ui| set_checks_menu(app, ui)));
     });
@@ -779,7 +789,7 @@ fn set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 
     // Many texture sets scroll inside the list; the footer stays in view
-    let list_height = BODY_HEIGHT - header.rect.height() - ui.spacing().item_spacing.y;
+    let list_height = body_height - header.rect.height() - ui.spacing().item_spacing.y;
     egui::ScrollArea::vertical().id_salt("export_texture_sets").max_height(list_height.max(0.0)).show(ui, |ui| set_rows(app, ui));
 }
 
@@ -1266,7 +1276,9 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut do_export = false;
     let mut canceled = false;
     let presets = texturecraft_engine::formats::builtin_presets();
-    crate::windows::dialog("export_textures", tr("Export textures"), &mut open).fixed_size(vec2(1100.0, 740.0)).show(ctx, |ui| {
+    let window_size = REFERENCE_WINDOW_SIZE_POINTS.min(ctx.content_rect().size() - vec2(WINDOW_VIEWPORT_MARGIN_POINTS, WINDOW_VIEWPORT_MARGIN_POINTS));
+    let body_height = (window_size.y - WINDOW_CHROME_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
+    crate::windows::dialog("export_textures", tr("Export textures"), &mut open).fixed_size(window_size).show(ctx, |ui| {
         // Nothing to export without a project
         if !app.session.project_open {
             ui.label(tr("No project is open"));
@@ -1300,8 +1312,8 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             });
         });
         ui.separator();
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), BODY_HEIGHT), egui::Layout::left_to_right(egui::Align::Min), |ui| {
-            ui.set_height(BODY_HEIGHT);
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), body_height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
+            ui.set_height(body_height);
             match app.ui.export.tab {
                 1 => {
                     crate::export_templates::tab(app, ui, &presets);
@@ -1316,7 +1328,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
 
             ui.vertical(|ui| {
                 ui.set_width(LIST_WIDTH);
-                set_list(app, ui);
+                set_list(app, ui, body_height);
             });
             ui.separator();
             ui.vertical(|ui| match app.ui.export.page {
@@ -1346,7 +1358,9 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let selected = selected_texture_count(app);
         ui.horizontal(|ui| {
             // Not on LIST OF EXPORTS
-            if app.ui.export.tab != 2 && ui.button(tr("Reset all")).on_hover_text(tr("Resets all settings to their default values, including all textures.")).clicked() {
+            if app.ui.export.tab != 2
+                && ui.button(tr("Reset all")).on_hover_text(tr("Resets all settings to their default values, including all textures.")).clicked()
+            {
                 // Keep ownership so Cancel can restore the opening settings
                 let e = &mut app.ui.export;
                 let (opened_with, owner, owner_id) = (e.opened_with.take(), std::mem::take(&mut e.owner), e.owner_id);
