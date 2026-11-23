@@ -134,7 +134,7 @@ fn serve(stream: TcpStream, token: &str, tx: &Sender<ControlRequest>, ctx: &egui
 
 #[cfg(test)]
 mod tests {
-    use std::io::BufRead;
+    use std::io::{BufRead, Read};
 
     use super::*;
 
@@ -196,22 +196,28 @@ mod tests {
         assert_eq!(call(&mut w, &mut r, r#"{"id":4,"method":"ping"}"#).unwrap()["id"], 4, "bad JSON keeps an authenticated connection");
     }
 
+    fn assert_reply(reader: &mut BufReader<TcpStream>, expected: Value) -> std::io::Result<()> {
+        let expected = format!("{expected}\n");
+        let mut received = vec![0; expected.len()];
+        reader.read_exact(&mut received)?;
+        assert_eq!(received, expected.as_bytes(), "unexpected control server reply");
+        Ok(())
+    }
+
     #[test]
-    fn authenticated_connections_hold_server_slots() {
+    fn authenticated_connections_hold_server_slots() -> std::io::Result<()> {
         let addr = server();
         let right = format!(r#"{{"id":1,"method":"auth","params":{{"token":"{TOKEN}"}}}}"#);
-        let _held: Vec<_> = (0..MAX_CONNECTIONS)
-            .map(|_| {
-                let (mut w, mut r) = connect(addr);
-                // The reply confirms that this connection is holding a slot.
-                assert_eq!(call(&mut w, &mut r, &right).unwrap()["ok"], true);
-                (w, r)
-            })
-            .collect();
+        let mut held = Vec::with_capacity(MAX_CONNECTIONS);
+        for _ in 0..MAX_CONNECTIONS {
+            let (mut writer, mut reader) = connect(addr);
+            writeln!(writer, "{right}")?;
+            // The reply confirms that this connection is holding a slot.
+            assert_reply(&mut reader, json!({"ok": true, "id": 1}))?;
+            held.push((writer, reader));
+        }
 
-        let (_, mut r) = connect(addr);
-        let mut reply = String::new();
-        r.read_line(&mut reply).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&reply).unwrap()["error"], "too many connections");
+        let (_writer, mut reader) = connect(addr);
+        assert_reply(&mut reader, json!({"id": null, "ok": false, "error": "too many connections"}))
     }
 }
