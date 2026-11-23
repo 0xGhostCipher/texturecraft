@@ -1309,6 +1309,8 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                     if ui.button(tr("Open output directory")).clicked() {
                         open_output_directory(app);
                     }
+                } else if app.ui.export.tab == 1 {
+                    crate::export_templates::naming_pattern(ui);
                 } else if ui.button(tr("Include all")).on_hover_text(tr("Includes all Texture Sets, UV Tiles and output maps.")).clicked() {
                     app.ui.export.skip.clear();
                     for o in app.ui.export.sets.values_mut() {
@@ -1362,10 +1364,12 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             return;
         }
 
-        let selected = selected_texture_count(app);
+        // OUTPUT TEMPLATES edits the templates only: no count, nothing to reset, save or export there
+        let templates_tab = app.ui.export.tab == 1;
+        let selected = if templates_tab { 0 } else { selected_texture_count(app) };
         ui.horizontal(|ui| {
-            // Not on LIST OF EXPORTS
-            if app.ui.export.tab != 2
+            // Only on SETTINGS
+            if app.ui.export.tab == 0
                 && ui.add(footer_button(tr("Reset all"))).on_hover_text(tr("Resets all settings to their default values, including all textures.")).clicked()
             {
                 // Keep ownership so Cancel can restore the opening settings
@@ -1375,19 +1379,21 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Nothing to write without a ticked texture set
-                let any = !export_selection(app).is_empty();
+                let any = !export_selection(app).is_empty() && !templates_tab;
                 if ui.add_enabled(any, footer_button(tr("Export"))).on_hover_text(tr("Exports all selected textures and additional files")).clicked() {
                     do_export = true;
                 }
 
                 // Saving closes the window without starting an export
-                if ui.add(footer_button(tr("Save settings"))).on_hover_text(tr("Closes the export window and saves changes")).clicked() {
+                if ui.add_enabled(!templates_tab, footer_button(tr("Save settings"))).on_hover_text(tr("Closes the export window and saves changes")).clicked() {
                     app.ui.windows.export = false;
                 }
                 if ui.add(footer_button(tr("Cancel"))).on_hover_text(tr("Closes the export window and undoes all recent changes")).clicked() {
                     canceled = true;
                 }
-                ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
+                if !templates_tab {
+                    ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
+                }
             });
         });
     });

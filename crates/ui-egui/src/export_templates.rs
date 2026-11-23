@@ -73,6 +73,8 @@ const CREATE: [(&str, Layout); 5] =
 /// The naming patterns the input maps can be shown with (the reference's second one names
 /// another vendor's material and is left out)
 const NAMING_PATTERNS: [&str; 1] = ["OpenPBR"];
+/// Width of the Naming pattern list
+const NAMING_PATTERN_WIDTH: f32 = 150.0;
 
 /// The input maps palette: (group, [(label, source)]).
 type Palette = [(&'static str, Vec<(&'static str, SourceRef)>); 4];
@@ -244,7 +246,6 @@ pub fn tab(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]) {
     ui.vertical(|ui| {
         ui.set_width(INPUTS_WIDTH);
         ui.set_height(height);
-        naming_pattern(ui);
         input_maps(ui);
     });
     if let Some(a) = list_action {
@@ -262,21 +263,19 @@ pub fn select(app: &mut TextureCraftApp, name: String) {
     }
 }
 
-/// "Naming pattern" with its info icon
-fn naming_pattern(ui: &mut Ui) {
+/// "Naming pattern" with its info icon, at the right end of the tab row (laid out right to left)
+pub(crate) fn naming_pattern(ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.label(tr("Naming pattern"));
-        egui::ComboBox::from_id_salt("exp_naming").width(90.0).selected_text(NAMING_PATTERNS[0]).show_ui(ui, |ui| {
-            for p in NAMING_PATTERNS {
-                let _ = ui.selectable_label(true, p);
-            }
-        });
-        ui.label(RichText::new(ic::INFO).color(tk.text_dim)).on_hover_ui(|ui| {
-            ui.label(tr("Select the naming pattern used to display the input maps on this page."));
-            ui.label(tr("Some input maps (channels) may be named differently depending on the shader used as a Texture Set."));
-        });
+    ui.label(RichText::new(ic::INFO).color(tk.text_dim)).on_hover_ui(|ui| {
+        ui.label(tr("Select the naming pattern used to display the input maps on this page."));
+        ui.label(tr("Some input maps (channels) may be named differently depending on the shader used as a Texture Set."));
     });
+    egui::ComboBox::from_id_salt("exp_naming").width(NAMING_PATTERN_WIDTH).selected_text(NAMING_PATTERNS[0]).show_ui(ui, |ui| {
+        for p in NAMING_PATTERNS {
+            let _ = ui.selectable_label(true, p);
+        }
+    });
+    ui.label(tr("Naming pattern"));
 }
 
 /// The Presets list: the templates sorted by name (built-in and user); a right click offers
