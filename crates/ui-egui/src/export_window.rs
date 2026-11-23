@@ -76,12 +76,12 @@ pub(crate) const FILE_TYPES: [(&str, Option<FileFormat>); 14] = [
 
 /// The bit depths `format` is written with, as the bit depth list offers them: (bits,
 /// dithering)
-fn depth_options(format: FileFormat) -> Vec<(u8, bool)> {
+pub(crate) fn depth_options(format: FileFormat) -> Vec<(u8, bool)> {
     format.bit_depths().iter().flat_map(|&d| if d == 8 && !format.holds_float(8) { vec![(8, false), (8, true)] } else { vec![(d, false)] }).collect()
 }
 
 /// A bit depth as listed: "8 bits", "8 bits + dithering", "16 bits", "16f bits", "32f bits"
-fn depth_label(format: Option<FileFormat>, bit_depth: u8, dithering: bool) -> String {
+pub(crate) fn depth_label(format: Option<FileFormat>, bit_depth: u8, dithering: bool) -> String {
     match (bit_depth, dithering) {
         (8, true) => tr("8 bits + dithering").to_string(),
         (16, _) if format == Some(FileFormat::Exr) => tr("16f bits").to_string(),
@@ -1238,6 +1238,7 @@ fn cancel(app: &mut TextureCraftApp) {
         before.draft = None;
         before.renaming = None;
         before.ask = None;
+        before.pending_drop = None;
 
         // A template deleted since keeps the default instead
         if app.session.export_preset(&before.preset).is_none() {
@@ -1259,6 +1260,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let e = &mut app.ui.export;
         e.job = None;
         e.ask = None;
+        e.pending_drop = None;
         e.opened_with = None;
         e.tab = 0;
         e.page = None;

@@ -387,6 +387,17 @@ pub struct ExportUi {
     /// Output templates tab: the saved template `draft_maps` counts from.
     #[serde(skip)]
     pub draft_base: Option<texturecraft_engine::formats::ExportPreset>,
+    /// Output templates tab: for each map of `draft`, whether its R, G and B show as separate
+    /// channel swatches (R+G+B) instead of one RGB swatch.
+    #[serde(skip)]
+    pub draft_split: Vec<bool>,
+    /// Output templates tab: the output map edited last; the map lists mark its sources.
+    #[serde(skip)]
+    pub active_map: Option<usize>,
+    /// Output templates tab: a map dropped on an output channel, waiting for the source channel
+    /// ("From <map>").
+    #[serde(skip)]
+    pub pending_drop: Option<crate::export_templates::PendingDrop>,
     /// Output templates tab: the new name while renaming the selected preset.
     #[serde(skip)]
     pub renaming: Option<String>,
@@ -432,6 +443,9 @@ impl Default for ExportUi {
             draft: None,
             draft_maps: Vec::new(),
             draft_base: None,
+            draft_split: Vec::new(),
+            active_map: None,
+            pending_drop: None,
             renaming: None,
             rename_key: false,
             ask: None,
