@@ -180,10 +180,11 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 - **MaterialX export:** the *Export MaterialX* checkbox on the Export textures window's Global
   settings (off by default, remembered with the other settings) writes one OpenPBR `.mtlx` per
   texture set next to the exported maps. The material always uses OpenPBR maps, whatever output
-  template is selected: a template without their file names gets them written beside its own
-  files. Not covered yet: MaterialX
-  standard_surface, Coat Normal, Specular Level, Anisotropy Angle and constants such as IOR. In
-  the browser the option is greyed.
+  template is selected: a template without OpenPBR file names gets the maps of *OpenPBR (separate
+  maps)* written beside its own files, with the export's size, padding, colour space, file type
+  and bit depth (PNG when that file type has no use in a material) and always an OpenGL normal
+  map. Not covered yet: MaterialX standard_surface, Coat Normal, Specular Level, Anisotropy
+  Angle and constants such as IOR. In the browser the option is greyed.
 - **Mesh export** to OBJ with an MTL material library and its maps (PBR extension keys for
   roughness, metallic, normal and coat; UV-tiled sets keep their UDIM UVs and export their maps
   through Export textures), textured GLB (with clear coat and sheen) and USD (with clear coat).

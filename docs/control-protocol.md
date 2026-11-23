@@ -47,6 +47,10 @@ template. `enabled: false` suppresses that file while reserving its name. When s
 sets produce the same name (ignoring case), programmatic and browser exports keep the first file
 and warn about later duplicates. The desktop export window reports the collision before writing.
 
+`file.exportTextures` with `materialX: true` also writes a `.mtlx` OpenPBR material per texture set.
+A template without OpenPBR file names gets the maps of the "OpenPBR (separate maps)" template written
+beside its own files for it; the `maps` overrides above do not reach those maps.
+
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
 `hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and

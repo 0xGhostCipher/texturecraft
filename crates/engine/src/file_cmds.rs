@@ -55,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), materialX?: bool (also write a .mtlx OpenPBR material per texture set; a preset without OpenPBR file names gets the maps of the \"OpenPBR (separate maps)\" preset written beside its own files)}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), materialX?: bool (also write a .mtlx OpenPBR material per texture set; a preset without OpenPBR file names gets the maps of the \"OpenPBR (separate maps)\" preset written beside its own files, without the per-map `maps` overrides)}",
             always,
             export_textures
         ),
@@ -644,14 +644,18 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
     let files = s.export_files(&sets, &opts)?;
     let mut warnings: Vec<String> = files.iter().flat_map(|f| f.warnings.iter().cloned()).collect();
     let mut written = texturecraft_formats::write_files(&files, std::path::Path::new(&dir)).map_err(fe)?;
+
+    // The rendered files are not needed after this; only their names are
+    let mut taken: std::collections::HashSet<String> = files.iter().map(|f| f.name.to_ascii_lowercase()).collect();
+    drop(files);
     if p.get("materialX").and_then(Value::as_bool).unwrap_or(false) {
         // The material reads OpenPBR maps whatever template was chosen: a template without
         // their file names gets an extra pass of the built-in OpenPBR template beside its own files
         let extra = openpbr_options(&opts);
         let material_opts = extra.as_ref().unwrap_or(&opts);
-        let mut taken = std::collections::HashSet::new();
-        if extra.is_some() {
-            taken.extend(files.iter().map(|f| f.name.to_ascii_lowercase()));
+        if extra.is_none() {
+            taken.clear();
+        } else {
             let mut maps = s.export_files(&sets, material_opts)?;
             for file in &maps {
                 for warning in &file.warnings {
@@ -677,12 +681,14 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The options of the extra pass that writes the maps a MaterialX reads, or None when `opts`'
-/// template already has maps with the OpenPBR file names (`texturecraft_formats::materialx`).
+/// template already has a map with an OpenPBR file name (`texturecraft_formats::materialx`).
 /// The pass uses the built-in "OpenPBR (separate maps)" template with the export's size,
-/// padding, normal format, colour space, atlas and dithering, but not `opts.maps` (its indexes
-/// belong to the chosen template). A file type override stays when a material can refer to it;
-/// PSD, JNG, PGM (colour maps become luminance) and WebP (few readers) fall back to the
-/// template's own PNG 8-bit (16-bit for height), so the bit depth override goes with them.
+/// padding, atlas, colour space and dithering, but not `opts.maps` (its indexes belong to the
+/// chosen template). The normal map is always OpenGL, which the material's normalmap node reads,
+/// whatever normal format the export asks for. A file type and bit depth override stay when a
+/// material can refer to the file type; PSD, JNG, PGM (colour maps become luminance) and WebP
+/// (few readers) fall back to the template's own PNG 8-bit (16-bit for height), and the bit
+/// depth override goes with them.
 #[cfg(not(target_arch = "wasm32"))]
 fn openpbr_options(opts: &ExportOptions) -> Option<ExportOptions> {
     use texturecraft_formats::materialx::input_of_template;
@@ -693,12 +699,12 @@ fn openpbr_options(opts: &ExportOptions) -> Option<ExportOptions> {
     let mut options = ExportOptions::new(texturecraft_formats::builtin_preset("OpenPBR (separate maps)")?);
     options.padding = opts.padding;
     options.size = opts.size;
-    options.normal_format = opts.normal_format;
+    options.normal_format = Some(NormalFormat::OpenGl);
     options.atlas = opts.atlas;
     options.color_space = opts.color_space;
     options.dither = opts.dither;
-    if let Some(format) = opts.format_override.filter(|format| !matches!(format, FileFormat::Psd | FileFormat::Jng | FileFormat::Pgm | FileFormat::Webp)) {
-        options.format_override = Some(format);
+    if !opts.format_override.is_some_and(|format| matches!(format, FileFormat::Psd | FileFormat::Jng | FileFormat::Pgm | FileFormat::Webp)) {
+        options.format_override = opts.format_override;
         options.bit_depth_override = opts.bit_depth_override;
     }
     Some(options)
@@ -756,7 +762,7 @@ fn write_materialx(
         normal_map_written |= textures.iter().any(|t| t.input == "geometry_normal");
         if textures.is_empty() {
             warnings.push(if own_maps {
-                format!("MaterialX: texture set \"{}\" has no channels an OpenPBR map can use", set.name)
+                format!("MaterialX: texture set \"{}\" has no OpenPBR maps to refer to", set.name)
             } else {
                 format!("MaterialX: texture set \"{}\" has no OpenPBR maps; use the \"OpenPBR (separate maps)\" preset", set.name)
             });

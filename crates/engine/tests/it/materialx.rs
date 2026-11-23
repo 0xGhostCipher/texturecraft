@@ -200,14 +200,23 @@ fn the_openpbr_maps_follow_the_size_and_colour_space_of_the_export() {
     let r = execute(
         &mut s,
         "file.exportTextures",
-        &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "size": 64, "colorSpace": "ACEScg", "materialX": true}),
+        &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "size": 256, "colorSpace": "ACEScg", "materialX": true}),
     )
     .unwrap();
     let png = files(&r).into_iter().find(|f| f.ends_with("_base_color.png")).unwrap();
-    assert_eq!(image::image_dimensions(png).unwrap(), (64, 64));
+    assert_eq!(image::image_dimensions(png).unwrap(), (256, 256));
     let text = std::fs::read_to_string(files(&r).into_iter().find(|f| f.ends_with(".mtlx")).unwrap()).unwrap();
     assert!(text.contains("_base_color.png\" colorspace=\"acescg\""), "{text}");
-    assert!(text.contains("_specular_roughness.png\" colorspace=\"lin_rec709\""), "{text}");
+
+    // Only colour inputs carry a colour space, and the data maps are still referenced
+    let roughness = referenced(&text).into_iter().find(|f| f.ends_with("_specular_roughness.png")).unwrap_or_else(|| panic!("{text}"));
+    assert!(dir.join(&roughness).is_file());
+    for part in text.split("name=\"file\" type=\"filename\" value=\"").skip(1) {
+        let (file, rest) = part.split_once('"').unwrap();
+        if rest.starts_with(" colorspace=\"acescg\"") {
+            assert!(["_base_color.", "_fuzz_color.", "_emission_color."].iter().any(|input| file.contains(input)), "{file}");
+        }
+    }
 }
 
 #[test]
@@ -404,4 +413,65 @@ fn the_directx_warning_comes_once_and_only_with_a_normal_map() {
     let dir = temp("gl");
     let r = export(&mut s, &dir, OPENPBR, true);
     assert!(!r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("DirectX")), "{r}");
+}
+
+/// A tangent-space normal image of one colour as PNG bytes
+fn normal_png(rgb: [u8; 3]) -> Vec<u8> {
+    let image = image::RgbImage::from_pixel(4, 4, image::Rgb(rgb));
+    let mut bytes = Vec::new();
+    image.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    bytes
+}
+
+fn green_at_centre(path: &str) -> u8 {
+    let image = image::open(path).unwrap().to_rgb8();
+    image.get_pixel(image.width() / 2, image.height() / 2)[1]
+}
+
+#[test]
+fn the_materials_normal_map_is_opengl_whatever_the_export_asks_for() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+
+    // A baked normal that tilts: green 64 in the file, 71 / 184 once normalised in OpenGL / DirectX
+    let image = s.import_resource_bytes("n.png", normal_png([128, 64, 255])).unwrap();
+    execute(&mut s, "textureSet.meshMap.set", &json!({"map": "normal", "image": image})).unwrap();
+    let dir = temp("normal-format");
+    let r = execute(
+        &mut s,
+        "file.exportTextures",
+        &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "ts": 0, "normalFormat": "directX", "materialX": true}),
+    )
+    .unwrap();
+    let all = files(&r);
+    let own = all.iter().find(|f| f.ends_with("_normal.png")).unwrap();
+    let material = all.iter().find(|f| f.ends_with("_geometry_normal.png")).unwrap();
+    assert!(green_at_centre(own).abs_diff(184) <= 3, "the template's own normal map is DirectX: {}", green_at_centre(own));
+    assert!(green_at_centre(material).abs_diff(71) <= 3, "the material's normal map is OpenGL: {}", green_at_centre(material));
+    assert!(!r["warnings"].to_string().contains("DirectX"), "nothing to flip in the material: {r}");
+}
+
+#[test]
+fn the_bit_depth_of_the_export_applies_to_the_openpbr_maps_unless_the_file_type_fell_back() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    for (extra, expected) in [(json!({}), image::ColorType::Rgb16), (json!({"format": "psd"}), image::ColorType::Rgb8)] {
+        let dir = temp("depth");
+        let mut params = json!({"dir": dir.display().to_string(), "preset": DEFAULT, "ts": 0, "bitDepth": 16, "materialX": true});
+        params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let r = execute(&mut s, "file.exportTextures", &params).unwrap();
+        let png = files(&r).into_iter().find(|f| f.ends_with("_base_color.png")).unwrap();
+        assert_eq!(image::open(png).unwrap().color(), expected, "{params}");
+    }
+}
+
+#[test]
+fn a_set_whose_openpbr_maps_were_all_skipped_gets_no_material_and_a_warning() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    assert!(s.set_count() >= 2);
+    execute(&mut s, "textureSet.rename", &json!({"ts": 0, "name": "a b"})).unwrap();
+    execute(&mut s, "textureSet.rename", &json!({"ts": 1, "name": "A_B"})).unwrap();
+    let dir = temp("all-skipped");
+    let r = execute(&mut s, "file.exportTextures", &json!({"dir": dir.display().to_string(), "preset": DEFAULT, "ts": "all", "materialX": true})).unwrap();
+    assert_eq!(files(&r).iter().filter(|f| f.ends_with(".mtlx")).count(), s.set_count() - 1, "{r}");
+    let warnings: Vec<&str> = r["warnings"].as_array().unwrap().iter().map(|w| w.as_str().unwrap()).collect();
+    assert!(warnings.contains(&"MaterialX: texture set \"A_B\" has no OpenPBR maps to refer to"), "{warnings:?}");
 }
