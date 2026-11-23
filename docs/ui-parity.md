@@ -337,9 +337,30 @@ that numbers hide once a tile is under 40 points on screen.
   list is titled *Presets* and lists the templates sorted by name, without the template list's
   first group. A right click on a preset offers *Rename*, *Duplicate* and *Remove* (Rename and
   Remove are greyed for built-in templates, which are read-only); F2 renames the selected one.
-  "+" creates "new_export_preset", Duplicate "<name>_copy". *Naming pattern* (*OpenPBR*; the
-  reference's second pattern names another vendor's material and is left out) with its info
-  tooltip sits above the input maps. The middle reads "Current preset: <name>", *Output maps*
-  with *Create:* Gray, RGB, R+G+B, RGB+A, R+G+B+A, and a footer with drag-and-drop guidance and the number of output maps. TextureCraft keeps its
-  own list tools (rename, import, export) and asks before deleting; R+G+B and R+G+B+A create the
-  same maps as RGB and RGB+A (each channel takes its own source in either).
+  "+" creates "new_export_preset", Duplicate "<name>_copy". The *Presets* row holds copy, "−"
+  and "+" without tooltips ([#789](https://github.com/storytold/texturecraft/issues/789)).
+  *Naming pattern* (*OpenPBR*; the reference's second pattern names another vendor's material and
+  is left out) with its info tooltip sits at the right end of the tab row; this tab has no
+  *Include all*, *Reset all* or texture count, and *Save settings* and *Export* are greyed. The
+  middle reads "Current preset: <name>", *Output maps* with *Create:* Gray, RGB, R+G+B, RGB+A,
+  R+G+B+A on the same row, and a footer with drag-and-drop guidance and the number of output
+  maps. Each output map is one row: a drag grip (drag it onto another row to move the map), the
+  file name, "$" with the file name variables ($project, $mesh, $textureSet, $udim, $uvTileName
+  greyed, $colorSpace, then TextureCraft's $channel), the channel swatches (Gray, RGB or R, G, B,
+  then A), the file type and bit depth lists ("8 bits + dithering" greyed: templates do not keep
+  it), duplicate and "×". Dropping a map on a swatch opens "From <map>": a gray map offers *Gray
+  Channel* and *A Channel*, a colour map *Gray Channel*, *R Channel*, *G Channel*, *B Channel*
+  and *A Channel* (TextureCraft has no alpha or gray of a map yet: those are greyed). A colour
+  map dropped on the RGB swatch fills R, G and B at once. The swatch then takes the map's
+  colour, and the map lists mark the maps of the output map edited last with that colour. A
+  click on a swatch offers *Clear channel* and *Split/Collapse RGB*. The right side has the
+  *Input maps* pane, grouped as in the reference (Base, Specular, Transmission, Subsurface,
+  Coat, Fuzz/Sheen; then Emission, Geometry and Other for the channels the reference screenshot
+  cuts off), and a pane with *Mesh maps* above *Converted maps* (highlighted); maps TextureCraft
+  does not have yet are greyed and cannot be dragged. TextureCraft keeps a few things the
+  reference does not show, out of the way: Import and Export of template files at the end of a
+  preset's right-click menu, Invert in a swatch's right-click menu, *Move up* and *Move down*
+  in the grip's right-click menu (and the arrow keys on a focused grip), the planned file name
+  in the file name's tooltip, and three converted maps of its own (Normal from height, Roughness
+  from glossiness, Sheen color × weight) after the reference's. Built-in templates stay
+  read-only and deleting asks first.
