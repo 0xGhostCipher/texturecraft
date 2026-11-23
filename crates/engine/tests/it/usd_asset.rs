@@ -317,3 +317,58 @@ fn a_material_without_a_texture_set_has_no_textures() {
     assert!(!materials[0].0.is_empty());
     assert!(materials[1].0.is_empty(), "{:?}", materials[1]);
 }
+
+/// A material per half of a two-tile plane: the first material covers tiles 1001 and 1002, the second 1002 and 1003
+fn overlapping_tiles() -> Session {
+    let mut mesh = primitives::udim_plane();
+    let mut second = primitives::udim_plane();
+    second.materials[0] = "Other".into();
+    for uv in &mut second.uvs {
+        uv.x += 1.0;
+    }
+    mesh.append(&second);
+    let s = Session::new_project("t", mesh, "builtin:udim_plane", None, 128).unwrap();
+    assert_eq!(s.doc.project.texture_sets[0].uv_tiles, [1001, 1002]);
+    assert_eq!(s.doc.project.texture_sets[1].uv_tiles, [1002, 1003]);
+    s
+}
+
+#[test]
+fn a_udim_map_that_lost_a_tile_to_a_name_clash_is_not_bound_but_the_other_maps_are() {
+    let mut s = overlapping_tiles();
+    let dir = temp("udim-clash");
+
+    // The colour map's names do not tell the sets apart, so tile 1002 of the second set is not written;
+    // the roughness map's names do.
+    let gray = json!([["L", {"Channel": {"channel": "Roughness", "component": 0}}]]);
+    let mut preset = shared_name_template();
+    preset["maps"].as_array_mut().unwrap().push(json!({"file": "rough_$textureSet", "format": "Png", "bit_depth": 8, "channels": gray}));
+    export(&mut s, &dir, json!({"ts": [0, 1], "preset": preset, "usdAsset": true}));
+
+    let materials = materials(&std::fs::read(dir.join("udim_plane.usd")).unwrap(), &s.mesh.materials);
+    let (first, second) = (&materials[material_of(&s, 0)].0, &materials[material_of(&s, 1)].0);
+    assert_eq!(first["diffuseColor"].file, "colour.<UDIM>.png", "{first:?}");
+    assert!(first["roughness"].file.starts_with("rough_") && first["roughness"].file.contains("<UDIM>"), "{first:?}");
+    assert!(!second.contains_key("diffuseColor"), "tile 1002 would read the first set's file: {second:?}");
+    assert!(second["roughness"].file.starts_with("rough_") && second["roughness"].file.contains("<UDIM>"), "{second:?}");
+    assert_ne!(first["roughness"].file, second["roughness"].file);
+}
+
+#[test]
+fn a_mesh_without_materials_gets_a_material_bound_to_the_default_texture_set() {
+    let mut mesh = primitives::plane(2.0, 4);
+    mesh.materials.clear();
+    mesh.submeshes.clear();
+    let mut s = Session::new_project("t", mesh, "builtin:plane", None, 128).unwrap();
+    assert_eq!(s.set_count(), 1);
+    let dir = temp("no-materials");
+    export(&mut s, &dir, json!({"usdAsset": true}));
+
+    let materials = materials(&std::fs::read(dir.join("plane.usd")).unwrap(), &["default".to_string()]);
+    let inputs = &materials[0].0;
+    assert!(["diffuseColor", "roughness", "metallic", "normal"].iter().all(|input| inputs.contains_key(*input)), "{inputs:?}");
+    for read in inputs.values() {
+        assert!(read.file.starts_with("plane_Default_"), "reads the Default texture set's files: {}", read.file);
+        assert!(dir.join(&read.file).is_file(), "{} was written", read.file);
+    }
+}

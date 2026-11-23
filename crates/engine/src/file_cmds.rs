@@ -695,7 +695,7 @@ fn write_usd_asset(s: &Session, dir: &std::path::Path, exports: &[(Vec<usize>, E
 
 #[cfg(not(target_arch = "wasm32"))]
 fn build_usd_asset(s: &Session, dir: &std::path::Path, exports: &[(Vec<usize>, ExportOptions)]) -> Result<std::path::PathBuf> {
-    use texturecraft_formats::{export::list_set_outputs, usd_layer_with_textures, usd_texture_bindings};
+    use texturecraft_formats::{list_outputs, usd_layer_with_textures, usd_texture_bindings};
     let project = &s.doc.project;
     let mesh_name = stem_of(project.mesh.trim_start_matches("builtin:"));
 
@@ -703,20 +703,32 @@ fn build_usd_asset(s: &Session, dir: &std::path::Path, exports: &[(Vec<usize>, E
     let mut taken = std::collections::HashSet::new();
     let mut by_set = std::collections::HashMap::new();
     for (sets, opts) in exports {
-        // A file whose name an earlier export of this job has was not written by this one
-        let planned: Vec<_> = list_set_outputs(project, sets, &mesh_name, opts)
-            .map_err(fe)?
-            .into_iter()
-            .filter(|(_, file)| taken.insert(file.name.to_ascii_lowercase()))
-            .collect();
         for &set in sets {
-            let files: Vec<_> = planned.iter().filter(|(ts, _)| *ts == set).map(|(_, file)| file.clone()).collect();
             let texture_set = project.texture_set(set).map_err(|e| EngineError::Other(e.to_string()))?;
-            by_set.entry(set).or_insert_with(|| usd_texture_bindings(texture_set, opts, project.normal_format, &files));
+
+            // A file whose name an earlier file of this job has was not written by this export. A
+            // map that lost any file (a tile of a UDIM map) is not bound: its `<UDIM>` name would
+            // read the tile of another texture set.
+            let mut skipped_maps = std::collections::HashSet::new();
+            let mut kept = Vec::new();
+            for file in list_outputs(project, set, &mesh_name, opts).map_err(fe)? {
+                if taken.insert(file.name.to_ascii_lowercase()) {
+                    kept.push(file);
+                } else {
+                    skipped_maps.insert(file.map);
+                }
+            }
+
+            kept.retain(|file| !skipped_maps.contains(&file.map));
+            by_set.entry(set).or_insert_with(|| usd_texture_bindings(texture_set, opts, project.normal_format, &kept));
         }
     }
 
-    let mesh = s.source_mesh();
+    // A mesh without materials has one implicit material (and texture set)
+    let mut mesh = s.source_mesh();
+    if mesh.materials.is_empty() {
+        mesh.materials.push("default".into());
+    }
     let bindings: Vec<_> = (0..mesh.materials.len()).map(|m| s.texture_set_of_material(m).and_then(|set| by_set.remove(&set)).unwrap_or_default()).collect();
     let layer = usd_layer_with_textures(&mesh, &project.name, &bindings).map_err(fe)?;
     let path = dir.join(format!("{}.usd", texturecraft_formats::export::sanitize_file_stem(&mesh_name)));

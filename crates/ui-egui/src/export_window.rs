@@ -1119,6 +1119,17 @@ fn follow_texture_sets(app: &mut TextureCraftApp) {
                 set.index = set.index.and_then(moved);
             }
 
+            // The sets already written follow too (the USD asset reads their params); a removed one leaves
+            job.sent = std::mem::take(&mut job.sent)
+                .into_iter()
+                .filter_map(|mut params| {
+                    let Some(index) = params.get("ts").and_then(serde_json::Value::as_u64) else { return Some(params) };
+                    let index = moved(usize::try_from(index).ok()?)?;
+                    params["ts"] = json!(index);
+                    Some(params)
+                })
+                .collect();
+
             // Removed sets leave the count too, so the bar keeps its pace
             job.total -= queued - job.pending.len();
         } else {

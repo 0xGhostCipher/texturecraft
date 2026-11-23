@@ -55,7 +55,7 @@ material's inputs read the texture files the export planned for that set with it
 which runs one command per texture set, passes the params of all its commands with the last one).
 Bound inputs: `diffuseColor`, `roughness`, `metallic`, `normal`, `emissiveColor`, `opacity`,
 `clearcoat` and `clearcoatRoughness`, each reading the `rgb`, `r`, `g`, `b` or `a` output of the
-file that holds it; maps with no such input are not bound, and a texture set outside the export has
+file that holds it; other maps (ambient occlusion, height, specular...) are not bound, and a texture set outside the export has
 no textures. A file name is relative to the file (`./<file>`, with `<UDIM>` for UV tiles). A failure
 to build or write it is named in `warnings` and the command still succeeds. The file is in `files`.
 

@@ -209,3 +209,48 @@ fn an_asset_that_cannot_be_written_shows_an_error_toast_and_the_textures_stay() 
     assert!(h.state().ui.export.job.is_none(), "the export ran to its end");
     assert!(std::fs::read_dir(&*dir).unwrap().flatten().any(|e| e.path().extension().is_some_and(|x| x == "png")), "the textures were written");
 }
+
+/// A running USD export that has already written texture sets 0 and 1 (the `tag` of each sent command tells them apart)
+fn running_with_two_sent(h: &mut Harness<'static, TextureCraftApp>, dir: &std::path::Path) {
+    let sets = h.state().session.set_count();
+    let params = serde_json::json!({"dir": dir.display().to_string()});
+    let pending: Vec<(usize, serde_json::Value)> = (0..sets).cycle().take(sets * 8).map(|ts| (ts, params.clone())).collect();
+    let sent = (0..2).map(|ts| serde_json::json!({"dir": dir.display().to_string(), "ts": ts, "tag": ts})).collect();
+    let e = &mut h.state_mut().ui.export;
+    e.tab = 2;
+    e.job = Some(ExportJob { total: pending.len(), pending, usd_asset: true, sent, ..ExportJob::default() });
+}
+
+/// The `ts` of the sent commands that carry `tag`
+fn sent_ts(h: &Harness<'static, TextureCraftApp>, tag: u64) -> Vec<u64> {
+    let job = h.state().ui.export.job.as_ref().expect("the export is still running");
+    job.sent.iter().filter(|params| params["tag"] == tag).map(|params| params["ts"].as_u64().unwrap()).collect()
+}
+
+#[test]
+fn the_sent_commands_of_a_running_export_follow_their_texture_sets_when_they_move() {
+    let (mut h, dir) = harness("sent-move");
+    running_with_two_sent(&mut h, &dir);
+    h.run_steps(1);
+    assert_eq!((sent_ts(&h, 0), sent_ts(&h, 1)), (vec![0], vec![1]));
+
+    // The two texture sets trade places (names), as a reorder does
+    let names: Vec<String> = h.state().session.doc.project.texture_sets.iter().map(|t| t.name.clone()).collect();
+    for (ts, name) in [(0, "swap"), (1, names[0].as_str()), (0, names[1].as_str())] {
+        texturecraft_engine::execute(&mut h.state_mut().session, "textureSet.rename", &serde_json::json!({"ts": ts, "name": name})).unwrap();
+    }
+    h.run_steps(1);
+    assert_eq!((sent_ts(&h, 0), sent_ts(&h, 1)), (vec![1], vec![0]), "each command stays with its texture set");
+}
+
+#[test]
+fn the_sent_command_of_a_texture_set_that_leaves_the_export_is_dropped() {
+    let (mut h, dir) = harness("sent-drop");
+    running_with_two_sent(&mut h, &dir);
+    h.run_steps(1);
+
+    // A rename the export cannot follow takes the texture set out of it
+    texturecraft_engine::execute(&mut h.state_mut().session, "textureSet.rename", &serde_json::json!({"ts": 1, "name": "renamed"})).unwrap();
+    h.run_steps(1);
+    assert_eq!((sent_ts(&h, 0), sent_ts(&h, 1)), (vec![0], vec![]));
+}

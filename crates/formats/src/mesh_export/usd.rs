@@ -339,8 +339,8 @@ fn component_of(source: &SourceRef) -> u8 {
 }
 
 /// The texture output of `map` that input `slot` reads, and the source it takes: a colour or
-/// normal input needs the three components in R, G and B, a scalar input reads the destination
-/// that holds it. None when the map does not hold the input, when `set` has no data for it (the
+/// normal input needs the three components in R, G and B (the source is the green one's), a scalar
+/// input reads the destination that holds it. None when the map does not hold the input, when `set` has no data for it (the
 /// file then holds a default), when it is written inverted, or when `format` cannot keep it: JPEG
 /// and HDR files drop alpha, a PGM file holds one gray channel (a colour map becomes its
 /// luminance), which only a map written as L can bind.
@@ -372,10 +372,13 @@ fn output_for_slot<'m>(slot: usize, map: &'m MapSpec, set: &TextureSet, format: 
         return None;
     }
 
-    let red = holds(Dest::R, Some(0))?;
-    holds(Dest::G, Some(1))?;
+    holds(Dest::R, Some(0))?;
+    let green = holds(Dest::G, Some(1))?;
     holds(Dest::B, Some(2))?;
-    Some(("rgb", red))
+
+    // The green source is returned: only the green channel differs between the OpenGL and DirectX
+    // normal conventions
+    Some(("rgb", green))
 }
 
 /// The UsdPreviewSurface inputs the exported `files` of texture set `set` (planned with `opts`)
@@ -752,5 +755,21 @@ mod texture_binding_tests {
         let mut forced = normal(|k| virt(VirtualMap::NormalOpenGl, k));
         forced.normal_format = Some(NormalFormat::DirectX);
         assert_eq!(convention(&forced), Some(NormalFormat::DirectX), "the export's normal format wins");
+    }
+
+    #[test]
+    fn a_normal_map_takes_its_convention_from_the_green_channel() {
+        let set = set_with(&[]);
+        // Red and blue are the same in both conventions; green decides
+        let mixed = |green: VirtualMap| {
+            options(vec![map(
+                "n",
+                FileFormat::Png,
+                vec![(Dest::R, virt(VirtualMap::NormalOpenGl, 0)), (Dest::G, virt(green, 1)), (Dest::B, virt(VirtualMap::NormalOpenGl, 2))],
+            )])
+        };
+        let convention = |opts: &ExportOptions| slot(&bind(&set, opts, NormalFormat::OpenGl), NORMAL).unwrap().normal;
+        assert_eq!(convention(&mixed(VirtualMap::NormalDirectX)), Some(NormalFormat::DirectX));
+        assert_eq!(convention(&mixed(VirtualMap::NormalOpenGl)), Some(NormalFormat::OpenGl));
     }
 }

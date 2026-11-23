@@ -184,9 +184,10 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   set was exported with (its own output template, file type, size and normal format) by relative
   file name. Base colour, roughness, metallic, normal, emissive colour, opacity, clear coat and clear
   coat roughness are bound; a packed template (ORM, mask map) binds several inputs to different
-  channels of one file. Ambient occlusion, height, specular/glossiness, sheen, anisotropy,
-  transmission, scatter, coat normal and baked maps have no UsdPreviewSurface input and are not
-  bound. Colour maps written as sRGB are tagged sRGB, other maps raw; a DirectX normal map is
+  channels of one file. Ambient occlusion, height and specular/glossiness are not bound (the
+  material has occlusion, displacement and specularColor inputs, but TextureCraft does not fill
+  them), nor are baked maps; sheen, anisotropy, transmission, scatter and coat normal have no
+  UsdPreviewSurface input. Colour maps written as sRGB are tagged sRGB, other maps raw; a DirectX normal map is
   flipped back in the material. A texture set outside the export has no textures in the file. A
   canceled export writes none, and a failure to write it is a warning. In the browser the option is
   greyed.
