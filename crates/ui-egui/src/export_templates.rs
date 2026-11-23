@@ -273,8 +273,8 @@ fn naming_pattern(ui: &mut Ui) {
             }
         });
         ui.label(RichText::new(ic::INFO).color(tk.text_dim)).on_hover_ui(|ui| {
-            ui.label(tr("Choose how the input maps are named in this editor."));
-            ui.label(tr("The active texture set’s shader can affect the available map names."));
+            ui.label(tr("Select the naming pattern used to display the input maps on this page."));
+            ui.label(tr("Some input maps (channels) may be named differently depending on the shader used as a Texture Set."));
         });
     });
 }
@@ -641,7 +641,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
             }
         });
     });
-    ui.label(RichText::new(tr("Drop an input map onto a channel to assign it to that output.")).color(tokens.text_dim));
+    ui.label(RichText::new(tr("Drag and drop maps on output's channels to setup your export.")).color(tokens.text_dim));
 
     // Count only maps that have sources in the current set
     if let Ok(names) = &preview {

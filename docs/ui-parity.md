@@ -63,9 +63,8 @@ when it is not docked). Each opens a popup beside the bar with its title in capi
 button that turns it into a floating window, and *Close*. A floating rail panel has a *Dock* button
 that closes it back onto the bar; the float is saved with the UI state.
 
-- **Export:** SEND TO lists three targets and a Configure button, all greyed with "Not available
-  yet". The reference names other products there; TextureCraft says *Export to image editor*,
-  *Send to compositing app* and *Send to 3D staging app*. EXPORT has *Export Mesh...* (the
+- **Export:** the dock shows EXPORT only (the reference's SEND TO part has no counterpart here and
+  is left out, [#789](https://github.com/storytold/texturecraft/issues/789)). EXPORT has *Export Mesh...* (the
   *Mesh Export Options* prompt, then the file choice) and *Export Textures...* (the Export textures
   window: *Global settings* above the texture sets, *General Export Parameters*, *Export USD asset*
   and *Export shaders parameters* greyed, *Include all*, *Save settings* and "N textures selected
@@ -280,24 +279,25 @@ that numbers hide once a tile is under 40 points on screen.
 
 - **SETTINGS** ([#671](https://github.com/storytold/texturecraft/issues/671)): the texture set
   list has the reference's menu (*Check all*, *Uncheck all*, *Invert all*); *General Export
-  Parameters* has its reset button ("Restore the default export parameters"). *Output directory*
+  Parameters* has its reset button ("Resets all settings to default values"). *Output directory*
   is a button showing the path (it opens the folder picker) with an *R* button ("Reset to
   default"). The template list starts with the reference's first group (TextureCraft has
   "Document channels + Normal + AO (No Alpha)", the new name of its default template, and "glTF
   PBR Metal Roughness"; the others are greyed with "Not available yet"; one entry names another
-  vendor's product and is left out), then a separator ("Some templates in this list are unavailable") and every other template sorted by name. File type lists "Based on output
+  vendor's product and is left out), then a separator ("This preset is not available for the current project") and every other template sorted by name. File type lists "Based on output
   template", then the types in the reference order and names ("targa", "jpeg", "tiff"). Size
   adds "Maximum size for all Texture Sets" and 128. Padding uses the reference order; the
   dilation width is a button with a "Dilation (pixels)" slider, greyed for paddings without a
-  width. Include all, Reset all, Cancel, Save settings, Export and the two greyed checkboxes carry
-  tooltips explaining which settings are applied, kept or restored.
+  width. Include all, Reset all, Cancel, Save settings, Export and the two greyed checkboxes carry the
+  reference's tooltips word for word. The window is 1100 x 740 as in the reference
+  ([#789](https://github.com/storytold/texturecraft/issues/789)).
   Cancel, and closing the window, go back to the settings the window opened with; the window
   always opens on SETTINGS.
 - **Texture set pages** ([#669](https://github.com/storytold/texturecraft/issues/669)): a click
   on a texture set row shows its *General Export Parameters*: Output template, File type, Size and
   Padding with the inherited value as text (for example "1024x1024 (Texture Set size)"). The
   pencil button ("Enable override") turns a row into its list; a set with an override gets "*"
-  ("Override(s) active"). The header menu has *Override every item* and *Disable
+  ("Override(s) active"). The header menu has *Enable override for all items* and *Disable
   override for all items*. The template list leaves out the entries the reference leaves out
   there; sizes read "128x128" ... "8192x8192". Export, the footer count and LIST OF EXPORTS use
   each set's own settings. Ticks and overrides belong to the project and follow each texture set
@@ -307,7 +307,7 @@ that numbers hide once a tile is under 40 points on screen.
   parameters, one row per map the set exports: a tick, the file name pattern (cut at the front
   with "…" when long, the whole pattern as tooltip), its own *Enable override* and the inherited
   "png   8 bits". An override gives the map its own file type and bit depth (`maps` of
-  `file.exportTextures`). The header menu has *Check all*, *Uncheck all*, *Invert all*, *Override every item* and *Clear all overrides*; *Include all* ticks every map
+  `file.exportTextures`). The header menu has *Check all*, *Uncheck all*, *Invert all*, *Enable override for all items* and *Disable override for all items*; *Include all* ticks every map
   again. The patterns are cut after 26 characters (the reference cuts by pixel width).
 - **File types** ([#672](https://github.com/storytold/texturecraft/issues/672)): File type
   lists bmp, jpeg, jng, pgm, png, targa, tiff, hdr, exr, j2k, jp2, webp, psd and sbsar; j2k, jp2

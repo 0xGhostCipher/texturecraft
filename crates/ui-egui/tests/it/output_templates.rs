@@ -45,7 +45,7 @@ fn right_click(h: &mut Harness<'_, TextureCraftApp>, label: &str) {
 fn the_tab_shows_the_preset_tools_and_map_editor() {
     let library = TemplateLibrary::new("layout");
     let mut h = harness(&library);
-    for text in ["Presets", "Naming pattern", "Current preset:", "Output maps", "Create:", "Drop an input map onto a channel to assign it to that output."] {
+    for text in ["Presets", "Naming pattern", "Current preset:", "Output maps", "Create:", "Drag and drop maps on output's channels to setup your export."] {
         assert!(h.query_by_label(text).is_some(), "{text}");
     }
     assert!(h.get_all_by_role(egui::Role::ComboBox).any(|c| c.value().as_deref() == Some("OpenPBR")));
@@ -63,8 +63,8 @@ fn the_tab_shows_the_preset_tools_and_map_editor() {
     let info = h.get_by_label(egui_phosphor::regular::INFO).rect().center();
     h.hover_at(info);
     h.run_steps(30);
-    assert!(h.query_by_label("Choose how the input maps are named in this editor.").is_some());
-    assert!(h.query_by_label("The active texture set’s shader can affect the available map names.").is_some());
+    assert!(h.query_by_label("Select the naming pattern used to display the input maps on this page.").is_some());
+    assert!(h.query_by_label("Some input maps (channels) may be named differently depending on the shader used as a Texture Set.").is_some());
 }
 
 #[test]

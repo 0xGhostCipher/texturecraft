@@ -117,14 +117,14 @@ fn the_header_menu_switches_every_override() {
 
     // The set list has the same menu button; the page header's is the second
     page_menu(&mut h);
-    click(&mut h, "Override every item");
+    click(&mut h, "Enable override for all items");
     let o = overrides(&h);
     assert!(o.preset.is_some() && o.file_type.is_some() && o.size.is_some() && o.padding.is_some(), "{o:?}");
 
     // The default template writes 8- and 16-bit files: the override keeps them until a type is picked
     assert_eq!(o.file_type.unwrap().format, "");
     page_menu(&mut h);
-    click(&mut h, "Clear all overrides");
+    click(&mut h, "Disable override for all items");
     assert!(h.state().ui.export.sets.is_empty());
 }
 
@@ -157,7 +157,7 @@ fn export_writes_each_set_with_its_overrides_and_cancel_drops_them() {
         h.run_steps(1);
     }
     h.run_steps(2);
-    let finished = h.state().ui.export.console.iter().any(|l| matches!(l, ConsoleLine::Done(t) if t == "Texture export complete"));
+    let finished = h.state().ui.export.console.iter().any(|l| matches!(l, ConsoleLine::Done(t) if t == "Export successfully finished"));
     assert!(h.state().ui.export.job.is_none() && finished, "the export finished");
     let sets: Vec<String> = h.state().session.doc.project.texture_sets.iter().map(|t| format!("_{}_", t.name)).collect();
     let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "png")).collect();

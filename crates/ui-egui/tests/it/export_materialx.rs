@@ -161,7 +161,7 @@ fn restoring_the_default_parameters_unticks_export_materialx() {
     app_harness.run_steps(3);
     assert!(app_harness.state().ui.export.materialx);
 
-    app_harness.get_by_label("Restore the default export parameters").click();
+    app_harness.get_by_label("Resets all settings to default values").click();
     app_harness.run_steps(3);
     assert!(!app_harness.state().ui.export.materialx);
 }

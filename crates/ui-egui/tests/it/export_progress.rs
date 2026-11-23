@@ -34,7 +34,7 @@ fn console(h: &Harness<'_, TextureCraftApp>) -> Vec<String> {
         .iter()
         .map(|l| match l {
             ConsoleLine::Step(t) | ConsoleLine::Done(t) => t.clone(),
-            ConsoleLine::Set(name) => format!("Texture set {name}"),
+            ConsoleLine::Set(name) => format!("Exporting texture set {name}..."),
         })
         .collect()
 }
@@ -48,7 +48,7 @@ fn export_shows_progress_logs_the_steps_and_keeps_the_window_open() {
     h.run_steps(1);
     assert!(h.query_by_label("Cancel Export").is_some());
     assert!(h.query_by_label("Cancel").is_none(), "the progress bar replaces the buttons");
-    assert_eq!(console(&h).first().map(String::as_str), Some("Preparing texture export"));
+    assert_eq!(console(&h).first().map(String::as_str), Some("Preparing export..."));
 
     for _ in 0..64 {
         if h.state().ui.export.job.is_none() {
@@ -61,14 +61,14 @@ fn export_shows_progress_logs_the_steps_and_keeps_the_window_open() {
     assert!(h.state().ui.windows.export, "the window stays open");
     assert!(h.query_by_label("Cancel").is_some() && h.query_by_label("Cancel Export").is_none());
     let lines = console(&h);
-    let set = format!("Texture set {}", sets[0]);
+    let set = format!("Exporting texture set {}...", sets[0]);
     let start = lines.iter().position(|l| *l == set).unwrap();
-    assert_eq!(&lines[start..start + 5], [set.clone(), set.clone(), "Rendering the selected maps".into(), set.clone(), "Saving texture files".into()]);
-    assert!(lines[start + 6].starts_with("Saved texture "), "{lines:?}");
+    assert_eq!(&lines[start..start + 5], [set.clone(), set.clone(), "Computing textures results".into(), set.clone(), "Preparing textures writing".into()]);
+    assert!(lines[start + 6].starts_with("Writing ") && lines[start + 6].ends_with(" texture on disk"), "{lines:?}");
     let written: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-    let finished = lines.iter().position(|l| l == "Texture export complete").unwrap();
-    assert_eq!(&lines[finished - 3..finished], ["Finished writing this texture set", "All selected texture sets processed", "Collecting the exported files"]);
-    assert_eq!(lines[finished + 1], "Files saved");
+    let finished = lines.iter().position(|l| l == "Export successfully finished").unwrap();
+    assert_eq!(&lines[finished - 3..finished], ["Finalizing textures writing", "Bitmaps write finalization...", "Finalizing export..."]);
+    assert_eq!(lines[finished + 1], "Successfully exported:");
     assert_eq!(lines.len() - finished - 2, written.len(), "every written file is listed");
     assert!(matches!(h.state().ui.export.console.last(), Some(ConsoleLine::Done(_))), "in green");
     let _ = std::fs::remove_dir_all(&dir);
@@ -113,7 +113,7 @@ fn cancel_export_stops_the_export() {
     assert!(h.state().ui.export.job.is_none());
     assert!(h.state().ui.windows.export);
     let lines = console(&h);
-    assert!(!lines.iter().any(|l| l == "Collecting the exported files" || l == "Texture export complete"), "the export did not finish: {lines:?}");
+    assert!(!lines.iter().any(|l| l == "Finalizing export..." || l == "Export successfully finished"), "the export did not finish: {lines:?}");
     assert!(h.query_by_label("Cancel").is_some(), "the buttons are back");
     let _ = std::fs::remove_dir_all(&dir);
 }

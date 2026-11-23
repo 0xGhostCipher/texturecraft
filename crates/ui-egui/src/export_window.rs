@@ -22,7 +22,7 @@ use inherited_settings::InheritedSettings;
 use map_row::MapRow;
 
 /// Height of the window's tab body, above its buttons
-const BODY_HEIGHT: f32 = 440.0;
+const BODY_HEIGHT: f32 = 660.0;
 /// Width of the texture set list
 const LIST_WIDTH: f32 = 180.0;
 const ICON: f32 = 20.0;
@@ -177,7 +177,7 @@ fn template_combo(ui: &mut Ui, id: &str, current: &mut String, first: &[(&str, b
                 ui.add_enabled(false, egui::Button::selectable(false, *name)).on_disabled_hover_text(tr(NOT_AVAILABLE));
             }
         }
-        ui.separator().on_hover_text(tr("Some templates in this list are unavailable"));
+        ui.separator().on_hover_text(tr("This preset is not available for the current project"));
         for name in rest {
             changed |= ui.selectable_value(current, name.clone(), name).on_hover_text(name).changed();
         }
@@ -241,7 +241,7 @@ fn start_export(app: &mut TextureCraftApp) {
 
     let e = &mut app.ui.export;
     e.tab = 2;
-    e.console = vec![ConsoleLine::Step(tr("Preparing texture export").into())];
+    e.console = vec![ConsoleLine::Step(tr("Preparing export...").into())];
     if let Some(error) = error {
         e.console.push(ConsoleLine::Step(error.clone()));
         app.toast(error, true);
@@ -299,14 +299,14 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     if job.pending.is_empty() {
         let written = std::mem::take(&mut job.written);
         let console = &mut app.ui.export.console;
-        console.push(ConsoleLine::Step(tr("All selected texture sets processed").into()));
+        console.push(ConsoleLine::Step(tr("Bitmaps write finalization...").into()));
         if written.is_empty() {
             console.push(ConsoleLine::Step(tr("No files were written").into()));
         } else {
             console.extend([
-                ConsoleLine::Step(tr("Collecting the exported files").into()),
-                ConsoleLine::Done(tr("Texture export complete").into()),
-                ConsoleLine::Done(tr("Files saved").into()),
+                ConsoleLine::Step(tr("Finalizing export...").into()),
+                ConsoleLine::Done(tr("Export successfully finished").into()),
+                ConsoleLine::Done(tr("Successfully exported:").into()),
             ]);
             console.extend(written.into_iter().map(ConsoleLine::Done));
         }
@@ -332,7 +332,7 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     }
 
     let set = || ConsoleLine::Set(name.clone());
-    app.ui.export.console.extend([set(), set(), ConsoleLine::Step(tr("Rendering the selected maps").into())]);
+    app.ui.export.console.extend([set(), set(), ConsoleLine::Step(tr("Computing textures results").into())]);
 
     // Protect concrete files and UDIM references from earlier texture sets
     if let Some(job) = app.ui.export.job.as_ref().filter(|job| !job.written.is_empty()) {
@@ -347,11 +347,11 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     let files: Vec<String> = response_strings(&response, "files")
         .map(|file| std::path::Path::new(file).file_name().map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned()))
         .collect();
-    let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
+    let mut lines = vec![set(), ConsoleLine::Step(tr("Preparing textures writing").into())];
     for file in &files {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
         lines.push(set());
-        lines.push(ConsoleLine::Step(trf("Saved texture {file}", &[("file", &stem)])));
+        lines.push(ConsoleLine::Step(trf("Writing {file} texture on disk", &[("file", &stem)])));
     }
 
     // The export's warnings go to the console and the log, each once per export
@@ -368,7 +368,7 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         lines.push(ConsoleLine::Step(trf("Warning: {message}", &[("message", &warning)])));
     }
 
-    lines.extend([set(), ConsoleLine::Step(tr("Finished writing this texture set").into())]);
+    lines.extend([set(), ConsoleLine::Step(tr("Finalizing textures writing").into())]);
     app.ui.export.console.extend(lines);
     if let Some(job) = app.ui.export.job.as_mut() {
         job.written.extend(files);
@@ -526,7 +526,7 @@ fn output_maps(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize) {
                 }
             }
             ui.separator();
-            for (i, label) in [tr("Override every item"), tr("Clear all overrides")].into_iter().enumerate() {
+            for (i, label) in [tr("Enable override for all items"), tr("Disable override for all items")].into_iter().enumerate() {
                 if ui.button(label).clicked() {
                     menu = Some(3 + i);
                 }
@@ -644,7 +644,7 @@ fn dilation_button(ui: &mut Ui, padding: &str, dilation: &mut u32) {
     if enabled {
         r.response.on_hover_text(tr("Dilation in pixels"));
     } else {
-        r.response.on_disabled_hover_text(tr("This padding mode does not use a dilation width"));
+        r.response.on_disabled_hover_text(tr("Dilation cannot be applied to selected padding type"));
     }
 }
 
@@ -661,7 +661,7 @@ fn unavailable_checkbox(ui: &mut Ui, label: &str, tooltip: &str) {
 fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]) {
     let mut reset = false;
     header(ui, tr("General Export Parameters"), |ui| {
-        reset = icon_button(ui, ic::ARROW_COUNTER_CLOCKWISE, tr("Restore the default export parameters"), false, ICON).clicked();
+        reset = icon_button(ui, ic::ARROW_COUNTER_CLOCKWISE, tr("Resets all settings to default values"), false, ICON).clicked();
     });
     if reset {
         let defaults = ExportUi::default();
@@ -732,8 +732,8 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     });
 
     // Unavailable export controls stay disabled
-    unavailable_checkbox(ui, tr("Export USD asset"), tr("Package the mesh, materials and textures together as USD"));
-    unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
+    unavailable_checkbox(ui, tr("Export USD asset"), tr("Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise"));
+    unavailable_checkbox(ui, tr("Export shaders parameters"), tr("Exports a JSON file with the settings for all shader instances"));
 
     // The browser downloads the textures only
     #[cfg(not(target_arch = "wasm32"))]
@@ -874,10 +874,10 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, builtins: &[Expor
     let mut all = None;
     header(ui, tr("General Export Parameters"), |ui| {
         list_menu(ui, |ui| {
-            if ui.button(tr("Override every item")).clicked() {
+            if ui.button(tr("Enable override for all items")).clicked() {
                 all = Some(true);
             }
-            if ui.button(tr("Clear all overrides")).clicked() {
+            if ui.button(tr("Disable override for all items")).clicked() {
                 all = Some(false);
             }
             ui.separator();
@@ -1005,9 +1005,9 @@ fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 }
 
-/// "Texture set <name>" with the name in bold
+/// "Exporting texture set <name>..." with the name in bold
 fn set_line(ui: &Ui, name: &str, tk: &Tokens) -> egui::text::LayoutJob {
-    let text = tr("Texture set {set}");
+    let text = tr("Exporting texture set {set}...");
     let (before, after) = text.split_once("{set}").unwrap_or((text, ""));
     let font = egui::TextStyle::Body.resolve(ui.style());
     let plain = egui::TextFormat::simple(font.clone(), tk.text);
@@ -1266,7 +1266,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut do_export = false;
     let mut canceled = false;
     let presets = texturecraft_engine::formats::builtin_presets();
-    crate::windows::dialog("export_textures", tr("Export textures"), &mut open).fixed_size(vec2(900.0, 520.0)).show(ctx, |ui| {
+    crate::windows::dialog("export_textures", tr("Export textures"), &mut open).fixed_size(vec2(1100.0, 740.0)).show(ctx, |ui| {
         // Nothing to export without a project
         if !app.session.project_open {
             ui.label(tr("No project is open"));
@@ -1290,7 +1290,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                     if ui.button(tr("Open output directory")).clicked() {
                         open_output_directory(app);
                     }
-                } else if ui.button(tr("Include all")).on_hover_text(tr("Select every texture set, UV tile and output map")).clicked() {
+                } else if ui.button(tr("Include all")).on_hover_text(tr("Includes all Texture Sets, UV Tiles and output maps.")).clicked() {
                     app.ui.export.skip.clear();
                     for o in app.ui.export.sets.values_mut() {
                         o.maps.values_mut().for_each(|m| m.enabled = true);
@@ -1346,7 +1346,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let selected = selected_texture_count(app);
         ui.horizontal(|ui| {
             // Not on LIST OF EXPORTS
-            if app.ui.export.tab != 2 && ui.button(tr("Reset all")).on_hover_text(tr("Restore the export defaults and select every texture")).clicked() {
+            if app.ui.export.tab != 2 && ui.button(tr("Reset all")).on_hover_text(tr("Resets all settings to their default values, including all textures.")).clicked() {
                 // Keep ownership so Cancel can restore the opening settings
                 let e = &mut app.ui.export;
                 let (opened_with, owner, owner_id) = (e.opened_with.take(), std::mem::take(&mut e.owner), e.owner_id);
@@ -1355,15 +1355,15 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Nothing to write without a ticked texture set
                 let any = !export_selection(app).is_empty();
-                if ui.add_enabled(any, primary_button(ui, tr("Export"))).on_hover_text(tr("Write the selected textures using the settings above")).clicked() {
+                if ui.add_enabled(any, primary_button(ui, tr("Export"))).on_hover_text(tr("Exports all selected textures and additional files")).clicked() {
                     do_export = true;
                 }
 
                 // Saving closes the window without starting an export
-                if ui.button(tr("Save settings")).on_hover_text(tr("Keep these settings for the next export")).clicked() {
+                if ui.button(tr("Save settings")).on_hover_text(tr("Closes the export window and saves changes")).clicked() {
                     app.ui.windows.export = false;
                 }
-                if ui.button(tr("Cancel")).on_hover_text(tr("Restore the settings from when you opened this window")).clicked() {
+                if ui.button(tr("Cancel")).on_hover_text(tr("Closes the export window and undoes all recent changes")).clicked() {
                     canceled = true;
                 }
                 ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
