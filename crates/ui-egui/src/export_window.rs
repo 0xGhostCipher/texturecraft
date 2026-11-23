@@ -326,6 +326,10 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     let set = || ConsoleLine::Set(name.clone());
     app.ui.export.console.extend([set(), set(), ConsoleLine::Step(tr("Rendering the selected maps").into())]);
 
+    // The files of the earlier texture sets keep their names, the material's extra maps and .mtlx files included
+    if let Some(job) = app.ui.export.job.as_ref().filter(|job| !job.written.is_empty()) {
+        params["reservedNames"] = json!(job.written);
+    }
     let Some(response) = app.run("file.exportTextures", params) else {
         app.ui.export.job = None;
         return;

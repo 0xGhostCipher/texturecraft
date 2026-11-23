@@ -50,6 +50,11 @@ and warn about later duplicates. The desktop export window reports the collision
 `file.exportTextures` with `materialX: true` also writes a `.mtlx` OpenPBR material per texture set.
 A template without OpenPBR file names gets the maps of the "OpenPBR (separate maps)" template written
 beside its own files for it; the `maps` overrides above do not reach those maps.
+`reservedNames: [file names]` lists the files earlier `file.exportTextures` commands of the same
+export wrote (the export window runs one command per texture set and passes it). The command
+compares them ignoring case, does not write a file, an OpenPBR map or a `.mtlx` of such a name,
+and names it in `warnings`; a material leaves out the input of a map it did not write. Without it
+nothing is reserved.
 
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
 `hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for

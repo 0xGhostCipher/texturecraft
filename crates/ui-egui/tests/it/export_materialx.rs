@@ -149,3 +149,75 @@ fn a_warning_every_texture_set_raises_shows_once_in_the_console_and_the_log() {
     assert_eq!(h.state().session.log.iter().filter(|line| line.contains(DIRECTX_WARNING)).count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A template with one map, the base colour, named `$mesh_$textureSet` (no input suffix)
+fn base_colour_template() -> texturecraft_engine::formats::ExportPreset {
+    use texturecraft_engine::formats::{Dest, ExportPreset, FileFormat, MapSpec, SourceRef};
+    let source = |component| SourceRef::Channel { channel: texturecraft_engine::core::Channel::BaseColor, component };
+    ExportPreset {
+        name: "base colour only".into(),
+        maps: vec![MapSpec {
+            file: "$mesh_$textureSet".into(),
+            format: FileFormat::Png,
+            bit_depth: 8,
+            channels: vec![(Dest::R, source(0)), (Dest::G, source(1)), (Dest::B, source(2))],
+            inverted: Vec::new(),
+        }],
+    }
+}
+
+/// The base colour of texture set `ts` as the template writes it, from a plain export
+fn expected(h: &mut Harness<'static, TextureCraftApp>, ts: usize, preset: &str, file: &str, tag: &str) -> Vec<u8> {
+    let dir = std::env::temp_dir().join(format!("tc-export-materialx-expected-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let params = serde_json::json!({"dir": dir.display().to_string(), "preset": preset, "ts": ts});
+    texturecraft_engine::execute(&mut h.state_mut().session, "file.exportTextures", &params).unwrap();
+    let bytes = std::fs::read(dir.join(file)).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    bytes
+}
+
+#[test]
+fn texture_sets_of_one_export_never_overwrite_each_others_files() {
+    const SHARED: &str = "material_ball_a_base_color.png";
+
+    // (names of set 0 and set 1, the template whose export of set 0 must be what SHARED holds,
+    // the material that refers to SHARED)
+    let cases = [
+        // Set 0's own file has the name set 1's OpenPBR base colour would get
+        ("a_base_color", "a", "base colour only", None),
+        // Set 0's OpenPBR base colour has the name set 1's own file would get
+        ("a", "a_base_color", "OpenPBR (separate maps)", Some("material_ball_a.mtlx")),
+    ];
+    for (index, (first, second, template_of_set_0, referred_by)) in cases.into_iter().enumerate() {
+        let (mut h, dir) = harness(&format!("overwrite-{index}"));
+        let project = &mut h.state_mut().session.doc.project;
+        project.texture_sets[0].name = first.into();
+        project.texture_sets[1].name = second.into();
+        let template = base_colour_template();
+        let name = template.name.clone();
+        h.state_mut().session.export_presets.list.push(template);
+        h.state_mut().ui.export.preset = name;
+        h.run_steps(3);
+        checkbox(&h).click();
+        h.run_steps(3);
+        export(&mut h);
+
+        let want = expected(&mut h, 0, template_of_set_0, SHARED, &index.to_string());
+        assert_eq!(std::fs::read(dir.join(SHARED)).unwrap(), want, "case {index}: the earlier texture set's file was replaced");
+
+        // A material only points at files that exist, and only the earlier set's material at SHARED
+        let materials = mtlx_files(&dir);
+        assert_eq!(materials.len(), 2, "{materials:?}");
+        for material in materials {
+            let text = std::fs::read_to_string(&material).unwrap();
+            let file_name = material.file_name().unwrap().to_string_lossy().into_owned();
+            for reference in text.split("name=\"file\" type=\"filename\" value=\"").skip(1) {
+                let name = reference.split('"').next().unwrap();
+                assert!(dir.join(name).is_file(), "case {index}: {name} is missing");
+                assert!(name != SHARED || referred_by == Some(file_name.as_str()), "case {index}: {file_name} refers to {name}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -249,6 +249,96 @@ fn a_file_of_the_template_is_never_replaced_by_an_openpbr_map() {
     assert!(!referenced(&first).contains(&"material_ball_a_base_color.png".to_string()), "{first}");
 }
 
+/// A template with one map, the base colour, named `$mesh_$textureSet` (no input suffix)
+fn base_colour_template() -> texturecraft_engine::formats::ExportPreset {
+    use texturecraft_engine::formats::{Dest, ExportPreset, FileFormat, MapSpec, SourceRef};
+    let source = |component| SourceRef::Channel { channel: texturecraft_engine::core::Channel::BaseColor, component };
+    ExportPreset {
+        name: "base colour only".into(),
+        maps: vec![MapSpec {
+            file: "$mesh_$textureSet".into(),
+            format: FileFormat::Png,
+            bit_depth: 8,
+            channels: vec![(Dest::R, source(0)), (Dest::G, source(1)), (Dest::B, source(2))],
+            inverted: Vec::new(),
+        }],
+    }
+}
+
+/// One `file.exportTextures` command of texture set `ts`, as the export window sends them: the
+/// names of the files the earlier commands wrote are passed as `reservedNames`
+fn export_set(s: &mut Session, dir: &std::path::Path, ts: usize, earlier: &[String]) -> Value {
+    let params = json!({"dir": dir.display().to_string(), "preset": base_colour_template(), "ts": ts, "materialX": true, "reservedNames": earlier});
+    execute(s, "file.exportTextures", &params).unwrap()
+}
+
+fn warned(r: &Value, text: &str) -> bool {
+    r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains(text))
+}
+
+#[test]
+fn an_openpbr_map_never_replaces_a_file_an_earlier_command_of_the_export_wrote() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+
+    // Set 0's own file is named like the base colour map set 1 gets from the OpenPBR template
+    execute(&mut s, "textureSet.rename", &json!({"ts": 0, "name": "a_base_color"})).unwrap();
+    execute(&mut s, "textureSet.rename", &json!({"ts": 1, "name": "a"})).unwrap();
+    let dir = temp("later-extra");
+    let first = export_set(&mut s, &dir, 0, &[]);
+    let kept = std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap();
+    let second = export_set(&mut s, &dir, 1, &names(&first));
+    assert_eq!(std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap(), kept, "the earlier file is untouched");
+    assert!(warned(&second, "has the file name of a map of the chosen template or of an earlier file of this export"), "{second}");
+    let material = std::fs::read_to_string(dir.join("material_ball_a.mtlx")).unwrap();
+    assert!(!referenced(&material).contains(&"material_ball_a_base_color.png".to_string()), "{material}");
+    for file in referenced(&material) {
+        assert!(dir.join(&file).is_file(), "{file}");
+    }
+}
+
+#[test]
+fn a_file_of_the_template_never_replaces_an_openpbr_map_an_earlier_command_wrote() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+
+    // Set 0's OpenPBR base colour has the name set 1's own file gets from the template
+    execute(&mut s, "textureSet.rename", &json!({"ts": 0, "name": "a"})).unwrap();
+    execute(&mut s, "textureSet.rename", &json!({"ts": 1, "name": "a_base_color"})).unwrap();
+    let dir = temp("later-own");
+    let first = export_set(&mut s, &dir, 0, &[]);
+    let kept = std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap();
+    let second = export_set(&mut s, &dir, 1, &names(&first));
+    assert_eq!(std::fs::read(dir.join("material_ball_a_base_color.png")).unwrap(), kept, "the earlier file is untouched");
+    assert!(warned(&second, "\"material_ball_a_base_color.png\" was not written"), "{second}");
+
+    // The earlier material still points at the file it was written with
+    let earlier = std::fs::read_to_string(dir.join("material_ball_a.mtlx")).unwrap();
+    assert!(referenced(&earlier).contains(&"material_ball_a_base_color.png".to_string()), "{earlier}");
+    let later = std::fs::read_to_string(dir.join("material_ball_a_base_color.mtlx")).unwrap();
+    assert!(!referenced(&later).contains(&"material_ball_a_base_color.png".to_string()), "{later}");
+}
+
+#[test]
+fn a_material_is_not_written_over_a_file_an_earlier_command_wrote() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    execute(&mut s, "textureSet.rename", &json!({"ts": 0, "name": "a"})).unwrap();
+    let dir = temp("mtlx-name");
+    let r = export_set(&mut s, &dir, 0, &["MATERIAL_BALL_A.MTLX".to_string()]);
+    assert!(!files(&r).iter().any(|f| f.ends_with(".mtlx")), "{r}");
+    assert!(warned(&r, "exports as \"material_ball_a.mtlx\" like an earlier file of this export"), "{r}");
+    let r = export_set(&mut s, &dir, 0, &["unrelated.mtlx".to_string()]);
+    assert!(files(&r).iter().any(|f| f.ends_with("material_ball_a.mtlx")), "{r}");
+}
+
+#[test]
+fn reserved_names_must_be_a_list_of_names() {
+    let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
+    let dir = temp("bad-reserved");
+    for bad in [json!("a.png"), json!([1])] {
+        let params = json!({"dir": dir.display().to_string(), "preset": OPENPBR, "reservedNames": bad});
+        assert!(execute(&mut s, "file.exportTextures", &params).is_err());
+    }
+}
+
 #[test]
 fn float_colour_maps_are_tagged_linear() {
     let mut s = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();

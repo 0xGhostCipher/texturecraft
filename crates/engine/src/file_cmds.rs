@@ -55,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), materialX?: bool (also write a .mtlx OpenPBR material per texture set; a preset without OpenPBR file names gets the maps of the \"OpenPBR (separate maps)\" preset written beside its own files, without the per-map `maps` overrides)}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names] (files an earlier command of the same export wrote, compared ignoring case: this command leaves out its own files and OpenPBR maps of these names and says so in `warnings`; the export window passes it), materialX?: bool (also write a .mtlx OpenPBR material per texture set; a preset without OpenPBR file names gets the maps of the \"OpenPBR (separate maps)\" preset written beside its own files, without the per-map `maps` overrides)}",
             always,
             export_textures
         ),
@@ -641,21 +641,29 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
     let opts = export_options(s, p, "file.exportTextures")?;
     let sets = sets_param(s, p, "file.exportTextures")?;
     std::fs::create_dir_all(&dir).map_err(|e| bad("file.exportTextures", format!("cannot create {dir}: {e}")))?;
+    let reserved = reserved_names(p)?;
     let files = s.export_files(&sets, &opts)?;
+
+    // A file an earlier command of the same export wrote keeps its name: the export window runs
+    // one command per texture set, and a later set's file must not replace an earlier one (which an
+    // earlier .mtlx may refer to)
+    let (files, skipped): (Vec<_>, Vec<_>) = files.into_iter().partition(|f| !reserved.contains(&f.name.to_ascii_lowercase()));
     let mut warnings: Vec<String> = files.iter().flat_map(|f| f.warnings.iter().cloned()).collect();
+    warnings.extend(skipped.iter().map(|f| format!("\"{}\" was not written: an earlier file of this export has the same name", f.name)));
     let mut written = texturecraft_formats::write_files(&files, std::path::Path::new(&dir)).map_err(fe)?;
 
     // The rendered files are not needed after this; only their names are
-    let mut taken: std::collections::HashSet<String> = files.iter().map(|f| f.name.to_ascii_lowercase()).collect();
+    let own: std::collections::HashSet<String> = files.iter().map(|f| f.name.to_ascii_lowercase()).collect();
     drop(files);
+    drop(skipped);
+    let mut taken = reserved;
     if p.get("materialX").and_then(Value::as_bool).unwrap_or(false) {
         // The material reads OpenPBR maps whatever template was chosen: a template without
         // their file names gets an extra pass of the built-in OpenPBR template beside its own files
         let extra = openpbr_options(&opts);
         let material_opts = extra.as_ref().unwrap_or(&opts);
-        if extra.is_none() {
-            taken.clear();
-        } else {
+        if extra.is_some() {
+            taken.extend(own);
             let mut maps = s.export_files(&sets, material_opts)?;
             for file in &maps {
                 for warning in &file.warnings {
@@ -665,12 +673,12 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
 
-            // A file of the chosen template is never replaced; the material leaves out the map it would have used
+            // A file of the chosen template, or of an earlier command of this export, is never replaced; the material leaves out the map it would have used
             let before = maps.len();
             maps.retain(|f| !taken.contains(&f.name.to_ascii_lowercase()));
             if maps.len() < before {
                 warnings
-                    .push("MaterialX: a map of the OpenPBR template has the file name of a map of the chosen template, so the material does not use it".into());
+                    .push("MaterialX: a map of the OpenPBR template has the file name of a map of the chosen template or of an earlier file of this export, so the material does not use it".into());
             }
             written.extend(texturecraft_formats::write_files(&maps, std::path::Path::new(&dir)).map_err(fe)?);
         }
@@ -678,6 +686,19 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.log.info("MapExporter", format!("Exported {} textures to {dir}", written.len()));
     Ok(json!({ "files": written.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(), "warnings": warnings }))
+}
+
+/// `reservedNames`: the names of files earlier commands of the same export wrote (lower-cased).
+#[cfg(not(target_arch = "wasm32"))]
+fn reserved_names(p: &Value) -> Result<std::collections::HashSet<String>> {
+    match p.get("reservedNames") {
+        None | Some(Value::Null) => Ok(Default::default()),
+        Some(Value::Array(names)) => names
+            .iter()
+            .map(|name| name.as_str().map(str::to_ascii_lowercase).ok_or_else(|| bad("file.exportTextures", "`reservedNames` must be a list of file names")))
+            .collect(),
+        Some(_) => Err(bad("file.exportTextures", "`reservedNames` must be a list of file names")),
+    }
 }
 
 /// The options of the extra pass that writes the maps a MaterialX reads, or None when `opts`'
@@ -730,6 +751,7 @@ fn write_materialx(
     let mesh_name = stem_of(s.doc.project.mesh.trim_start_matches("builtin:"));
     let mut out = Vec::new();
     let mut stems = std::collections::HashSet::new();
+    let reserved = taken.clone();
     let mut written_names = taken;
     let mut normal_map_written = false;
     let aces2065_tag = materialx::colorspace_name(texturecraft_texel::ColorSpace::Aces2065);
@@ -780,7 +802,16 @@ fn write_materialx(
             continue;
         }
 
-        let path = dir.join(format!("{stem}.mtlx"));
+        let file_name = format!("{stem}.mtlx");
+        if reserved.contains(&file_name.to_ascii_lowercase()) {
+            warnings.push(format!(
+                "MaterialX: texture set \"{}\" exports as \"{file_name}\" like an earlier file of this export, so its .mtlx was not written",
+                set.name
+            ));
+            continue;
+        }
+
+        let path = dir.join(file_name);
         texturecraft_formats::write_atomic(&path, materialx::write(&format!("{mesh_name}_{}", set.name), &textures, None).as_bytes()).map_err(fe)?;
         aces2065_written |=
             textures.iter().any(|texture| texture.colorspace == aces2065_tag && materialx::INPUTS.contains(&(texture.input.as_str(), materialx::Kind::Color)));
