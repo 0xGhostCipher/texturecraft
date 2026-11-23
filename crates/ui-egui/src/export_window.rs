@@ -374,6 +374,12 @@ pub(crate) fn export_params(app: &TextureCraftApp) -> serde_json::Value {
     if !e.color_space.is_empty() {
         p["colorSpace"] = json!(e.color_space);
     }
+
+    // The browser downloads the textures only
+    #[cfg(not(target_arch = "wasm32"))]
+    if e.materialx {
+        p["materialX"] = json!(true);
+    }
     p
 }
 
@@ -631,8 +637,8 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     if reset {
         let d = ExportUi::default();
         let e = &mut app.ui.export;
-        (e.dir, e.format, e.bit_depth, e.dithering, e.size, e.padding, e.dilation, e.normal_format, e.color_space) =
-            (d.dir, d.format, d.bit_depth, d.dithering, d.size, d.padding, d.dilation, d.normal_format, d.color_space);
+        (e.dir, e.format, e.bit_depth, e.dithering, e.size, e.padding, e.dilation, e.normal_format, e.color_space, e.materialx) =
+            (d.dir, d.format, d.bit_depth, d.dithering, d.size, d.padding, d.dilation, d.normal_format, d.color_space, d.materialx);
         crate::export_templates::select(app, d.preset);
     }
     let (first, rest) = template_groups(app, builtins);
@@ -678,6 +684,12 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     // Unavailable export controls stay disabled
     unavailable_checkbox(ui, tr("Export USD asset"), tr("Package the mesh, materials and textures together as USD"));
     unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
+
+    // The browser downloads the textures only, so it has no MaterialX file to add
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.checkbox(&mut app.ui.export.materialx, tr("Export MaterialX"));
+    #[cfg(target_arch = "wasm32")]
+    crate::unavailable::checkbox(ui, false, tr("Export MaterialX"));
     ui.add_space(8.0);
     egui::Grid::new("exp_grid_more").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
         let e = &mut app.ui.export;
