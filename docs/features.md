@@ -175,8 +175,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   *Cancel* goes back to the settings the window opened with, *Maximum size for all Texture Sets*
   exports every set at the largest set's size; a click on a texture set overrides its template,
   file type, size or padding, and each output map's file type and bit depth, or leaves a map out;
-  Export shows the progress, a console of its steps and the written files, and can be canceled
-  between texture sets).
+  Export shows the progress, a console of its steps, the written files and the export's
+  warnings (each once), and can be canceled between texture sets).
 - **MaterialX export:** the *Export MaterialX* checkbox on the Export textures window's Global
   settings (off by default, remembered with the other settings) writes one OpenPBR `.mtlx` per
   texture set next to the exported maps. The material always uses OpenPBR maps, whatever output

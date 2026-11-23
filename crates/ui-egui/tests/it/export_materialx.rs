@@ -4,6 +4,7 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use texturecraft_ui_egui::TextureCraftApp;
+use texturecraft_ui_egui::state::ConsoleLine;
 
 const OPENPBR: &str = "OpenPBR (separate maps)";
 
@@ -116,4 +117,35 @@ fn restoring_the_default_parameters_unticks_export_materialx() {
     h.get_by_label("Restore the default export parameters").click();
     h.run_steps(3);
     assert!(!h.state().ui.export.materialx);
+}
+
+/// Every texture set's export raises this warning: the material's normal map is read as OpenGL
+const DIRECTX_WARNING: &str = "MaterialX: the normalmap node reads OpenGL (+Y) normals";
+
+#[test]
+fn a_warning_every_texture_set_raises_shows_once_in_the_console_and_the_log() {
+    let (mut h, dir) = harness("warning");
+    assert!(h.state().session.set_count() >= 2, "the warning has to come from more than one texture set");
+    let e = &mut h.state_mut().ui.export;
+    e.preset = OPENPBR.into();
+    e.normal_format = "directX".into();
+    h.run_steps(3);
+    checkbox(&h).click();
+    h.run_steps(3);
+    export(&mut h);
+
+    let lines: Vec<&str> = h
+        .state()
+        .ui
+        .export
+        .console
+        .iter()
+        .filter_map(|line| match line {
+            ConsoleLine::Step(text) if text.starts_with("Warning: ") => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.iter().filter(|line| line.contains(DIRECTX_WARNING)).count(), 1, "{lines:?}");
+    assert_eq!(h.state().session.log.iter().filter(|line| line.contains(DIRECTX_WARNING)).count(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
 }

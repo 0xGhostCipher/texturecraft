@@ -15,4 +15,6 @@ pub struct ExportJob {
     pub written: Vec<String>,
     /// The frame that wrote the last texture set (a frame's second pass writes none).
     pub frame: u64,
+    /// The warnings already shown, so a warning every texture set raises shows once per export.
+    pub warned: Vec<String>,
 }

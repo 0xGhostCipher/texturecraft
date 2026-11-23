@@ -245,7 +245,7 @@ fn start_export(app: &mut TextureCraftApp) {
         return;
     }
 
-    e.job = Some(crate::state::ExportJob { total: pending.len(), pending, preview, directory: dir, written: Vec::new(), frame: 0 });
+    e.job = Some(crate::state::ExportJob { total: pending.len(), pending, preview, directory: dir, written: Vec::new(), frame: 0, warned: Vec::new() });
 }
 
 /// Two texture sets that would write a file of the same name (ignoring case, as Windows and macOS
@@ -344,6 +344,20 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
         lines.push(set());
         lines.push(ConsoleLine::Step(trf("Saved texture {file}", &[("file", &stem)])));
+    }
+
+    // The export's warnings go to the console and the log, each once per export
+    let warnings = response.get("warnings").and_then(|w| w.as_array()).into_iter().flatten().filter_map(|w| w.as_str());
+    for warning in warnings {
+        let Some(job) = app.ui.export.job.as_mut() else { break };
+        if job.warned.iter().any(|seen| seen == warning) {
+            continue;
+        }
+
+        job.warned.push(warning.to_string());
+        app.session.log.warn("MapExporter", warning);
+        lines.push(set());
+        lines.push(ConsoleLine::Step(trf("Warning: {message}", &[("message", &warning)])));
     }
     lines.extend([set(), ConsoleLine::Step(tr("Finished writing this texture set").into())]);
     app.ui.export.console.extend(lines);
