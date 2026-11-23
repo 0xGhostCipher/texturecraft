@@ -15,4 +15,9 @@ pub struct ExportJob {
     pub written: Vec<String>,
     /// The frame that wrote the last texture set (a frame's second pass writes none).
     pub frame: u64,
+    /// Also write the mesh and materials as a USD asset with the last texture set, as ticked when
+    /// Export was clicked.
+    pub usd_asset: bool,
+    /// The params of the texture sets written so far, for the USD asset.
+    pub sent: Vec<serde_json::Value>,
 }

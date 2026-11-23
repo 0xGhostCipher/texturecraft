@@ -245,7 +245,16 @@ fn start_export(app: &mut TextureCraftApp) {
         return;
     }
 
-    e.job = Some(crate::state::ExportJob { total: pending.len(), pending, preview, directory: dir, written: Vec::new(), frame: 0 });
+    e.job = Some(crate::state::ExportJob {
+        total: pending.len(),
+        pending,
+        preview,
+        directory: dir,
+        written: Vec::new(),
+        frame: 0,
+        usd_asset: e.usd_asset,
+        sent: Vec::new(),
+    });
 }
 
 /// Two texture sets that would write a file of the same name (ignoring case, as Windows and macOS
@@ -326,10 +335,30 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     let set = || ConsoleLine::Set(name.clone());
     app.ui.export.console.extend([set(), set(), ConsoleLine::Step(tr("Rendering the selected maps").into())]);
 
+    // The USD asset covers the whole mesh and refers to the textures of every texture set: the last command writes it, given
+    // the params every command of the export ran with, so a canceled or failed export writes none
+    if let Some(job) = app.ui.export.job.as_mut().filter(|job| job.usd_asset) {
+        job.sent.push(params.clone());
+        if job.pending.is_empty() {
+            params["usdAsset"] = json!(job.sent);
+        }
+    }
     let Some(response) = app.run("file.exportTextures", params) else {
         app.ui.export.job = None;
         return;
     };
+
+    // The one warning the window shows: the USD asset that could not be written
+    let usd_failure = response
+        .get("warnings")
+        .and_then(|w| w.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|w| w.as_str())
+        .find(|w| w.starts_with(texturecraft_engine::file_cmds::USD_ASSET_FAILED));
+    if let Some(warning) = usd_failure {
+        app.toast(warning.to_string(), true);
+    }
 
     let files: Vec<String> = response
         .get("files")
@@ -340,7 +369,8 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         .map(|file| std::path::Path::new(file).file_name().map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned()))
         .collect();
     let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
-    for file in &files {
+    // The USD asset is no texture: it stays in the list of written files only
+    for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd")) {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
         lines.push(set());
         lines.push(ConsoleLine::Step(trf("Saved texture {file}", &[("file", &stem)])));
@@ -631,8 +661,8 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     if reset {
         let d = ExportUi::default();
         let e = &mut app.ui.export;
-        (e.dir, e.format, e.bit_depth, e.dithering, e.size, e.padding, e.dilation, e.normal_format, e.color_space) =
-            (d.dir, d.format, d.bit_depth, d.dithering, d.size, d.padding, d.dilation, d.normal_format, d.color_space);
+        (e.dir, e.format, e.bit_depth, e.dithering, e.size, e.padding, e.dilation, e.normal_format, e.color_space, e.usd_asset) =
+            (d.dir, d.format, d.bit_depth, d.dithering, d.size, d.padding, d.dilation, d.normal_format, d.color_space, d.usd_asset);
         crate::export_templates::select(app, d.preset);
     }
     let (first, rest) = template_groups(app, builtins);
@@ -675,8 +705,13 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
         ui.end_row();
     });
 
-    // Unavailable export controls stay disabled
+    // The browser downloads the textures only, so it has no USD asset to add
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.checkbox(&mut app.ui.export.usd_asset, tr("Export USD asset")).on_hover_text(tr("Package the mesh, materials and textures together as USD"));
+    #[cfg(target_arch = "wasm32")]
     unavailable_checkbox(ui, tr("Export USD asset"), tr("Package the mesh, materials and textures together as USD"));
+
+    // Unavailable export controls stay disabled
     unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
     ui.add_space(8.0);
     egui::Grid::new("exp_grid_more").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {

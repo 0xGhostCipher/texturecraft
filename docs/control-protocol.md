@@ -47,6 +47,18 @@ template. `enabled: false` suppresses that file while reserving its name. When s
 sets produce the same name (ignoring case), programmatic and browser exports keep the first file
 and warn about later duplicates. The desktop export window reports the collision before writing.
 
+`file.exportTextures` with `usdAsset` also writes `<mesh>.usd` (binary USD, Crate) next to the textures: the whole mesh
+(every texture set, whatever `ts` selects) with one UsdPreviewSurface material per texture set. A
+material's inputs read the texture files the export planned for that set with its output template
+(`usdAsset: true`: the sets and options of this command; a list of export params such as
+`[{"ts": 0, "preset": "..."}, {"ts": 1}]`, not empty, every entry an object: each entry's sets and options, the way the export window,
+which runs one command per texture set, passes the params of all its commands with the last one).
+Bound inputs: `diffuseColor`, `roughness`, `metallic`, `normal`, `emissiveColor`, `opacity`,
+`clearcoat` and `clearcoatRoughness`, each reading the `rgb`, `r`, `g`, `b` or `a` output of the
+file that holds it; maps with no such input are not bound, and a texture set outside the export has
+no textures. A file name is relative to the file (`./<file>`, with `<UDIM>` for UV tiles). A failure
+to build or write it is named in `warnings` and the command still succeeds. The file is in `files`.
+
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
 `hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and

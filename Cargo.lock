@@ -5173,6 +5173,7 @@ name = "texturecraft-engine"
 version = "0.6.1"
 dependencies = [
  "chrono",
+ "craft-usd",
  "epaint_default_fonts",
  "image",
  "processkit",
@@ -5292,6 +5293,7 @@ dependencies = [
  "craft-quit",
  "craft-ui",
  "craft-update",
+ "craft-usd",
  "craft-window",
  "eframe",
  "egui",

@@ -55,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), materialX?: bool (also write a .mtlx OpenPBR material per texture set; needs the \"OpenPBR (separate maps)\" preset)}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, JNG, PGM and PSD exports warn about missing metadata), materialX?: bool (also write a .mtlx OpenPBR material per texture set; needs the \"OpenPBR (separate maps)\" preset), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts and options, a list gives each texture set's own `ts` and options, the export window sends it with the last command; a failure is a warning)}",
             always,
             export_textures
         ),
@@ -640,6 +640,7 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = native::path_param(p, "dir", "file.exportTextures")?.to_string();
     let opts = export_options(s, p, "file.exportTextures")?;
     let sets = sets_param(s, p, "file.exportTextures")?;
+    let usd_asset = usd_asset_param(s, p, &opts, &sets)?;
     std::fs::create_dir_all(&dir).map_err(|e| bad("file.exportTextures", format!("cannot create {dir}: {e}")))?;
     let files = s.export_files(&sets, &opts)?;
     let mut warnings: Vec<String> = files.iter().flat_map(|f| f.warnings.iter().cloned()).collect();
@@ -647,8 +648,80 @@ fn export_textures(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("materialX").and_then(Value::as_bool).unwrap_or(false) {
         written.extend(write_materialx(s, &sets, &opts, std::path::Path::new(&dir), &mut warnings)?);
     }
+    if let Some(exports) = &usd_asset {
+        written.extend(write_usd_asset(s, std::path::Path::new(&dir), exports, &mut warnings));
+    }
     s.log.info("MapExporter", format!("Exported {} textures to {dir}", written.len()));
     Ok(json!({ "files": written.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(), "warnings": warnings }))
+}
+
+/// What the warning of a USD asset that could not be written starts with (`file.exportTextures`).
+pub const USD_ASSET_FAILED: &str = "The USD asset was not written";
+
+/// The texture sets and options of the exports a USD asset refers to.
+#[cfg(not(target_arch = "wasm32"))]
+type UsdExports = Vec<(Vec<usize>, ExportOptions)>;
+
+/// What `usdAsset` asks for: the texture sets and options of each export whose textures the USD
+/// asset refers to. `true` is this command's own; a list gives every entry's `ts` and options.
+#[cfg(not(target_arch = "wasm32"))]
+fn usd_asset_param(s: &Session, p: &Value, opts: &ExportOptions, sets: &[usize]) -> Result<Option<UsdExports>> {
+    match p.get("usdAsset") {
+        None | Some(Value::Null | Value::Bool(false)) => Ok(None),
+        Some(Value::Bool(true)) => Ok(Some(vec![(sets.to_vec(), opts.clone())])),
+        Some(Value::Array(exports)) if !exports.is_empty() && exports.iter().all(Value::is_object) => exports
+            .iter()
+            .map(|export| Ok((sets_param(s, export, "file.exportTextures")?, export_options(s, export, "file.exportTextures")?)))
+            .collect::<Result<Vec<_>>>()
+            .map(Some),
+        Some(_) => Err(bad("file.exportTextures", "`usdAsset` must be true, false or a non-empty list of export param objects")),
+    }
+}
+
+/// `<mesh>.usd` (binary USD) next to the textures: the whole mesh (every texture set, not only the sets of this
+/// command) with a UsdPreviewSurface material per texture set that reads the files `exports`
+/// wrote (see `texturecraft_formats::usd_texture_bindings`). A failure to build or write it is a
+/// warning: the textures of the command are already written.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_usd_asset(s: &Session, dir: &std::path::Path, exports: &[(Vec<usize>, ExportOptions)], warnings: &mut Vec<String>) -> Option<std::path::PathBuf> {
+    match build_usd_asset(s, dir, exports) {
+        Ok(path) => Some(path),
+        Err(e) => {
+            warnings.push(format!("{USD_ASSET_FAILED}: {e}"));
+            None
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_usd_asset(s: &Session, dir: &std::path::Path, exports: &[(Vec<usize>, ExportOptions)]) -> Result<std::path::PathBuf> {
+    use texturecraft_formats::{export::list_set_outputs, usd_layer_with_textures, usd_texture_bindings};
+    let project = &s.doc.project;
+    let mesh_name = stem_of(project.mesh.trim_start_matches("builtin:"));
+
+    // The bindings of every texture set that was exported, from the files its export planned
+    let mut taken = std::collections::HashSet::new();
+    let mut by_set = std::collections::HashMap::new();
+    for (sets, opts) in exports {
+        // A file whose name an earlier export of this job has was not written by this one
+        let planned: Vec<_> = list_set_outputs(project, sets, &mesh_name, opts)
+            .map_err(fe)?
+            .into_iter()
+            .filter(|(_, file)| taken.insert(file.name.to_ascii_lowercase()))
+            .collect();
+        for &set in sets {
+            let files: Vec<_> = planned.iter().filter(|(ts, _)| *ts == set).map(|(_, file)| file.clone()).collect();
+            let texture_set = project.texture_set(set).map_err(|e| EngineError::Other(e.to_string()))?;
+            by_set.entry(set).or_insert_with(|| usd_texture_bindings(texture_set, opts, project.normal_format, &files));
+        }
+    }
+
+    let mesh = s.source_mesh();
+    let bindings: Vec<_> = (0..mesh.materials.len()).map(|m| s.texture_set_of_material(m).and_then(|set| by_set.remove(&set)).unwrap_or_default()).collect();
+    let layer = usd_layer_with_textures(&mesh, &project.name, &bindings).map_err(fe)?;
+    let path = dir.join(format!("{}.usd", texturecraft_formats::export::sanitize_file_stem(&mesh_name)));
+    texturecraft_formats::write_atomic(&path, &layer).map_err(fe)?;
+    Ok(path)
 }
 
 /// One `<mesh>_<set>.mtlx` per texture set, next to the textures `opts` just wrote: the
