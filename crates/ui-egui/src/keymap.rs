@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use craft_keymap::egui::Dispatcher;
-use craft_keymap::{Active, Bindable, Chord, CommandRef, ConflictKind, KeyInput, Layout, Lookup, Mods, Overrides, Platform, Scope, Scopes};
+use craft_keymap::{Active, Chord, CommandDef, CommandRef, ConflictKind, KeyInput, Layout, Lookup, Mods, Overrides, Platform, Scope, Scopes};
 use egui::{Event, Id, Key, KeyboardShortcut, Modifiers, RichText, vec2};
 use egui_phosphor::regular as ic;
 
@@ -179,11 +179,11 @@ fn active(keymap: &Keymap) -> Vec<KeyboardShortcut> {
 
 /// The catalog as craft-keymap sees it, in `bindings()` order: the first one listed wins a shared
 /// shortcut.
-fn catalog() -> Vec<Bindable> {
+fn catalog() -> Vec<CommandDef> {
     bindings()
         .iter()
         .map(|b| {
-            let item = Bindable::new(b.id, b.label, Scope::app());
+            let item = CommandDef::new(b.id, b.label, Scope::app());
             match b.default.and_then(parse) {
                 Some(chord) => item.with_default(craft_keymap::Binding::new(chord)),
                 None => item,

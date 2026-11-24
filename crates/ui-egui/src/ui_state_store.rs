@@ -300,7 +300,7 @@ pub(crate) mod tests {
     use super::memory_storage::MemoryStorage;
     use super::*;
     use crate::docking::{Dock, Panel, default_workspace, permissions};
-    use craft_ui::docking::{Action, Placement};
+    use craft_behavior::dock::{Action, DockPlacement};
 
     /// Save `ui` and load it back, as closing and reopening the app does
     pub(crate) fn restart(ui: &UiState) -> UiState {
@@ -321,7 +321,7 @@ pub(crate) mod tests {
     fn moved_panels() -> Dock {
         let mut workspace = default_workspace();
         let actions = [
-            Action::Move { panel: Panel::Layers, anchor: Panel::Assets, placement: Placement::Tab { before: None } },
+            Action::Move { panel: Panel::Layers, anchor: Panel::Assets, placement: DockPlacement::Tab { before: None } },
             Action::Float { panel: Panel::Properties, rect: [900.0, 120.0, 320.0, 400.0] },
         ];
         workspace.apply_all(actions, permissions).unwrap();

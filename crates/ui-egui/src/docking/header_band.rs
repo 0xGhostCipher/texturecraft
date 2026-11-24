@@ -1,7 +1,7 @@
 //! Positions dock tab titles within the tab strip and the gutter above it.
 
-use craft_ui::docking::{Layout, Node};
-use craft_ui::layout::SplitAxis;
+use craft_behavior::dock::{Layout, Node};
+use craft_behavior::flow::Axis;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, Color32, FontId, Ui};
 
@@ -21,7 +21,7 @@ pub(super) fn under_a_panel(layout: &Layout<Panel>, panel: Panel) -> bool {
 fn group_is_below_panel(node: &Node<Panel>, panel: Panel, below_panel: bool) -> Option<bool> {
     match node {
         Node::Split { axis, first, second, .. } => {
-            group_is_below_panel(second, panel, below_panel || *axis == SplitAxis::Vertical).or_else(|| group_is_below_panel(first, panel, below_panel))
+            group_is_below_panel(second, panel, below_panel || *axis == Axis::Y).or_else(|| group_is_below_panel(first, panel, below_panel))
         }
         Node::Tabs { panels, .. } if panels.contains(&panel) => Some(below_panel),
         Node::Dock { columns, .. } => {

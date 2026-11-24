@@ -15,6 +15,7 @@ texturecraft-render = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "persistence"] }
 egui = { workspace = true }
 craft-ui = { workspace = true }
+craft-behavior = { workspace = true }
 craft-i18n = { workspace = true }
 craft-window = { workspace = true }
 craft-keymap = { workspace = true }

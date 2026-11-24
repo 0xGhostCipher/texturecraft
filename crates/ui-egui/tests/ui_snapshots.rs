@@ -690,8 +690,8 @@ fn smart_material_shelf_snapshot() {
 #[test]
 #[ignore]
 fn nested_layers_snapshot() {
-    use craft_ui::docking::Node;
-    use craft_ui::layout::SplitSize;
+    use craft_behavior::dock::Node;
+    use craft_behavior::dock::SplitSize;
     use serde_json::{Value, json};
     use texturecraft_engine::execute;
     use texturecraft_ui_egui::docking::Dock;
@@ -2937,8 +2937,8 @@ fn filter_picker_snapshots() {
 #[test]
 #[ignore]
 fn properties_min_width_snapshot() {
-    use craft_ui::docking::Node;
-    use craft_ui::layout::SplitSize;
+    use craft_behavior::dock::Node;
+    use craft_behavior::dock::SplitSize;
     use serde_json::json;
     use texturecraft_engine::execute;
     use texturecraft_ui_egui::docking::Dock;

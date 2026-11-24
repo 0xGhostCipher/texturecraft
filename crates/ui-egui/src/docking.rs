@@ -10,8 +10,10 @@
 //! that cannot close or float. The layout persists with `UiState` as a craft-ui `Workspace`;
 //! a layout that does not load or validate becomes the default.
 
-use craft_ui::docking::{Action, DockArea, DockContent, DockStyle, Layout, Location, Node, PanelLimits, PanelState, Permissions, Placement};
-use craft_ui::layout::{SplitAxis, SplitSize};
+use craft_behavior::dock::{Action, DockPlacement, Layout, Location, Node, PanelState, Permissions};
+use craft_ui::docking::{DockArea, DockContent, DockStyle, PanelLimits};
+use craft_behavior::flow::Axis;
+use craft_behavior::dock::SplitSize;
 use egui::{Id, Margin, RichText, Ui, Vec2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -147,7 +149,7 @@ impl Panel {
 }
 
 /// The saved panel arrangement: craft-ui's workspace over TextureCraft's panels.
-pub type Workspace = craft_ui::docking::Workspace<Panel>;
+pub type Workspace = craft_behavior::dock::Workspace<Panel>;
 
 /// The viewport never moves, floats, closes or takes tabs; panels dock beside it.
 pub fn permissions(panel: &Panel) -> Permissions {
@@ -158,7 +160,7 @@ fn tabs(panels: &[Panel]) -> Node<Panel> {
     Node::Tabs { panels: panels.to_vec(), active: 0 }
 }
 
-fn split(axis: SplitAxis, size: SplitSize, first: Node<Panel>, second: Node<Panel>) -> Node<Panel> {
+fn split(axis: Axis, size: SplitSize, first: Node<Panel>, second: Node<Panel>) -> Node<Panel> {
     Node::Split { axis, size, first: Box::new(first), second: Box::new(second) }
 }
 
@@ -175,16 +177,16 @@ pub fn default_workspace() -> Workspace {
     const LAYERS_SPLIT_RATIO: f32 = 0.31;
 
     let column = split(
-        SplitAxis::Vertical,
+        Axis::Y,
         SplitSize::Ratio(TEXTURE_SET_SPLIT_RATIO),
         tabs(&[TextureSetList]),
-        split(SplitAxis::Vertical, SplitSize::Ratio(LAYERS_SPLIT_RATIO), tabs(&[Layers, TextureSetSettings]), tabs(&[Properties])),
+        split(Axis::Y, SplitSize::Ratio(LAYERS_SPLIT_RATIO), tabs(&[Layers, TextureSetSettings]), tabs(&[Properties])),
     );
     let root = split(
-        SplitAxis::Horizontal,
+        Axis::X,
         SplitSize::Ratio(ASSETS_SPLIT_RATIO),
         tabs(&[Assets]),
-        split(SplitAxis::Horizontal, SplitSize::Ratio(VIEWPORT_SPLIT_RATIO), tabs(&[Viewport]), column),
+        split(Axis::X, SplitSize::Ratio(VIEWPORT_SPLIT_RATIO), tabs(&[Viewport]), column),
     );
     let mut workspace = Workspace::new(Layout { root: Some(root), floating: Vec::new() });
 
@@ -200,7 +202,7 @@ pub fn default_workspace() -> Workspace {
             Location {
                 floating: None,
                 anchor: Some(TextureSetList),
-                placement: Placement::Tab { before: None },
+                placement: DockPlacement::Tab { before: None },
                 size: None,
                 stack: None,
                 sibling: Vec::new(),
@@ -214,7 +216,7 @@ pub fn default_workspace() -> Workspace {
 
 /// Where a closed panel reopens as its own floating window at `rect` (`[x, y, width, height]`)
 fn floating_location(rect: [f32; 4]) -> Location<Panel> {
-    Location { floating: Some(rect), anchor: None, placement: Placement::Tab { before: None }, size: None, stack: None, sibling: Vec::new(), group: None }
+    Location { floating: Some(rect), anchor: None, placement: DockPlacement::Tab { before: None }, size: None, stack: None, sibling: Vec::new(), group: None }
 }
 
 /// craft-ui's checks plus the viewport's: a saved or hand-edited file cannot hide, float, group
@@ -338,12 +340,12 @@ impl Dock {
         workspace.hidden.retain(|(panel, _)| !bake_panels.contains(panel));
 
         let gutter_width = f32::from(crate::theme::GUTTER);
-        let list_column = split(SplitAxis::Vertical, SplitSize::Ratio(TEXTURE_SET_LIST_SHARE), tabs(&[Panel::TextureSetList]), tabs(&[Panel::MeshMapBakers]));
+        let list_column = split(Axis::Y, SplitSize::Ratio(TEXTURE_SET_LIST_SHARE), tabs(&[Panel::TextureSetList]), tabs(&[Panel::MeshMapBakers]));
         let settings_column = tabs(&[Panel::CommonSettings, Panel::MeshMapSettings]);
-        let columns = split(SplitAxis::Horizontal, SplitSize::FixedFirst(BAKERS_COLUMN_WIDTH), list_column, settings_column);
-        let columns_over_log = split(SplitAxis::Vertical, SplitSize::FixedSecond(BAKING_LOG_HEIGHT), columns, tabs(&[Panel::Log]));
+        let columns = split(Axis::X, SplitSize::FixedFirst(BAKERS_COLUMN_WIDTH), list_column, settings_column);
+        let columns_over_log = split(Axis::Y, SplitSize::FixedSecond(BAKING_LOG_HEIGHT), columns, tabs(&[Panel::Log]));
         let columns_width = BAKERS_COLUMN_WIDTH + gutter_width + SETTINGS_COLUMN_WIDTH;
-        let root = split(SplitAxis::Horizontal, SplitSize::FixedFirst(columns_width), columns_over_log, tabs(&[Panel::Viewport]));
+        let root = split(Axis::X, SplitSize::FixedFirst(columns_width), columns_over_log, tabs(&[Panel::Viewport]));
         workspace.layout = Layout { root: Some(root), floating: Vec::new() };
         Dock { workspace, raise: None, replaced_unreadable: false }
     }
@@ -780,7 +782,7 @@ mod tests {
         assert!(dock.is_open(Panel::Viewport));
         let before = dock.clone();
         dock.apply(Action::Float { panel: Panel::Viewport, rect: [0.0, 0.0, 300.0, 300.0] });
-        dock.apply(Action::Move { panel: Panel::Layers, anchor: Panel::Viewport, placement: Placement::Tab { before: None } });
+        dock.apply(Action::Move { panel: Panel::Layers, anchor: Panel::Viewport, placement: DockPlacement::Tab { before: None } });
         assert_eq!(dock, before);
     }
 

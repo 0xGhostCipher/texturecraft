@@ -99,8 +99,8 @@ fn visible_rows_get_their_thumbnails() {
 
 #[test]
 fn deeply_nested_effect_visibility_is_reachable_in_a_narrow_panel() {
-    use craft_ui::docking::Node;
-    use craft_ui::layout::SplitSize;
+    use craft_behavior::dock::Node;
+    use craft_behavior::dock::SplitSize;
     use texturecraft_ui_egui::docking::Dock;
 
     let (mut harness, layer) = harness();

@@ -1,6 +1,8 @@
 //! The shelf's side panes left of the grid, toggled from the toolbar: saved searches and the folder tree
 
-use craft_ui::layout::{ResizeHandle, ResizeHandleStyle, SplitAxis, SplitLayout, SplitSize, split_rect};
+use craft_ui::layout::{ResizeHandle, ResizeHandleStyle, SplitLayout, split_rect};
+use craft_behavior::flow::Axis;
+use craft_behavior::dock::SplitSize;
 use egui::{Rect, RichText, Ui, UiBuilder};
 use egui_phosphor::regular as ic;
 use serde::{Deserialize, Serialize};
@@ -93,7 +95,7 @@ fn splitter(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect) -> Option<SplitL
     // Leave room for a header and a complete row when both minima fit
     let spacing = ui.spacing();
     let minimum_points = PANE_MIN_HEIGHT_POINTS.max(2.0 * spacing.interact_size.y + spacing.item_spacing.y);
-    let axis = SplitAxis::Vertical;
+    let axis = Axis::Y;
     let size = SplitSize::Ratio(app.ui.shelf_panes_split);
     let mut layout = split_rect(rect, axis, size, SPLITTER_HEIGHT_POINTS, minimum_points)?;
     let available_points = layout.available();

@@ -1,6 +1,7 @@
 //! The active tab in a panel group, drawn as a raised box joined to the panel body
 
-use craft_ui::docking::{DockContent, Node};
+use craft_ui::docking::DockContent;
+use craft_behavior::dock::Node;
 use egui::text::TextWrapping;
 use egui::{Rect, Stroke, StrokeKind, Ui, pos2};
 

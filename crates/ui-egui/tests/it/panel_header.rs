@@ -1,6 +1,6 @@
 //! Every docked panel group sits under one header bar: its names at the left, the shown one raised as a box when the group has several, a close × at the right
 
-use craft_ui::docking::{Action, Placement};
+use craft_behavior::dock::{Action, DockPlacement};
 use egui::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -212,7 +212,7 @@ fn a_floating_groups_names_share_one_line() {
     let mut workspace = harness.state().ui.dock.workspace().clone();
     let actions = [
         Action::Float { panel: Panel::Properties, rect: FLOATING_RECT },
-        Action::Move { panel: Panel::TextureSetSettings, anchor: Panel::Properties, placement: Placement::Tab { before: None } },
+        Action::Move { panel: Panel::TextureSetSettings, anchor: Panel::Properties, placement: DockPlacement::Tab { before: None } },
         Action::Activate { panel: Panel::Properties },
     ];
     workspace.apply_all(actions, permissions).unwrap();

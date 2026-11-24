@@ -1,7 +1,7 @@
 //! The Properties panel never gets narrower than its rows need: the column it docks in stops shrinking there
 
-use craft_ui::docking::Node;
-use craft_ui::layout::SplitSize;
+use craft_behavior::dock::Node;
+use craft_behavior::dock::SplitSize;
 use egui::{Event, Modifiers, PointerButton, Pos2, Role, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};

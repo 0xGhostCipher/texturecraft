@@ -133,7 +133,7 @@ const NARROW_LAYERS: [f32; 4] = [600.0, 200.0, 200.0, 400.0];
 /// In a narrow floating Layers panel the add-layer buttons and Remove wrap inside it, where a click still reaches them
 #[test]
 fn a_narrow_layers_panel_keeps_every_toolbar_button_inside_and_clickable() {
-    use craft_ui::docking::Action;
+    use craft_behavior::dock::Action;
     use texturecraft_ui_egui::docking::{Dock, Panel, permissions};
 
     let (mut harness, _) = app();
