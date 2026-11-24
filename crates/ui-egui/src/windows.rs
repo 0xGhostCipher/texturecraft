@@ -703,7 +703,10 @@ mod tests {
 
     fn harness() -> Harness<'static, TextureCraftApp> {
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut h = Harness::builder().with_size(vec2(1600.0, 960.0)).with_context_setup(crate::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut h = Harness::builder()
+            .with_size(vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|cc| TextureCraftApp::new(cc, session));
 
         // Match English labels independently of the system locale
         h.state_mut().ui.prefs.language = "en".into();

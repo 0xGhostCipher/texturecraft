@@ -62,8 +62,8 @@ pub(crate) use preview_size::PreviewSize;
 pub(crate) use properties_scroll::{PropertiesScroll, PropertiesSelection};
 pub(crate) use row_lead::RowLead;
 pub(crate) use section_tabs::{
-    SectionScope, TAB_GAP, TAB_ICON_CENTER, TAB_ICON_SIZE, TAB_NAME_LEFT, TAB_PADDING, TAB_ROUNDING, TAB_TEXT_SIZE, TAB_TOP, forget_sections,
-    in_scope, room_past_end, section_tabs,
+    SectionScope, TAB_GAP, TAB_ICON_CENTER, TAB_ICON_SIZE, TAB_NAME_LEFT, TAB_PADDING, TAB_ROUNDING, TAB_TEXT_SIZE, TAB_TOP, forget_sections, in_scope,
+    room_past_end, section_tabs,
 };
 pub(crate) use sheet::PropertySheet;
 pub(crate) use slot_response::SlotResponse;

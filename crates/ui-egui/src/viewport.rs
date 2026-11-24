@@ -2612,7 +2612,9 @@ mod tests {
 
         for tool in [Tool::Paint, Tool::PolygonFill] {
             let session = Session::new_project("t", primitives::plane(2.0, 4), "test", None, 128).unwrap();
-            let mut harness = egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
+            let mut harness = egui_kittest::Harness::builder()
+                .with_context_setup(crate::framework::install_headless)
+                .build_eframe(|context| TextureCraftApp::new(context, session));
             let app = harness.state_mut();
             app.session.tool.tool = tool;
             let history = app.session.history_labels().len();
@@ -2641,7 +2643,9 @@ mod tests {
         // The harness draws the UI, so another test's interface language must not be active
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = Session::new_project("t", primitives::plane(2.0, 4), "test", None, 128).unwrap();
-        let mut harness = egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let app = harness.state_mut();
         app.ui.mode = crate::state::Mode::Painting;
         app.session.view = ViewMode::Mask(LayerId(7));
@@ -2667,7 +2671,9 @@ mod tests {
         execute(&mut session, "layer.add.fill", &json!(null)).unwrap();
         let effect = texturecraft_engine::core::LayerId(execute(&mut session, "mask.add.colorSelection", &json!(null)).unwrap()["effect"].as_u64().unwrap());
         session.target = StackTarget::Effect(effect);
-        let mut harness = egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(2);
 
         crate::id_color_pick::IdColorPick::start(harness.state_mut(), effect, None);
@@ -2684,7 +2690,10 @@ mod tests {
     fn a_waiting_eyedropper_keeps_a_2d_view_click_from_painting() {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 960.0)).with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         harness.state_mut().ui.layout = ViewLayout::Only2D;
         harness.state_mut().session.tool.tool = Tool::PolygonFill;
         harness.run_steps(4);
@@ -2730,7 +2739,9 @@ mod tests {
         let effect = texturecraft_engine::core::LayerId(result["committed"]["effect"].as_u64().unwrap());
         let EffectKind::Path(paths) = &mut session.doc.project.effect_mut(effect).unwrap().kind else { panic!("path effect") };
         paths.resize(8, paths[0].clone());
-        let mut harness = egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let context = egui::Context::default();
         let mut previous = Vec::<std::sync::Weak<Vec<Vec<Option<Vec3>>>>>::new();
 
@@ -2929,7 +2940,9 @@ mod tests {
         // Hold the language lock while drawing the harness
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut harness = egui_kittest::Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let app = harness.state_mut();
         app.ui.mode = crate::state::Mode::Baking;
         let before = bake_visualization(app).unwrap();

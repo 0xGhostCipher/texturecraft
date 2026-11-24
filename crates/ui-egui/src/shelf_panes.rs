@@ -1,14 +1,14 @@
 //! The shelf's side panes left of the grid, toggled from the toolbar: saved searches and the folder tree
 
-use craft_behavior::flow::Axis;
 use craft_behavior::dock::SplitSize;
+use craft_behavior::flow::Axis;
 use egui::{Rect, RichText, Ui, UiBuilder};
 use egui_phosphor::regular as ic;
 use serde::{Deserialize, Serialize};
 
 use crate::TextureCraftApp;
-use crate::pane_split::{ResizeHandle, ResizeHandleStyle, SplitLayout, split_rect};
 use crate::i18n::{n_, tr};
+use crate::pane_split::{ResizeHandle, ResizeHandleStyle, SplitLayout, split_rect};
 use crate::saved_search::SavedSearch;
 use crate::shelf::TABS;
 use crate::theme::Tokens;

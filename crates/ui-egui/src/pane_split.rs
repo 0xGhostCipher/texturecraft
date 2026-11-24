@@ -87,7 +87,12 @@ pub(crate) fn split_rect(rect: Rect, axis: Axis, size: SplitSize, gap: f32, mini
 }
 
 fn valid_rect(rect: Rect) -> bool {
-    rect.min.is_finite() && rect.max.is_finite() && rect.width().is_finite() && rect.height().is_finite() && rect.min.x <= rect.max.x && rect.min.y <= rect.max.y
+    rect.min.is_finite()
+        && rect.max.is_finite()
+        && rect.width().is_finite()
+        && rect.height().is_finite()
+        && rect.min.x <= rect.max.x
+        && rect.min.y <= rect.max.y
 }
 
 fn valid_nonnegative(value: f32) -> bool {
@@ -149,7 +154,10 @@ impl<'a> ResizeHandle<'a> {
             && self.rect.height() > 0.0
             && valid_rect(hit)
             && (0.0..=4096.0).contains(&self.hit_margin)
-            && self.value.as_ref().is_none_or(|(value, range)| value.is_finite() && range.start().is_finite() && range.end().is_finite() && range.start() <= range.end());
+            && self
+                .value
+                .as_ref()
+                .is_none_or(|(value, range)| value.is_finite() && range.start().is_finite() && range.end().is_finite() && range.start() <= range.end());
         let inert = Rect::from_min_size(ui.min_rect().min, Vec2::ZERO);
         let mut response = ui.interact(if valid { hit } else { inert }, self.id, if valid { Sense::drag() } else { Sense::hover() });
         let enabled = valid && response.enabled();

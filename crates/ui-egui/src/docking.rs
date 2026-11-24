@@ -486,7 +486,8 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     // The specs leave the app while its panels borrow it, and come back with their revision.
     let specs = std::mem::take(&mut app.docks.specs);
     // Panels arrange in a split tree around the viewport; floating title bars only move windows.
-    let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false);
+    // Each closable tab has its close button, as each group header had one for its shown panel.
+    let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false).tab_close_buttons(true);
     let output = {
         let tokens = Tokens::get(&context);
         let mut panels = Panels { app: &mut *app, tokens, layout: shown.layout().clone() };
@@ -645,7 +646,10 @@ mod tests {
         assert!(validate(&workspace).is_ok());
 
         for panel in Panel::ALL {
-            assert!(workspace.layout().contains(&panel) || workspace.hidden().iter().any(|(hidden, _)| *hidden == panel), "{panel:?} is neither shown nor hidden");
+            assert!(
+                workspace.layout().contains(&panel) || workspace.hidden().iter().any(|(hidden, _)| *hidden == panel),
+                "{panel:?} is neither shown nor hidden"
+            );
         }
 
         assert_eq!(panels_of(&workspace), [Panel::Assets, Panel::Viewport, Panel::TextureSetList, Panel::Layers, Panel::TextureSetSettings, Panel::Properties]);

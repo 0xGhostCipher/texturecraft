@@ -12,7 +12,10 @@ const WINDOW_SIZE: egui::Vec2 = egui::vec2(1600.0, 960.0);
 
 fn app() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(TEXTURE_RESOLUTION, BAKE_RESOLUTION).unwrap();
-    let mut harness = Harness::builder().with_size(WINDOW_SIZE).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_size(WINDOW_SIZE)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
 
     // The labels below are English; a first run would speak the system's language
     harness.state_mut().ui.prefs.language = "en".into();

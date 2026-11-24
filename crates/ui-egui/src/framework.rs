@@ -6,7 +6,7 @@
 //!
 //! The runtime takes Escape, Tab and the clipboard events for the whole window unless one of TextureCraft's own egui
 //! widgets has the keyboard. The window's Escape is read with [`escape_pressed`] and taken with
-//! [`take_window_cancel`]; the 3D/2D viewport is declared to the runtime with [`host_canvas`], which keeps Tab (Hide
+//! [`take_window_cancel`], its plain Enter taken with [`take_window_submit`]; the 3D/2D viewport is declared to the runtime with [`host_canvas`], which keeps Tab (Hide
 //! UI), the edit chords and the clipboard events in egui's input for TextureCraft's shortcuts.
 
 use std::sync::{Arc, OnceLock};
@@ -143,11 +143,22 @@ pub(crate) fn take_window_cancel(ctx: &egui::Context) -> bool {
     window_cancel(ctx, true)
 }
 
+/// Takes the window's submit (a plain Enter while nothing has framework focus) when it is there: no later reader sees
+/// it.
+pub(crate) fn take_window_submit(ctx: &egui::Context) -> bool {
+    window_intent(ctx, Intent::Submit, true)
+}
+
 /// Whether the window's cancel is there and untaken; `take` takes it.
 fn window_cancel(ctx: &egui::Context, take: bool) -> bool {
+    window_intent(ctx, Intent::Cancel, take)
+}
+
+/// Whether the window's `intent` is there and untaken; `take` takes it.
+fn window_intent(ctx: &egui::Context, intent: Intent, take: bool) -> bool {
     let mut pending = false;
     with_window_intents(ctx, false, |intents| {
-        pending = if take { intents.take(Intent::Cancel) } else { intents.untaken(&Intent::Cancel) };
+        pending = if take { intents.take(intent.clone()) } else { intents.untaken(&intent) };
         take && pending
     });
     pending

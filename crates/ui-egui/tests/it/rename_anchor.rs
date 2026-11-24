@@ -22,7 +22,10 @@ fn id(v: &Value, key: &str) -> u64 {
 }
 
 fn harness_for(session: Session) -> Harness<'static, TextureCraftApp> {
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1400.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1600.0, 1400.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
 
     // English, so a first-run locale does not change the queried labels
     h.state_mut().ui.prefs.language = "en".into();

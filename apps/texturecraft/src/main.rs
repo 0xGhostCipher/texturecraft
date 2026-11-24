@@ -385,13 +385,10 @@ mod tests {
     /// Points within which a put-back lands on the press point (the system rounds it to whole pixels)
     const PUT_BACK_REACH: f32 = 1.0;
 
-    /// One frame of the window: the system's events go through the window's raw input hook, as eframe sends them; returns what the app asked of the window
+    /// One frame of the window: the system's events go through the window's raw input hook (the harness runs it before
+    /// every pass, as eframe does); returns what the app asked of the window
     fn window_frame(harness: &mut egui_kittest::Harness<'static, Shell>, events: Vec<egui::Event>) -> Vec<egui::ViewportCommand> {
-        let ctx = harness.ctx.clone();
-        let mut raw = harness.input_mut().clone();
-        raw.events.extend(events);
-        eframe::App::raw_input_hook(harness.state_mut(), &ctx, &mut raw);
-        *harness.input_mut() = raw;
+        harness.input_mut().events.extend(events);
         harness.step();
         harness.output().viewport_output.get(&egui::ViewportId::ROOT).map(|viewport| viewport.commands.clone()).unwrap_or_default()
     }
