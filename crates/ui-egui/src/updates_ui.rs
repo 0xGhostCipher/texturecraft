@@ -162,6 +162,13 @@ mod tests {
             ..Default::default()
         };
         h.state_mut().updates_rt.updater.offer(release);
+        // The offer reads on a thread whether this copy can install the release itself; a later frame's tick opens
+        // the prompt.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !h.state().updates_rt.updater.prompt_open() && std::time::Instant::now() < deadline {
+            h.run_steps(1);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         h.run_steps(2);
     }
 
