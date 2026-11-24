@@ -95,12 +95,10 @@ pub(crate) fn close_request(app: &mut TextureCraftApp, ctx: &egui::Context) {
         app.toast(error.to_string(), true);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let waiting_for_save = if closing
-        && !app.session.modified
-        && let Some(job) = &mut app.save_job
-    {
+    let waiting_for_save = if closing && let Some(job) = &mut app.save_job {
+        // The running save carries the quit; unsaved changes still open the prompt meanwhile
         job.quit_after_save = true;
-        true
+        !app.session.modified
     } else {
         false
     };
@@ -164,6 +162,11 @@ fn unsaved(app: &mut TextureCraftApp, ctx: &egui::Context) {
         #[cfg(not(target_arch = "wasm32"))]
         {
             app.saving_for_prompt = false;
+            if pending == Unsaved::Quit
+                && let Some(job) = &mut app.save_job
+            {
+                job.quit_after_save = false;
+            }
         }
     }
 
