@@ -132,8 +132,11 @@ fn the_console_lists_the_asset_as_a_file_but_not_as_a_saved_texture() {
 
     let console = &h.state().ui.export.console;
     assert!(console.iter().any(|line| matches!(line, ConsoleLine::Done(file) if file == "material_ball.usd")), "{console:?}");
-    assert!(!console.iter().any(|line| matches!(line, ConsoleLine::Step(text) if text == "Saved texture material_ball")), "{console:?}");
-    assert!(console.iter().any(|line| matches!(line, ConsoleLine::Step(text) if text.starts_with("Saved texture "))), "the textures are still listed");
+    assert!(!console.iter().any(|line| matches!(line, ConsoleLine::Step(text) if text == "Writing material_ball texture on disk")), "{console:?}");
+    assert!(
+        console.iter().any(|line| matches!(line, ConsoleLine::Step(text) if text.starts_with("Writing ") && text.ends_with(" texture on disk"))),
+        "the textures are still listed"
+    );
 }
 
 #[test]
@@ -179,7 +182,7 @@ fn restoring_the_default_parameters_unticks_export_usd_asset() {
     checkbox(&h).click();
     h.run_steps(3);
     assert!(h.state().ui.export.usd_asset);
-    h.get_by_label("Restore the default export parameters").click();
+    h.get_by_label("Resets all settings to default values").click();
     h.run_steps(3);
     assert!(!h.state().ui.export.usd_asset);
 }

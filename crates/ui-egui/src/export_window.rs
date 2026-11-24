@@ -387,7 +387,7 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     let files: Vec<String> = response_strings(&response, "files")
         .map(|file| std::path::Path::new(file).file_name().map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned()))
         .collect();
-    let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
+    let mut lines = vec![set(), ConsoleLine::Step(tr("Preparing textures writing").into())];
     // The USD asset is no texture: it stays in the list of written files only
     for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd")) {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
@@ -815,9 +815,14 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
 
     // The browser downloads the textures only, so it has no USD asset to add
     #[cfg(not(target_arch = "wasm32"))]
-    ui.checkbox(&mut app.ui.export.usd_asset, tr("Export USD asset")).on_hover_text(tr("Package the mesh, materials and textures together as USD"));
+    ui.checkbox(&mut app.ui.export.usd_asset, tr("Export USD asset"))
+        .on_hover_text(tr("Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise"));
     #[cfg(target_arch = "wasm32")]
-    unavailable_checkbox(ui, tr("Export USD asset"), tr("Package the mesh, materials and textures together as USD"));
+    unavailable_checkbox(
+        ui,
+        tr("Export USD asset"),
+        tr("Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise"),
+    );
 
     // The MaterialX export sits below the USD one; the browser downloads the textures only
     #[cfg(not(target_arch = "wasm32"))]
@@ -826,7 +831,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     crate::unavailable::checkbox(ui, false, tr("Export MaterialX"));
 
     // Unavailable export controls stay disabled
-    unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
+    unavailable_checkbox(ui, tr("Export shaders parameters"), tr("Exports a JSON file with the settings for all shader instances"));
     ui.add_space(8.0);
     egui::Grid::new("exp_grid_more").num_columns(2).min_col_width(LABEL_COLUMN_WIDTH).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
         let settings = &mut app.ui.export;
