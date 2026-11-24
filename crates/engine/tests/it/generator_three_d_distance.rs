@@ -144,10 +144,44 @@ fn uv_random_color_takes_its_mode_and_gradient() {
     let params = json!({"generator": "UV Random Color", "colorSourceMode": "customGradient", "gradientColors": [[2.0, 0.5, 0.0], "#000000"]});
     let effect = add(&mut session, params);
 
-    let expected = UvRandomColorParameters { custom_gradient: true, gradient: vec![[1.0, 0.5, 0.0], [0.0; 3]] };
+    let expected = UvRandomColorParameters { custom_gradient: true, gradient: vec![[1.0, 0.5, 0.0], [0.0; 3]], ..UvRandomColorParameters::default() };
     assert_eq!(generator(&session, effect).kind_controls(), Some(KindControls::UvRandomColor(expected)), "colors stay within 0..1");
     assert!(execute(&mut session, "effect.set", &json!({"effect": effect, "gradientColors": []})).is_err());
     assert!(execute(&mut session, "effect.set", &json!({"effect": effect, "colorSourceMode": "fancy"})).is_err());
+}
+
+#[test]
+fn uv_random_color_gradient_takes_places_and_a_count() {
+    let mut session = session();
+    let params = json!({"generator": "uvRandomColor", "colorSourceMode": "customGradient", "gradientColors": [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]});
+    let effect = add(&mut session, params);
+    let random = |session: &Session| match generator(session, effect).kind_controls() {
+        Some(KindControls::UvRandomColor(random)) => random,
+        other => panic!("not UV Random Color controls: {other:?}"),
+    };
+
+    execute(&mut session, "effect.set", &json!({"effect": effect, "gradientPositions": [0.25, 0.75]})).unwrap();
+    assert_eq!(random(&session).at(0.5), Some([0.5; 3]), "halfway between the two places");
+    assert_eq!(random(&session).at(0.1), Some([0.0; 3]), "before the first place: the first color");
+
+    execute(&mut session, "effect.set", &json!({"effect": effect, "gradientQuantity": 3})).unwrap();
+    assert_eq!(random(&session).used_colors().len(), 3);
+    assert_eq!(random(&session).used_positions(), vec![0.25, 0.75, 1.0], "an added color starts at the end");
+    execute(&mut session, "effect.set", &json!({"effect": effect, "gradientColors": [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [1.0, 0.0, 0.0]]})).unwrap();
+    execute(&mut session, "effect.set", &json!({"effect": effect, "gradientQuantity": 2})).unwrap();
+    execute(&mut session, "effect.set", &json!({"effect": effect, "gradientQuantity": 3})).unwrap();
+    assert_eq!(random(&session).used_colors()[2], [1.0, 0.0, 0.0], "a hidden color comes back as it was");
+
+    assert!(execute(&mut session, "effect.set", &json!({"effect": effect, "gradientQuantity": 17})).is_err());
+    assert!(execute(&mut session, "effect.set", &json!({"effect": effect, "gradientPositions": [0.0, 0.1, 0.2, 0.3]})).is_err());
+}
+
+#[test]
+fn uv_random_color_saved_without_places_loads_evenly_spaced() {
+    let saved: UvRandomColorParameters =
+        serde_json::from_value(json!({"customGradient": true, "gradient": [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]})).unwrap();
+    assert_eq!(saved.used_positions(), vec![0.0, 0.5, 1.0]);
+    assert_eq!(saved.at(0.5), Some([1.0; 3]));
 }
 
 #[test]
@@ -161,4 +195,27 @@ fn uv_checker_takes_its_controls() {
         UvCheckerParameters { random_colors: true, grid_tile: 24, grid_opacity: 0.25, border_color: [0.0, 1.0, 0.0], ..UvCheckerParameters::default() };
     assert_eq!(generator(&session, effect).kind_controls(), Some(KindControls::UvChecker(expected)), "the grid tile stops at 24");
     assert!(execute(&mut session, "effect.set", &json!({"effect": effect, "checkerColorMode": "plaid"})).is_err());
+}
+
+#[test]
+fn picking_on_the_mesh_sets_the_point() {
+    let mut session = session();
+    let distance = add(&mut session, json!({"generator": "3dDistance", "distanceX": 0.0, "distanceY": 0.0, "distanceZ": 0.0}));
+    let picked = execute(&mut session, "effect.generator.pickPoint", &json!({"effect": distance})).unwrap();
+    let point = generator(&session, distance).distance_controls().unwrap().point;
+    assert_eq!(json!(point), picked["point"], "the point is where the mesh is under the viewport's centre");
+    assert_ne!(point, [0.0; 3]);
+
+    let gradient = add(&mut session, json!({"generator": "3dLinearGradient"}));
+    let before = generator(&session, gradient).linear_gradient_controls().unwrap();
+    execute(&mut session, "effect.generator.pickPoint", &json!({"effect": gradient, "point": "end"})).unwrap();
+    let after = generator(&session, gradient).linear_gradient_controls().unwrap();
+    assert_eq!(after.start, before.start, "picking the end leaves the start");
+    assert_eq!(json!(after.end), picked["point"], "the same pixel gives the same point");
+
+    let missed = json!({"effect": distance, "x": 0.0, "y": 0.0, "viewport": [512, 512]});
+    assert!(execute(&mut session, "effect.generator.pickPoint", &missed).is_err(), "a corner off the mesh picks nothing");
+    assert!(execute(&mut session, "effect.generator.pickPoint", &json!({"effect": distance, "point": "end"})).is_err());
+    let curvature = add(&mut session, json!({"generator": "curvature"}));
+    assert!(execute(&mut session, "effect.generator.pickPoint", &json!({"effect": curvature})).is_err());
 }

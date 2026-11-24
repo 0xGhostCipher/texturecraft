@@ -53,8 +53,17 @@ impl PropertySheet<'_> {
 
             let painter = self.ui.painter();
             if hovered {
-                let face = Rect::from_min_max(pos2(column.left() + FACE_AIR, block.top() - FACE_OVERHANG), pos2(column.right() - FACE_AIR, block.bottom() + FACE_OVERHANG));
-                painter.rect(face, CornerRadius::same(super::CONTROL_RADIUS), tokens.row_hover, Stroke::new(1.0, tokens.field_border), egui::StrokeKind::Inside);
+                let face = Rect::from_min_max(
+                    pos2(column.left() + FACE_AIR, block.top() - FACE_OVERHANG),
+                    pos2(column.right() - FACE_AIR, block.bottom() + FACE_OVERHANG),
+                );
+                painter.rect(
+                    face,
+                    CornerRadius::same(super::CONTROL_RADIUS),
+                    tokens.row_hover,
+                    Stroke::new(1.0, tokens.field_border),
+                    egui::StrokeKind::Inside,
+                );
             }
             painter.text(pos2(x, block.top() + VALUE_LINE / 2.0), Align2::CENTER_CENTER, format!("{value:.2}"), semibold(SMALL_TEXT_SIZE), tokens.text);
             painter.line_segment([pos2(x, track_top), pos2(x, track_bottom)], Stroke::new(COLUMN_TRACK_WIDTH, tokens.button_border));

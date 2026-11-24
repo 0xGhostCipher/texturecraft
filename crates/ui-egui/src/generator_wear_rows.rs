@@ -38,11 +38,8 @@ pub(crate) fn wear_rows(
     let dirt = kind == GeneratorKind::Dirt;
     let (level_label, contrast_label) = if dirt { (tr("Dirt Level"), tr("Dirt Contrast")) } else { (tr("Wear Level"), tr("Wear Contrast")) };
     let mut edited = wear;
-    let mut stack = [
-        stacked(level_label, &mut edited.level),
-        stacked(contrast_label, &mut edited.contrast),
-        stacked(tr("Grunge Amount"), &mut edited.grunge_amount),
-    ];
+    let mut stack =
+        [stacked(level_label, &mut edited.level), stacked(contrast_label, &mut edited.contrast), stacked(tr("Grunge Amount"), &mut edited.grunge_amount)];
     let mut edit = sheet.picture_sliders(picture, &mut stack).into_iter().flatten().next();
     if kind != GeneratorKind::FiberGlassEdgeWear {
         edit = edit.or(sheet.slider(tr("Grunge Scale"), &mut edited.grunge_scale, WearParameters::GRUNGE_SCALE_RANGE, 0));
@@ -82,7 +79,14 @@ pub(crate) fn wear_rows(
 }
 
 /// The Light generator's controls of effect `id`, showing `shown`; `invert` adds its Invert row (None on the earlier model, whose global invert it is)
-pub(crate) fn light_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, id: u64, invert: Option<bool>, shown: LightParameters, picture: &dyn Fn(&Painter, Rect)) {
+pub(crate) fn light_rows(
+    app: &mut TextureCraftApp,
+    sheet: &mut PropertySheet<'_>,
+    id: u64,
+    invert: Option<bool>,
+    shown: LightParameters,
+    picture: &dyn Fn(&Painter, Rect),
+) {
     if let Some(mut invert) = invert
         && sheet.toggle(tr("Invert"), &mut invert)
     {
@@ -90,7 +94,15 @@ pub(crate) fn light_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_
     }
 
     let mut edited = shown;
-    let angle = |label, value| StackSlider { label, value, range: LightParameters::ANGLE_RANGE, typed: LightParameters::ANGLE_RANGE, decimals: 0, suffix: "°", dial: true };
+    let angle = |label, value| StackSlider {
+        label,
+        value,
+        range: LightParameters::ANGLE_RANGE,
+        typed: LightParameters::ANGLE_RANGE,
+        decimals: 0,
+        suffix: "°",
+        dial: true,
+    };
     let mut stack = [
         angle(tr("Horizontal Angle"), &mut edited.horizontal),
         angle(tr("Vertical Angle"), &mut edited.vertical),

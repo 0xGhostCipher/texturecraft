@@ -23,7 +23,7 @@ pub const DRIPPING_RUST_KEYS: [&str; 7] =
     ["rustSpreading", "rustContrast", "spreadingSmoothness", "dripsIntensity", "dripsSmoothness", "dripsSamples", "dripsAxis"];
 
 /// The UV Random Color controls (it also takes the seed)
-pub const UV_RANDOM_COLOR_KEYS: [&str; 2] = ["colorSourceMode", "gradientColors"];
+pub const UV_RANDOM_COLOR_KEYS: [&str; 4] = ["colorSourceMode", "gradientColors", "gradientPositions", "gradientQuantity"];
 
 /// The UV Checker controls (it also takes the seed)
 pub const UV_CHECKER_KEYS: [&str; 6] = ["checkerColorMode", "checkerColor", "checkerGridTile", "checkerGridOpacity", "uvBordersColor", "uvBordersWidth"];
@@ -185,6 +185,20 @@ fn uv_random_color_from(command: &str, params: &Value, generator: &mut Generator
         let invalid = || bad(command, "`gradientColors` takes 1 to 16 colors, each [r, g, b] or \"#rrggbb\"");
         let items = value.as_array().filter(|items| (1..=UvRandomColorParameters::MAX_GRADIENT_COLORS).contains(&items.len())).ok_or_else(invalid)?;
         random.gradient = items.iter().map(|item| color_of(item).ok_or_else(invalid)).collect::<Result<_>>()?;
+
+        // The colors given are the whole gradient: a count after them hides some again
+        random.quantity = None;
+    }
+    if let Some(value) = params.get("gradientPositions") {
+        let invalid = || bad(command, "`gradientPositions` must be numbers in 0..1, at most one per color");
+        let places = value.as_array().filter(|places| places.len() <= random.gradient.len()).ok_or_else(invalid)?;
+        random.positions = places.iter().map(|place| place.as_f64().map(|place| place as f32).ok_or_else(invalid)).collect::<Result<_>>()?;
+    }
+    if params.get("gradientQuantity").is_some() {
+        let range = UvRandomColorParameters::MIN_QUANTITY..=UvRandomColorParameters::MAX_GRADIENT_COLORS as u8;
+        let wanted = u64p(params, "gradientQuantity").and_then(|count| u8::try_from(count).ok()).filter(|count| range.contains(count));
+        let wanted = wanted.ok_or_else(|| bad(command, format!("`gradientQuantity` must be a whole number from {} to {}", range.start(), range.end())))?;
+        random.set_quantity(wanted);
     }
     generator.controls = Some(Box::new(KindControls::UvRandomColor(random.clamped())));
     Ok(())

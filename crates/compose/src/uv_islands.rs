@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use texturecraft_core::{UvCheckerParameters, UvRandomColorParameters, gradient};
+use texturecraft_core::{UvCheckerParameters, UvRandomColorParameters};
 use texturecraft_geom::{NO_TRI, TrianglePartition};
 use texturecraft_texel::linear_to_srgb;
 use texturecraft_texel::noise::cell_hash;
@@ -18,7 +18,9 @@ static CACHE: FieldCache = FieldCache::new();
 /// UV Random Color at every working texel of `inp`: one value per UV island (0 outside the islands)
 pub(crate) fn random_color_field(inp: &Inputs, random: &UvRandomColorParameters, seed: u32) -> Arc<Vec<f32>> {
     let mut settings = vec![seed, u32::from(random.custom_gradient)];
-    settings.extend(random.gradient.iter().flat_map(|color| color.map(f32::to_bits)));
+    settings.push(random.used_colors().len() as u32);
+    settings.extend(random.used_colors().iter().flat_map(|color| color.map(f32::to_bits)));
+    settings.extend(random.positions.iter().map(|position| position.to_bits()));
     CACHE.get_or_build(inp, &[], settings, |_| {
         let island_values = island_values(inp, |island| random_gray(random, seed, island));
         let gbuf = inp.gbuf;
@@ -43,7 +45,7 @@ fn island_values(inp: &Inputs, value_of: impl Fn(u32) -> f32) -> HashMap<u32, f3
 fn random_gray(random: &UvRandomColorParameters, seed: u32, island: u32) -> f32 {
     let island = island as i32;
     let color = if random.custom_gradient {
-        gradient(&random.gradient, cell_hash(island, 0, 0, seed)).unwrap_or([0.0; 3])
+        random.at(cell_hash(island, 0, 0, seed)).unwrap_or([0.0; 3])
     } else {
         std::array::from_fn(|channel| cell_hash(island, channel as i32 + 1, 0, seed))
     };

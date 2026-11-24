@@ -18,7 +18,14 @@ use crate::theme::Tokens;
 const GLYPH_SIZE: f32 = 12.0;
 
 /// The slot of input `slot` of generator effect `id` on `layer`, holding `source`: a card of its own, or a row of the card open now when `in_card`
-pub(crate) fn input_card(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, (layer, id): (LayerId, u64), slot: GeneratorInputSlot, source: Option<&Source>, in_card: bool) {
+pub(crate) fn input_card(
+    app: &mut TextureCraftApp,
+    sheet: &mut PropertySheet<'_>,
+    (layer, id): (LayerId, u64),
+    slot: GeneratorInputSlot,
+    source: Option<&Source>,
+    in_card: bool,
+) {
     let tokens = Tokens::get(sheet.ui.ctx());
     let input = slot.id();
     let line = match (source, slot) {

@@ -2,7 +2,9 @@
 
 use egui::{Painter, Rect, TextureHandle};
 use serde_json::json;
-use texturecraft_engine::core::{CookResolution, Generator, GeneratorKind, LayerId, LightParameters, ResolutionMode, SectionParameters, WearParameters};
+use texturecraft_engine::core::{
+    CookResolution, Generator, GeneratorKind, KindControls, LayerId, LightParameters, ResolutionMode, SectionParameters, WearParameters,
+};
 
 use crate::TextureCraftApp;
 use crate::fill_material_panel::{band_size, texture_set_size};
@@ -39,10 +41,14 @@ pub(crate) fn generator_properties(app: &mut TextureCraftApp, ui: &mut egui::Ui,
             parameters(app, sheet, (layer, id), generator);
         }
 
-        let inputs = generator.inputs_in_use();
-        if !inputs.is_empty() && sheet.band(tr("Image inputs"), false, None, Some(&inputs.len().to_string())).open {
-            for map in inputs {
-                let slot = GeneratorInputSlot::Map(*map);
+        // The kinds with only their own controls show the images the reference lets them take: Grayscale Conversion's own
+        let slots: Vec<GeneratorInputSlot> = match generator.kind_controls() {
+            Some(KindControls::Grayscale(_)) => vec![GeneratorInputSlot::Image],
+            Some(_) => Vec::new(),
+            None => generator.inputs_in_use().iter().map(|map| GeneratorInputSlot::Map(*map)).collect(),
+        };
+        if !slots.is_empty() && sheet.band(tr("Image inputs"), false, None, Some(&slots.len().to_string())).open {
+            for slot in slots {
                 input_card(app, sheet, (layer, id), slot, slot.source(generator), false);
             }
         }
@@ -108,6 +114,10 @@ fn parameters(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, (layer, 
     let texture = texture.or_else(|| app.thumbs.generator_picture(&ctx, ShelfPreview::Generator(kind), PREVIEW_ORB_PX));
     let picture = |painter: &Painter, rect: Rect| orb(painter, rect, texture.as_ref(), &tokens, &ctx);
 
+    if let Some(controls) = generator.kind_controls() {
+        crate::generator_kind_rows::kind_rows(app, sheet, id, generator, controls, &picture);
+        return;
+    }
     if let Some(defaults) = WearParameters::defaults(kind) {
         // A wear generator saved before its wear controls shows them at their defaults: editing one moves it onto them
         wear_rows(app, sheet, (layer, id), generator, generator.wear.unwrap_or(defaults), &picture);

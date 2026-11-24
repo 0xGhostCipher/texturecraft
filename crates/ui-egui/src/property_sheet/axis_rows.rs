@@ -107,7 +107,14 @@ impl PropertySheet<'_> {
     }
 
     /// A card for one axis: its letter on a chip in `tint`, the bold name and the value, then a full-width slider filled in `tint`; the axis's other rows follow, then [`Self::close_card`]
-    pub(crate) fn axis_card(&mut self, (letter, tint): (&str, Color32), name: &str, value: &mut f32, range: RangeInclusive<f32>, decimals: usize) -> Option<bool> {
+    pub(crate) fn axis_card(
+        &mut self,
+        (letter, tint): (&str, Color32),
+        name: &str,
+        value: &mut f32,
+        range: RangeInclusive<f32>,
+        decimals: usize,
+    ) -> Option<bool> {
         self.open_card();
         self.scope = self.named_id("axis_card", name);
         self.space(AXIS_CARD_TOP);

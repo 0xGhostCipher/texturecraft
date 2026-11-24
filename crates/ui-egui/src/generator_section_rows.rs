@@ -23,8 +23,11 @@ fn stacked<'a>(label: &'a str, value: &'a mut f32) -> StackSlider<'a> {
 pub(crate) fn global_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, id: u64, generator: &Generator, picture: &dyn Fn(&Painter, Rect)) {
     let (mut invert, mut global) = (generator.invert, generator.global);
     let invert_edit = sheet.toggle(tr("Global Invert"), &mut invert).then_some(false);
-    let mut stack =
-        [stacked(tr("Global Blur"), &mut global.blur), stacked(tr("Global Balance"), &mut global.balance), stacked(tr("Global Contrast"), &mut global.contrast)];
+    let mut stack = [
+        stacked(tr("Global Blur"), &mut global.blur),
+        stacked(tr("Global Balance"), &mut global.balance),
+        stacked(tr("Global Contrast"), &mut global.contrast),
+    ];
     let stack_edit = sheet.picture_sliders(picture, &mut stack).into_iter().flatten().next();
     if let Some(merge) = invert_edit.or(stack_edit) {
         app.run(
@@ -35,7 +38,14 @@ pub(crate) fn global_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'
 }
 
 /// The kind's own card (Curvature's mode and sizes in it), then one card per axis, showing `shown`; `solo` keeps the Curvature size under the pointer for the preview
-pub(crate) fn section_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, id: u64, generator: &Generator, shown: SectionParameters, solo: &mut Option<usize>) {
+pub(crate) fn section_rows(
+    app: &mut TextureCraftApp,
+    sheet: &mut PropertySheet<'_>,
+    id: u64,
+    generator: &Generator,
+    shown: SectionParameters,
+    solo: &mut Option<usize>,
+) {
     let kind = generator.kind;
     let title = match kind {
         GeneratorKind::Curvature => tr("Curvature"),

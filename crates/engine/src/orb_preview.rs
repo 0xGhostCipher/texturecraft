@@ -4,7 +4,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::json;
-use texturecraft_core::{BakeResolution, BakedMap, BlendMode, Channel, CurvatureMethod, EffectKind, Generator, GeneratorKind, LayerId, MaskBackground};
+use texturecraft_core::{
+    BakeResolution, BakedMap, BlendMode, Channel, CurvatureMethod, EffectKind, Generator, GeneratorKind, KindControls, LayerId, MaskBackground, Procedural,
+    ProceduralKind, Source,
+};
 use texturecraft_geom::glam::Vec3;
 use texturecraft_geom::primitives;
 use texturecraft_texel::TILE;
@@ -86,7 +89,13 @@ impl OrbPreview {
     /// Row-major `size²` pixels of a mask holding one generator of `kind` at its defaults, with None outside the shape
     /// Returns None for sizes outside 1..=[`MAX_PREVIEW_SIZE_PX`]
     pub fn generator(&mut self, kind: GeneratorKind, size: usize) -> Option<Vec<Option<MaskPreviewPixel>>> {
-        self.generator_of(Generator::new(kind), size)
+        let mut generator = Generator::new(kind);
+
+        // Grayscale Conversion grays the image it is given: its picture grays clouds, as it starts with none
+        if let Some(KindControls::Grayscale(grayscale)) = generator.controls.as_deref_mut() {
+            grayscale.source = Some(Source::Procedural { pattern: Procedural::new(ProceduralKind::Clouds), low: [0.0; 3], high: [1.0; 3], ramp: Vec::new() });
+        }
+        self.generator_of(generator, size)
     }
 
     /// [`Self::generator`] for `generator` as given (a Curvature generator with one detail size alone)

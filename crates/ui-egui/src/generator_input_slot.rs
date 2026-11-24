@@ -1,6 +1,6 @@
 //! What one image input of a generator replaces or holds
 
-use texturecraft_engine::core::{BakedMap, Generator, Source};
+use texturecraft_engine::core::{BakedMap, Generator, KindControls, Source};
 
 use crate::i18n::{baked_map_label, tr};
 
@@ -12,6 +12,9 @@ pub(crate) enum GeneratorInputSlot {
     Grunge,
     MicroHeight,
     MicroNormal,
+
+    /// Grayscale Conversion's image
+    Image,
 }
 
 impl GeneratorInputSlot {
@@ -23,6 +26,7 @@ impl GeneratorInputSlot {
             GeneratorInputSlot::Grunge => "grunge",
             GeneratorInputSlot::MicroHeight => texturecraft_engine::micro_params::MICRO_HEIGHT_INPUT,
             GeneratorInputSlot::MicroNormal => texturecraft_engine::micro_params::MICRO_NORMAL_INPUT,
+            GeneratorInputSlot::Image => "image",
         }
     }
 
@@ -33,6 +37,7 @@ impl GeneratorInputSlot {
             GeneratorInputSlot::Grunge => tr("Custom Grunge"),
             GeneratorInputSlot::MicroHeight => tr("Micro Height"),
             GeneratorInputSlot::MicroNormal => tr("Micro Normal"),
+            GeneratorInputSlot::Image => tr("Input Image"),
         }
     }
 
@@ -41,7 +46,7 @@ impl GeneratorInputSlot {
         match self {
             GeneratorInputSlot::Map(map) => map.neutral()[0],
             GeneratorInputSlot::MicroHeight | GeneratorInputSlot::MicroNormal => 0.5,
-            GeneratorInputSlot::Texture | GeneratorInputSlot::Grunge => 0.0,
+            GeneratorInputSlot::Texture | GeneratorInputSlot::Grunge | GeneratorInputSlot::Image => 0.0,
         }
     }
 
@@ -58,6 +63,10 @@ impl GeneratorInputSlot {
             GeneratorInputSlot::Grunge => generator.grunge.as_ref(),
             GeneratorInputSlot::MicroHeight => generator.micro.as_ref().and_then(|micro| micro.height_source.as_ref()),
             GeneratorInputSlot::MicroNormal => generator.micro.as_ref().and_then(|micro| micro.normal_source.as_ref()),
+            GeneratorInputSlot::Image => match generator.controls.as_deref() {
+                Some(KindControls::Grayscale(grayscale)) => grayscale.source.as_ref(),
+                _ => None,
+            },
         }
     }
 }

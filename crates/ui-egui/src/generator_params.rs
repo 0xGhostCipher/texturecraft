@@ -1,7 +1,7 @@
 //! The `effect.set` keys of a generator's controls, as its panel sends them
 
 use serde_json::{Value, json};
-use texturecraft_engine::core::{Generator, GeneratorKind, LightParameters, MicroDetails, SectionParameters, TextureLayer, WearParameters};
+use texturecraft_engine::core::{Generator, GeneratorKind, KindControls, LightParameters, MicroDetails, SectionParameters, TextureLayer, WearParameters};
 use texturecraft_engine::mask_cmds::{section_key_applies, wear_key_applies};
 use texturecraft_engine::micro_params::micro_key_applies;
 
@@ -81,6 +81,73 @@ pub(crate) fn light_params(light: &LightParameters) -> Value {
     })
 }
 
+/// Every control of a kind with only its own controls, set to `controls` (Grayscale Conversion's image is its `image` input, kept apart)
+pub(crate) fn kind_params(controls: &KindControls) -> Value {
+    match controls {
+        KindControls::Distance(distance) => json!({
+            "distanceX": distance.point[0],
+            "distanceY": distance.point[1],
+            "distanceZ": distance.point[2],
+            "distanceRadius": distance.radius,
+            "distanceOffset": distance.offset,
+            "distanceContrast": distance.contrast,
+        }),
+        KindControls::LinearGradient(gradient) => json!({
+            "gradientStart": gradient.start,
+            "gradientEnd": gradient.end,
+            "gradientBalance": gradient.balance,
+            "gradientContrast": gradient.contrast,
+        }),
+        KindControls::BorderDistance(border) => json!({
+            "borderDistance": border.distance,
+            "borderSmoothness": border.smoothness,
+            "borderBalance": border.balance,
+            "borderContrast": border.contrast,
+        }),
+        KindControls::Grayscale(grayscale) => json!({
+            "grayscaleType": grayscale.grayscale.id(),
+            "grayscaleBalance": grayscale.balance,
+            "grayscaleContrast": grayscale.contrast,
+            "grayscaleTile": grayscale.tile,
+            "grayscaleRotation": grayscale.rotation,
+            "grayscaleSafeRotation": grayscale.safe_rotation,
+        }),
+        KindControls::DrippingRust(rust) => json!({
+            "rustSpreading": rust.spreading,
+            "rustContrast": rust.contrast,
+            "spreadingSmoothness": rust.spreading_smoothness,
+            "dripsIntensity": rust.drips_intensity,
+            "dripsSmoothness": rust.drips_smoothness,
+            "dripsSamples": rust.drips_samples,
+            "dripsAxis": DRIPS_AXES.get(usize::from(rust.axis)).copied().unwrap_or("y"),
+        }),
+        KindControls::UvRandomColor(random) => {
+            let mut params = json!({
+                "colorSourceMode": if random.custom_gradient { "customGradient" } else { "random" },
+                "gradientColors": random.gradient,
+                "gradientPositions": random.positions,
+            });
+
+            // The colors reset the count to all of them: one kept hides the rest again
+            if let Some(quantity) = random.quantity {
+                params["gradientQuantity"] = json!(quantity);
+            }
+            params
+        }
+        KindControls::UvChecker(checker) => json!({
+            "checkerColorMode": if checker.random_colors { "random" } else { "uniform" },
+            "checkerColor": checker.checker_color,
+            "checkerGridTile": checker.grid_tile,
+            "checkerGridOpacity": checker.grid_opacity,
+            "uvBordersColor": checker.border_color,
+            "uvBordersWidth": checker.border_width,
+        }),
+    }
+}
+
+/// Dripping Rust's `dripsAxis` names, by axis
+pub(crate) const DRIPS_AXES: [&str; 3] = ["x", "y", "z"];
+
 /// Every micro details control a generator of `kind` has, set to `micro` (its images are the `microHeight` and `microNormal` inputs)
 pub(crate) fn micro_params(kind: GeneratorKind, micro: &MicroDetails) -> Value {
     let mut params = json!({
@@ -111,6 +178,9 @@ pub(crate) fn defaults_of(id: u64, generator: &Generator) -> Value {
         "customResolution": defaults.resolution.custom,
         "resolutionFactor": defaults.resolution.factor,
     });
+    if let Some(controls) = &defaults.controls {
+        return merged(params, kind_params(controls));
+    }
 
     // A generator on the reference's controls restores those only: the earlier model's keys would move it back onto that model
     let global = json!({"blur": defaults.global.blur, "balance": defaults.global.balance, "contrast": defaults.global.contrast});
@@ -163,7 +233,18 @@ pub(crate) fn differs_from_defaults(generator: &Generator) -> bool {
     {
         restored.micro = Some(Box::new(MicroDetails { height_source: micro.height_source.clone(), normal_source: micro.normal_source.clone(), ..defaults }));
     }
-    restored.controls = generator.controls.clone();
+
+    // Grayscale Conversion's image stays in its slot
+    restored.controls = match (restored.controls.as_deref(), generator.controls.as_deref()) {
+        (_, None) => None,
+        (Some(KindControls::Grayscale(defaults)), Some(KindControls::Grayscale(saved))) => {
+            Some(Box::new(KindControls::Grayscale(texturecraft_engine::core::GrayscaleConversionParameters {
+                source: saved.source.clone(),
+                ..defaults.clone()
+            })))
+        }
+        (defaults, _) => defaults.cloned().map(Box::new),
+    };
 
     // Saved before the wear, section or light controls: the earlier model's own values count
     if generator.wear.is_none() {

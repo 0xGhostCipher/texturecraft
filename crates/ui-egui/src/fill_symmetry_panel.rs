@@ -91,7 +91,15 @@ fn radial_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, symmetr
 
     let mut sliders = [
         StackSlider { label: tr("Count"), value: &mut count_value, range: COUNT_TRACK, typed: COUNT_TYPED, decimals: 0, suffix: "", dial: false },
-        StackSlider { label: tr("Angle span"), value: &mut span_value, range: FillSymmetry::SPANS, typed: FillSymmetry::SPANS, decimals: 0, suffix: "°", dial: false },
+        StackSlider {
+            label: tr("Angle span"),
+            value: &mut span_value,
+            range: FillSymmetry::SPANS,
+            typed: FillSymmetry::SPANS,
+            decimals: 0,
+            suffix: "°",
+            dial: false,
+        },
     ];
 
     let [count_edit, span_edit] = sheet.picture_sliders(&picture, &mut sliders);

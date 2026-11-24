@@ -1044,19 +1044,9 @@ impl GeneratorKind {
         }
     }
 
-    /// Whether the generator picker offers this kind (Thin areas only loads from saved projects and smart masks; the newest kinds wait for their panels)
+    /// Whether the generator picker offers this kind (Thin areas only loads from saved projects and smart masks)
     pub fn in_picker(self) -> bool {
-        !matches!(
-            self,
-            GeneratorKind::ThinAreas
-                | GeneratorKind::ThreeDDistance
-                | GeneratorKind::ThreeDLinearGradient
-                | GeneratorKind::UvBorderDistance
-                | GeneratorKind::GrayscaleConversion
-                | GeneratorKind::DrippingRust
-                | GeneratorKind::UvRandomColor
-                | GeneratorKind::UvChecker
-        )
+        self != GeneratorKind::ThinAreas
     }
 
     /// Whether the kind's result depends on its seed

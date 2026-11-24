@@ -4,7 +4,7 @@ use egui::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
-use texturecraft_engine::core::{AxisBlend, BakedMap, EffectKind, Generator, GeneratorKind, LayerId, SectionParameters, Source, WearParameters};
+use texturecraft_engine::core::{AxisBlend, BakedMap, EffectKind, Generator, GeneratorKind, KindControls, LayerId, SectionParameters, Source, WearParameters};
 use texturecraft_engine::{ViewMode, execute};
 use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::docking::Panel;
@@ -385,6 +385,110 @@ fn texture_panel_snapshots() {
             harness.state_mut().ui.prefs.brightness = brightness;
             harness.run_steps(3);
             harness.render().unwrap().save(directory.join(format!("texture-panel-{kind}-{name}.png"))).unwrap();
+        }
+    }
+}
+
+/// Whether control `label` with `role` shows on
+fn is_on(harness: &Harness<'_, TextureCraftApp>, role: Role, label: &str) -> bool {
+    harness.get_by_role_and_label(role, label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+}
+
+#[test]
+fn a_point_pick_waits_for_the_view_until_escape() {
+    let (mut harness, _) = harness_with(false, json!({"generator": "3dLinearGradient"}));
+    let (start, end) = ("Pick 3D Position Start on the mesh", "Pick 3D Position End on the mesh");
+    assert!(!is_on(&harness, Role::Button, start) && !is_on(&harness, Role::Button, end));
+
+    click_live(&mut harness, Role::Button, end);
+    assert!(is_on(&harness, Role::Button, end), "armed: the next click in the view sets the end");
+    assert!(!is_on(&harness, Role::Button, start), "only the point picked waits");
+
+    click_live(&mut harness, Role::Button, start);
+    assert!(is_on(&harness, Role::Button, start) && !is_on(&harness, Role::Button, end), "arming the start hands the wait over");
+
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert!(!is_on(&harness, Role::Button, start), "Esc cancels the pick");
+}
+
+#[test]
+fn a_gradient_color_place_moves_its_stop_in_one_step() {
+    let added =
+        json!({"generator": "uvRandomColor", "colorSourceMode": "customGradient", "gradientColors": [[0.0, 0.0, 0.0], [0.8, 0.3, 0.1], [1.0, 1.0, 1.0]]});
+    let (mut harness, effect) = harness_with(false, added);
+    let places = |harness: &Harness<'_, TextureCraftApp>| match generator(harness, effect).kind_controls() {
+        Some(KindControls::UvRandomColor(random)) => random.used_positions(),
+        other => panic!("not UV Random Color controls: {other:?}"),
+    };
+    let before = places(&harness);
+
+    // Color 2's own track, after its marker on the ramp
+    let rect = harness.get_all_by_role_and_label(Role::Slider, "Color 2").last().expect("Color 2's place").rect();
+    let (from, to) = (egui::pos2(rect.left() + 4.0, rect.center().y), egui::pos2(rect.right() - 4.0, rect.center().y));
+    harness.drag_at(from);
+    harness.run_steps(2);
+    harness.hover_at(to);
+    harness.run_steps(2);
+    harness.drop_at(to);
+    harness.run_steps(3);
+
+    let after = places(&harness);
+    assert!(after[1] > before[1], "Color 2 moved right along the gradient");
+    assert_eq!((after[0], after[2]), (before[0], before[2]), "the other colors keep their places");
+    harness.state_mut().session.undo().unwrap();
+    assert_eq!(places(&harness), before, "one undo step puts it back");
+}
+
+#[test]
+fn the_color_rows_follow_the_color_mode() {
+    let (mut harness, _) = harness_with(false, json!({"generator": "uvChecker"}));
+    assert_eq!(count(&harness, "Checker Color"), 1, "uniform: its color shows");
+    click_live(&mut harness, Role::RadioButton, "Random");
+    assert_eq!(count(&harness, "Checker Color"), 0, "random colors: no color to pick");
+    assert_eq!(count(&harness, "UV Borders Color"), 1, "the borders keep theirs");
+
+    let (mut harness, _) = harness_with(false, json!({"generator": "uvRandomColor"}));
+    assert_eq!(count(&harness, "Color 1"), 0, "random: no gradient");
+    harness.get_by_role_and_label(Role::ComboBox, "Random").click();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::ListBoxOption, "Custom Gradient").click();
+    harness.run_steps(3);
+    assert!(count(&harness, "Color 1") > 0 && count(&harness, "Color 2") > 0, "a custom gradient shows its colors");
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
+fn new_kind_panel_snapshots() {
+    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let gradient = json!([[0.02, 0.02, 0.02], [0.6, 0.12, 0.03], [0.8, 0.8, 0.8]]);
+    let kinds = [
+        ("3dDistance", json!({})),
+        ("3dLinearGradient", json!({})),
+        ("uvBorderDistance", json!({})),
+        ("grayscaleConversion", json!({})),
+        ("drippingRust", json!({})),
+        ("uvRandomColor", json!({"colorSourceMode": "customGradient", "gradientColors": gradient, "gradientPositions": [0.0, 0.45, 1.0]})),
+        ("uvChecker", json!({})),
+    ];
+    for (kind, extra) in kinds {
+        let mut added = json!({"generator": kind});
+        added.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let (mut harness, _) = harness_with(true, added);
+        if kind == "grayscaleConversion" {
+            harness.get_by_role_and_label(Role::Button, "Image inputs").click();
+        }
+
+        // The orbs render on the preview worker
+        for _ in 0..40 {
+            harness.run_steps(4);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
+            harness.state_mut().ui.prefs.brightness = brightness;
+            harness.run_steps(3);
+            harness.render().unwrap().save(directory.join(format!("generator-{kind}-{name}.png"))).unwrap();
         }
     }
 }

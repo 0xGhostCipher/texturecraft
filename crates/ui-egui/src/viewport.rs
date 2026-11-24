@@ -864,9 +864,27 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         app.run("tool.cloneSource", json!({"x": at.x, "y": at.y, "viewport": [viewport.x, viewport.y]}));
     }
 
+    // A 3D generator's armed point pick: a click sets the point there instead of painting
+    let point_pick = crate::generator_point_pick::armed(ui.ctx());
+    if let Some(pick) = point_pick {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        if !alt
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let (at, viewport) = (local(pointer), app.session.viewport);
+            let params = json!({"effect": pick.effect, "point": pick.point, "x": at.x, "y": at.y, "viewport": [viewport.x, viewport.y]});
+
+            // A click off the mesh keeps it armed for the next
+            if app.run("effect.generator.pickPoint", params).is_some() {
+                crate::generator_point_pick::set(ui.ctx(), None);
+            }
+        }
+    }
+
     // Depth of field focus pick: a click focuses there instead of painting
-    let focus_pick = focus_picking(ui.ctx());
-    if focus_pick {
+    let focus_pick = focus_picking(ui.ctx()) || point_pick.is_some();
+    if focus_picking(ui.ctx()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         if !alt
             && response.clicked_by(PointerButton::Primary)
