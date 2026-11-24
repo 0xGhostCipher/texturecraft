@@ -51,6 +51,7 @@ pub mod project;
 pub mod projector;
 pub mod ramp_curve;
 pub mod randomized_seed;
+pub mod resource_source;
 mod saved_decal;
 mod saved_projection;
 pub mod selection_background;
@@ -133,6 +134,7 @@ pub use project::{
 pub use projector::Projector;
 pub use ramp_curve::RampCurve;
 pub use randomized_seed::RandomizedSeed;
+pub use resource_source::ResourceSource;
 pub use selection_background::SelectionBackground;
 pub use shape_crop::ShapeCrop;
 pub use slope_blending::SlopeBlending;

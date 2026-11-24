@@ -957,6 +957,7 @@ impl Session {
         let (label, restored) = self.undo.pop().ok_or_else(|| EngineError::Other("nothing to undo".into()))?;
         let current = std::mem::replace(&mut self.doc, restored);
         self.after_history(&current);
+        self.forget_replaced_images(&current);
         self.redo.push((label.clone(), current));
         self.sync_images();
         Ok(label)
@@ -977,6 +978,7 @@ impl Session {
         let (label, restored) = self.redo.pop().ok_or_else(|| EngineError::Other("nothing to redo".into()))?;
         let current = std::mem::replace(&mut self.doc, restored);
         self.after_history(&current);
+        self.forget_replaced_images(&current);
         self.undo.push((label.clone(), current));
         self.sync_images();
         Ok(label)

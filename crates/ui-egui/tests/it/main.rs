@@ -77,6 +77,7 @@ mod rail;
 mod reference_order;
 mod rename_anchor;
 mod reset_ui;
+mod resources_updater;
 mod settings_window;
 mod shelf_click;
 mod shelf_drop;

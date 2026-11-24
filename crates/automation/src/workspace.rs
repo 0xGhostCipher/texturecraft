@@ -138,6 +138,9 @@ pub fn authorize_command(id: &str, params: &Value) -> Result<(), AutomationError
     let allowed = match id {
         "file.close" | "file.removeUnused" => true,
         "file.reimportMesh" => !has_path,
+
+        // The Resources Updater reads the files a project names, which may lie outside the read root
+        "resource.status" | "resource.update" | "resource.relink" => false,
         _ => !id.starts_with("file.") && !has_path,
     };
     if allowed {
@@ -245,6 +248,9 @@ mod tests {
         assert!(authorize_command("file.reimportMesh", &json!({"path": "/etc/x.obj"})).is_err());
         assert!(authorize_command("file.reimportMesh", &json!({})).is_ok());
         assert!(authorize_command("file.close", &json!({})).is_ok());
+        for id in ["resource.status", "resource.update", "resource.relink"] {
+            assert!(authorize_command(id, &json!({})).is_err(), "{id} reads the host paths a project names");
+        }
         assert!(authorize_command("layer.add.fill", &json!({"color": "#ff0000", "path": null})).is_ok());
     }
 

@@ -124,6 +124,8 @@ mod resolution_band;
 mod resource_panel;
 mod resource_picker;
 mod resource_picker_item;
+#[cfg(not(target_arch = "wasm32"))]
+mod resources_updater;
 mod round_gizmo;
 mod running_bake;
 pub mod saved_search;
@@ -156,6 +158,7 @@ pub mod thumbs;
 mod tile_edits;
 mod tile_picture;
 pub mod titlebar;
+pub mod toast_action;
 pub mod toolbar;
 pub mod ui_state_store;
 pub mod unavailable;
@@ -235,6 +238,8 @@ pub struct Toast {
     pub error: bool,
     pub until: f64,
     pub show_log: bool,
+    /// A button after the text that acts on the notice
+    pub action: Option<toast_action::ToastAction>,
 }
 
 pub struct TextureCraftApp {
@@ -317,6 +322,9 @@ pub struct TextureCraftApp {
     styled: Option<(theme::Brightness, theme::Accent)>,
     /// Whether the window had focus last frame.
     focused: bool,
+    /// The outdated resources the last "changed on disk" notice named, so an unchanged set is not announced again
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) resources_notified: std::collections::BTreeSet<String>,
     /// The update check and prompt (desktop only).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) updates_rt: updates_ui::Runtime,
@@ -438,6 +446,8 @@ impl TextureCraftApp {
             next_autosave,
             styled: None,
             focused: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            resources_notified: std::collections::BTreeSet::new(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -590,13 +600,13 @@ impl TextureCraftApp {
     }
 
     pub fn toast(&mut self, text: impl Into<String>, error: bool) {
-        self.toasts.push(Toast { text: text.into(), error, until: self.last_time + if error { 6.0 } else { 3.0 }, show_log: false });
+        self.toasts.push(Toast { text: text.into(), error, until: self.last_time + if error { 6.0 } else { 3.0 }, show_log: false, action: None });
     }
 
     /// An error toast that stays until the user dismisses it (for a problem that persists and
     /// is reported once, like a texture set the GPU could not hold).
     pub fn toast_sticky(&mut self, text: impl Into<String>) {
-        self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false });
+        self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false, action: None });
     }
 
     /// Start baking texture sets in the background, one after another. Invalid set indices
@@ -1117,6 +1127,10 @@ impl eframe::App for TextureCraftApp {
         let focused = ctx.input(|input| input.viewport().focused).unwrap_or(true);
         if focused && !self.focused {
             self.library = None;
+
+            // Files may have been edited in another app meanwhile
+            #[cfg(not(target_arch = "wasm32"))]
+            resources_updater::check_on_focus(self);
         }
         self.focused = focused;
 
@@ -1292,6 +1306,7 @@ fn toasts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let tk = theme::Tokens::get(ctx);
     let mut dismissed = None;
     let mut show_log = false;
+    let mut clicked_action = None;
 
     // Limit toast dimensions so the dismiss button stays visible
     let screen = ctx.content_rect().size();
@@ -1320,6 +1335,12 @@ fn toasts(app: &mut TextureCraftApp, ctx: &egui::Context) {
                                 show_log = true;
                                 dismissed = Some(i);
                             }
+                            if let Some(action) = t.action
+                                && ui.button(i18n::tr(action.label())).clicked()
+                            {
+                                clicked_action = Some(action);
+                                dismissed = Some(i);
+                            }
                         });
                         if sticky && widgets::icon_button(ui, egui_phosphor::regular::X, i18n::tr("Dismiss"), false, 18.0).clicked() {
                             dismissed = Some(i);
@@ -1336,5 +1357,9 @@ fn toasts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     if show_log {
         app.ui.log_channel = log_panel::LogChannel::General;
         crate::rail_popup::open(app, crate::docking::Panel::Log);
+    }
+
+    if let Some(action) = clicked_action {
+        action.run(app);
     }
 }

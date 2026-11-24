@@ -68,7 +68,13 @@ pub mod preview;
 mod procedural_params;
 pub mod project_cmds;
 pub mod quick_mask;
+// Reloading resource files reads paths on native targets only
+#[cfg(not(target_arch = "wasm32"))]
+mod reloaded_file;
 pub mod resource_cmds;
+pub mod resource_state;
+pub mod resource_status;
+pub mod resource_update_cmds;
 pub mod session;
 mod session_log;
 pub mod set_cmds;
@@ -97,6 +103,8 @@ pub use fill_hit_test::FillHitTest;
 pub use fill_mode::FillMode;
 pub use log::{LogEntry, LogLevel, SessionLog};
 pub use path_tool::PathState;
+pub use resource_state::ResourceState;
+pub use resource_status::ResourceStatus;
 pub use project_cmds::sample_session;
 pub use session::{
     CloneFrom, CloneSource, Document, HISTORY_TEMPLATES, NORMAL_HEIGHT_MESH_LABEL, Session, SetCache, StackTarget, StencilLook, StencilState, Tool, ToolState,

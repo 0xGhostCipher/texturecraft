@@ -146,6 +146,16 @@ impl Session {
         self.drop_missing_image_view();
     }
 
+    /// Undo and redo restore resource bytes under the same name (the Resources Updater replaces
+    /// them in place): the pixels decoded from the bytes `other` held are stale
+    pub(crate) fn forget_replaced_images(&mut self, other: &crate::Document) {
+        for (name, bytes) in &self.doc.resources {
+            if other.resources.get(name).is_some_and(|previous| !Arc::ptr_eq(previous, bytes)) {
+                self.images.remove(name);
+            }
+        }
+    }
+
     /// The "Other..." view cannot show an image that is gone (removed or renamed): the material comes back
     pub(crate) fn drop_missing_image_view(&mut self) {
         if self.view == crate::ViewMode::Image && !self.view_image.as_ref().is_some_and(|name| self.images.contains_key(name)) {
@@ -172,8 +182,18 @@ fn list(s: &Session) -> Value {
 #[cfg(not(target_arch = "wasm32"))]
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = strp(p, "path").ok_or_else(|| bad("resource.import", "`path` is required"))?;
+    let prefix = strp(p, "prefix").unwrap_or("");
+
+    // Taken before reading, so a write during the read still shows as a change in the Resources Updater
+    let modified_ms = crate::resource_update_cmds::modified_ms_of(std::path::Path::new(path));
     let bytes = read_image_file("resource.import", path, MAX_BYTES as u64)?;
-    let name = s.import_resource_bytes_prefixed(strp(p, "prefix").unwrap_or(""), path, bytes)?;
+    let source = texturecraft_core::ResourceSource { path: crate::resource_update_cmds::absolute_path(path), modified_ms };
+
+    let name = s.edit("Import resource", |session| {
+        let name = session.add_image_resource_prefixed(prefix, path, bytes, texturecraft_formats::MAX_RESOURCE_TEXELS)?;
+        session.doc.project.resource_sources.insert(name.clone(), source);
+        Ok(name)
+    })?;
     Ok(json!({ "name": name }))
 }
 
@@ -255,6 +275,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
 
     s.edit("Remove resource", |s| {
         s.doc.resources.remove(&name);
+        s.doc.project.resource_sources.remove(&name);
         Ok(())
     })?;
     s.sync_images();
@@ -277,6 +298,7 @@ fn remove_unused(s: &mut Session, _: &Value) -> Result<Value> {
     if !unused.is_empty() {
         s.edit("Remove unused resources", |s| {
             s.doc.resources.retain(|k, _| !unused.contains(k));
+            s.doc.project.resource_sources.retain(|k, _| !unused.contains(k));
             Ok(())
         })?;
         s.sync_images();
