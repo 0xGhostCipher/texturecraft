@@ -32,6 +32,7 @@ fn sample() -> Sample {
         pixels,
         baked: [(0, baked)].into(),
         mesh: Some(("glb".into(), vec![1, 2, 3, 4, 5])),
+        mesh_uvs: None,
         high_poly: vec![("b_high.obj".into(), vec![7; 9]), ("a_high.ply".into(), vec![6])],
         cage: Some(("cage.obj".into(), vec![5, 5])),
         bake_paint: [((0, texturecraft_core::BakePaintTarget::Skew), BakePaintData { width: 3, height: 2, values: vec![0.0, 0.25, 0.5, 0.75, 1.0, 0.125] })]
@@ -55,6 +56,7 @@ fn assert_same(a: &ProjectFile, b: &ProjectFile) {
     }
     assert_eq!(a.baked, b.baked);
     assert_eq!(a.mesh, b.mesh);
+    assert_eq!(a.mesh_uvs, b.mesh_uvs);
     assert_eq!((&a.high_poly, &a.cage), (&b.high_poly, &b.cage), "bake meshes keep their order");
     assert_eq!(a.bake_paint, b.bake_paint);
     assert_eq!(a.thumbnail, b.thumbnail);
@@ -918,5 +920,56 @@ fn zip64_entry_counts_remain_supported_and_bounded() {
         } else {
             assert!(matches!(result, Err(FormatError::TooLarge(_))), "{result:?}");
         }
+    }
+}
+
+fn rebuilt_uvs_sample() -> ProjectFile {
+    let mut project_file = sample().pf;
+    project_file.project.mesh_rebuild_uvs = true;
+    project_file.mesh_uvs = Some(vec![Vec2::new(0.25, 0.75), Vec2::new(1.0, 0.0), Vec2::new(0.5, 0.125)]);
+    project_file
+}
+
+#[test]
+fn a_saved_uv_layout_round_trips_in_format_4() {
+    let project_file = rebuilt_uvs_sample();
+
+    let loaded = load_project_bytes(&save_project_bytes(&project_file).unwrap()).unwrap();
+
+    assert_eq!(loaded.mesh_uvs, project_file.mesh_uvs);
+    assert_eq!(loaded.project.format_version, REBUILT_MESH_UVS_VERSION);
+}
+
+#[test]
+fn rebuilt_uvs_without_a_valid_saved_layout_are_refused() {
+    let project_file = rebuilt_uvs_sample();
+    let without_layout = edit_archive(&project_file, |name, _| {
+        if name == UV_LAYOUT_ENTRY {
+            *name = "ignored.bin".into();
+        }
+    });
+    let edited_layout = |edit: fn(&mut Vec<u8>)| {
+        edit_archive(&project_file, |name, data| {
+            if name == UV_LAYOUT_ENTRY {
+                edit(data);
+            }
+        })
+    };
+    let truncated = edited_layout(|data| data.truncate(data.len() - 1));
+    let short_header = edited_layout(|data| data.truncate(8));
+    let wrong_count = edited_layout(|data| data[8] = 9);
+    let non_finite = edited_layout(|data| data[12..16].copy_from_slice(&f32::NAN.to_le_bytes()));
+    let bad_magic = edited_layout(|data| data[0] = b'X');
+
+    for (case, bytes) in [
+        ("missing", without_layout),
+        ("truncated", truncated),
+        ("short header", short_header),
+        ("wrong count", wrong_count),
+        ("non-finite", non_finite),
+        ("bad magic", bad_magic),
+    ] {
+        let error = load_project_bytes(&bytes).unwrap_err();
+        assert!(!is_guard_error(&error), "{case}: {error}");
     }
 }

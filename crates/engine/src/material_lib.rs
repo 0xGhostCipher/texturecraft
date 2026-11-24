@@ -97,6 +97,7 @@ impl Session {
             pixels: mini.pixels,
             baked: BTreeMap::new(),
             mesh: None,
+            mesh_uvs: None,
             high_poly: Vec::new(),
             cage: None,
             bake_paint: BTreeMap::new(),

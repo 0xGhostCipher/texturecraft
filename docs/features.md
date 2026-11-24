@@ -138,7 +138,7 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   channel types to add or remove. Show, hide or invert them all at once, or **focus** on the
   active one. The project's **normal map format** (OpenGL or DirectX, in Texture Set Settings)
   says how a normal map image set as a mesh map is read, and is the default for export.
-- **Projects** are a single `.tcraft` file: the mesh, every layer (sparse and lossless), baked maps
+- **Projects** are a single `.tcraft` file: the mesh (with its generated UV layout when *Rebuild mesh UVs* was chosen), every layer (sparse and lossless), baked maps
   and imported images. **Project templates** start new work from a saved setup. *File › More save options › Save as template...* saves the open project's setup (dialog "Save template", in the user templates folder, no confirmation); New project lists "Default (OpenPBR)", the other built-ins with " (starter_assets)", yours with " (your_assets)", and opens on the template of the last project. *More save options* also has *Save as copy...* and *Save and reduce file size* (greyed, "Not available yet"). Closing the app,
   or opening, starting or closing another project, with unsaved changes asks whether to save them
   first (in the browser too, where Save downloads the project and closing or reloading the tab

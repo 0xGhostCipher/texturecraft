@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `project.json` | serde JSON of [`Project`] |
 //! | `mesh.<ext>` | the original imported mesh file (absent for built-in meshes, `Project.mesh = "builtin:<id>"`) |
+//! | `uv_layout.bin` | the UV of every triangle corner of a mesh whose UVs were rebuilt (format 4+, see `uv_layout`) |
 //! | `highpoly/<name>` | a high-definition mesh file for baking, in list order |
 //! | `cage/<name>` | the baking cage mesh file |
 //! | `bake_paint/<ts>_<target>.bin` | cage or skew paint, stored as a one-component baked map |
@@ -26,12 +27,14 @@ use std::sync::Arc;
 use texturecraft_compose::{BakedMaps, PixelStore};
 use texturecraft_core::project::REBUILT_MESH_UVS_VERSION;
 use texturecraft_core::{BakePaintTarget, BakedMap, Channel, FORMAT_VERSION, LayerId, Project, TANGENT_BENT_NORMAL_VERSION};
+use texturecraft_geom::glam::Vec2;
 use texturecraft_texel::{TILE_AREA, TileImage};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use self::entries::Entry;
 use self::load_budget::LoadBudget;
+use self::uv_layout::{MAX_UV_LAYOUT_BYTES, UV_LAYOUT_ENTRY, read_uv_layout, uv_layout_bytes, write_uv_layout};
 use crate::{FormatError, MAX_IMAGE_SIZE, Result, malformed};
 
 mod entries;
@@ -39,6 +42,7 @@ mod load_budget;
 mod project_open_limit;
 mod ram_operation;
 mod ram_reservation;
+mod uv_layout;
 #[cfg(not(target_arch = "wasm32"))]
 pub use entries::{DEFAULT_RAM_PERCENT, DEFAULT_RESERVED_CORES, available_save_resources, configured_ram_budget, save_ram_budget, set_save_resources};
 pub use project_open_limit::{DEFAULT_PROJECT_OPEN_LIMIT_GIB, project_open_limit_gib, set_project_open_limit_gib};
@@ -73,6 +77,9 @@ pub struct ProjectFile<Resource = Vec<u8>> {
     pub baked: BTreeMap<usize, BakedMaps>,
     /// Original mesh file: (extension, bytes).
     pub mesh: Option<(String, Vec<u8>)>,
+    /// Saved UV layout of `mesh` when its UVs were rebuilt: the UV of every triangle corner, in
+    /// index order, as the mesh was first imported.
+    pub mesh_uvs: Option<Vec<Vec2>>,
     /// High-definition mesh files for baking: (file name, bytes). Names are
     /// [`sanitize_resource_name`]d on save.
     pub high_poly: Vec<(String, Vec<u8>)>,
@@ -204,6 +211,14 @@ fn entries(pf: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<Vec<Entry<'_>>> {
             options: deflate,
             weight: bytes.len() as u64,
             body: Box::new(move |w| w.write_all(bytes)),
+        });
+    }
+    if let Some(layout) = &pf.mesh_uvs {
+        out.push(Entry {
+            name: UV_LAYOUT_ENTRY.into(),
+            options: deflate,
+            weight: uv_layout_bytes(layout.len()),
+            body: Box::new(move |w| write_uv_layout(w, layout)),
         });
     }
     let mut used = HashSet::new();
@@ -416,6 +431,7 @@ fn load_archive<R: Read + Seek>(mut zip: ZipArchive<R>, mut budget: LoadBudget) 
         pixels: PixelStore::default(),
         baked: BTreeMap::new(),
         mesh: None,
+        mesh_uvs: None,
         high_poly: Vec::new(),
         cage: None,
         bake_paint: BTreeMap::new(),
@@ -468,6 +484,9 @@ fn load_archive<R: Read + Seek>(mut zip: ZipArchive<R>, mut budget: LoadBudget) 
         } else if let Some(ext) = name.strip_prefix("mesh.").filter(|e| !e.contains('/')) {
             let bytes = read_all(&mut f, crate::mesh_import::MAX_MESH_FILE_BYTES, &mut budget, &name)?;
             pf.mesh = Some((ext.to_string(), bytes));
+        } else if name == UV_LAYOUT_ENTRY {
+            let bytes = read_all(&mut f, MAX_UV_LAYOUT_BYTES, &mut budget, &name)?;
+            pf.mesh_uvs = Some(read_uv_layout(&bytes)?);
         } else if let Some(rest) = name.strip_prefix("pixels/layer_").and_then(|r| r.strip_suffix(".bin")) {
             let (id, chan) = rest.split_once('_').ok_or_else(|| malformed(KIND, format!("bad entry name {name}")))?;
             let id = LayerId(id.parse().map_err(|_| malformed(KIND, format!("bad entry name {name}")))?);
@@ -508,6 +527,10 @@ fn load_archive<R: Read + Seek>(mut zip: ZipArchive<R>, mut budget: LoadBudget) 
         }
     }
 
+    // Rerunning the unwrapper could lay the saved paint over a different layout
+    if pf.project.mesh_rebuild_uvs && pf.mesh.is_some() && pf.mesh_uvs.is_none() {
+        return Err(malformed(KIND, "the mesh UVs were rebuilt but the project holds no saved UV layout"));
+    }
     if version < TANGENT_BENT_NORMAL_VERSION {
         drop_world_space_bent_normals(&mut pf);
     }

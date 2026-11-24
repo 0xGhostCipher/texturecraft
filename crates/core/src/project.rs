@@ -432,7 +432,8 @@ pub struct Project {
     /// it, so parts the file leaves unnamed get the same name (from it) as on import.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mesh_file: String,
-    /// Rebuild the UVs again when reading the mesh stored in the project.
+    /// The mesh UVs were rebuilt on import. The project file keeps the generated layout for
+    /// reopening; reimporting the mesh from a file rebuilds them again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mesh_rebuild_uvs: bool,
     /// Where the mesh file was imported from (the project's "3D mesh path"). Reimport mesh reads

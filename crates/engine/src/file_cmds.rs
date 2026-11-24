@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use texturecraft_core::{NormalFormat, PROJECT_EXT};
 use texturecraft_core::{Project, TextureSet};
 use texturecraft_formats::{ExportInput, ExportOptions, ExportedFile, FileFormat, MapOverride, Padding, ProjectFile};
+use texturecraft_geom::glam::Vec2;
 use texturecraft_geom::{Mesh, primitives};
 
 use crate::commands::{CommandSpec, always, bad, normal_format_param, strp, u64p};
@@ -98,10 +99,15 @@ fn leaf_of(name: &str) -> String {
 }
 
 /// Read the project's stored mesh `bytes` (extension `ext`) under the name it was imported
-/// with, so its unnamed parts keep their names (and the geometry masks that use them).
-fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8]) -> Result<texturecraft_formats::ImportedMesh> {
+/// with, so its unnamed parts keep their names (and the geometry masks that use them). A saved
+/// UV layout replaces the file's UVs and the automatic unwrap.
+fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8], saved_layout: Option<&[Vec2]>) -> Result<texturecraft_formats::ImportedMesh> {
     let stem = std::path::Path::new(&project.mesh_file).file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()).unwrap_or("mesh");
-    texturecraft_formats::mesh_import::import_mesh_bytes_with_uvs(&format!("{stem}.{ext}"), bytes, project.mesh_rebuild_uvs).map_err(fe)
+    let file_name = format!("{stem}.{ext}");
+    match saved_layout {
+        Some(layout) => texturecraft_formats::mesh_import::import_mesh_bytes_with_layout(&file_name, bytes, layout).map_err(fe),
+        None => texturecraft_formats::mesh_import::import_mesh_bytes_with_uvs(&file_name, bytes, project.mesh_rebuild_uvs).map_err(fe),
+    }
 }
 
 impl Session {
@@ -205,7 +211,7 @@ impl Session {
     pub fn from_project_file(pf: ProjectFile) -> Result<Session> {
         let mesh = match (&pf.mesh, pf.project.mesh.strip_prefix("builtin:")) {
             (_, Some(id)) => primitives::builtin(id).ok_or_else(|| EngineError::Other(format!("unknown built-in mesh `{id}`")))?,
-            (Some((ext, bytes)), None) => read_stored_mesh(&pf.project, ext, bytes)?.mesh,
+            (Some((ext, bytes)), None) => read_stored_mesh(&pf.project, ext, bytes, pf.mesh_uvs.as_deref())?.mesh,
             (None, None) => return Err(EngineError::Other("the project has no mesh".into())),
         };
 
@@ -234,6 +240,11 @@ impl Session {
         self.project_with_resources(self.doc.resources.clone())
     }
 
+    /// The layout a project with rebuilt mesh UVs saves, so reopening it never runs the unwrapper.
+    fn saved_uv_layout(&self) -> Option<Vec<Vec2>> {
+        (self.doc.project.mesh_rebuild_uvs && self.mesh_source.is_some()).then(|| texturecraft_formats::mesh_import::corner_uvs(&self.source))
+    }
+
     fn project_with_resources<Resource>(&self, resources: BTreeMap<String, Resource>) -> ProjectFile<Resource> {
         let mut pixels = self.doc.pixels.clone();
 
@@ -257,6 +268,7 @@ impl Session {
             pixels,
             baked: self.doc.baked.clone(),
             mesh: self.mesh_source.clone(),
+            mesh_uvs: self.saved_uv_layout(),
             high_poly,
             cage,
             bake_paint: self.saved_bake_paint(),
@@ -613,7 +625,9 @@ impl Session {
             }
             None => match &self.mesh_source {
                 Some((ext, bytes)) => {
-                    (read_stored_mesh(&self.doc.project, ext, bytes)?.mesh, self.mesh_source.clone(), Vec::new(), self.doc.project.mesh_file.clone())
+                    let layout = self.saved_uv_layout();
+                    let mesh = read_stored_mesh(&self.doc.project, ext, bytes, layout.as_deref())?.mesh;
+                    (mesh, self.mesh_source.clone(), Vec::new(), self.doc.project.mesh_file.clone())
                 }
                 None => return Err(bad("file.reimportMesh", "built-in meshes can't be reimported; give `path`")),
             },
