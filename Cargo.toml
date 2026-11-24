@@ -68,8 +68,6 @@ craft-i18n = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d
 craft-ui = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
 craft-materialx = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
 craft-tcraft = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
-# Isolated aligned writer; existing archive readers retain their pin and behavior.
-craft-zip-usdz = { package = "craft-zip", git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
 craft-zip = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
 craft-mesh = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de", default-features = false, features = ["stl", "ply", "fbx", "obj", "gltf", "dae", "abc"] }
 craft-mcmat = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
