@@ -351,7 +351,8 @@ that numbers hide once a tile is under 40 points on screen.
   $mesh, $textureSet, $udim, $uvTileName greyed, $colorSpace, then TextureCraft's $channel), the
   channel swatches (Gr, RGB or R, G, B, then A), the file format ("File format") and bit depth
   ("Bit depth"; "8 bits + dithering" greyed, templates do not keep it) lists, duplicate and "×".
-  Create names new rows "Grayscale", "RGB" and "RGB Alpha", with "_1", "_2" when taken. An
+  Create names new rows "Grayscale", "RGB" and "RGB Alpha" after "$mesh_$textureSet_", so the
+  texture sets of one export do not write the same file, with "_1", "_2" when taken. An
   empty swatch reads "Default black" ("Default white" for A), a filled one "<map> (<channel>)",
   e.g. "Base color (Red)" or "Metallic (Grayscale)". Dropping a map on a swatch opens "From <map>":
   a gray map offers *Gray Channel* and *A Channel*, a colour map *Gray Channel*, *R Channel*, *G

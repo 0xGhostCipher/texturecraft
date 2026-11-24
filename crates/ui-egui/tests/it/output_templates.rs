@@ -501,7 +501,9 @@ fn a_click_on_a_channel_offers_clear_and_split_or_collapse_and_a_right_click_inv
     let mut h = harness(&library);
     click(&mut h, "RGB");
     let last = h.state().session.export_preset("Mine").unwrap().maps.len() - 1;
-    assert_eq!(h.state().session.export_preset("Mine").unwrap().maps[last].file, "RGB", "the reference's name for a new RGB row");
+    let file = &h.state().session.export_preset("Mine").unwrap().maps[last].file;
+    assert!(file.ends_with("_RGB"), "the reference's name for a new RGB row: {file}");
+    assert!(file.contains("$textureSet"), "each texture set writes a file of its own: {file}");
 
     last_window_button(&h, "RGB: Default black").click();
     h.run_steps(4);

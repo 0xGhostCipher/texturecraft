@@ -167,6 +167,9 @@ const CREATE: [(&str, Layout, bool, &str); 5] = [
     ("RGB+A", Layout::Rgba, false, "RGB Alpha"),
     ("R+G+B+A", Layout::Rgba, true, "RGB Alpha"),
 ];
+/// What a new output map's file name starts with, so each texture set (and mesh) writes a file
+/// of its own; the reference's row name follows it
+const NEW_MAP_PREFIX: &str = "$mesh_$textureSet_";
 
 /// The swatch right-click menu's constants: (label, value)
 const CONSTANTS: [(&str, f32); 3] = [(n_("Black"), 0.0), (n_("Gray 50%"), 0.5), (n_("White"), 1.0)];
@@ -837,7 +840,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
     let acted = match edit.action {
         Some(MapAction::Add(layout, split_rgb, file)) => {
-            let file = unique_file(&preset.maps, file);
+            let file = unique_file(&preset.maps, &format!("{NEW_MAP_PREFIX}{file}"));
             preset.maps.push(new_map(layout, &file));
             origin.push(None);
             split.push(split_rgb);
