@@ -452,7 +452,7 @@ pub fn save_layout(app: &mut TextureCraftApp, mode: crate::state::Mode) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_layout(app: &mut TextureCraftApp) {
     let dir = crate::user_dir("layouts");
-    let dialog = FileDialog::open().title(tr("Load UI Layout")).filter(tr("UI layout"), &["json"]).directory(dir);
+    let dialog = FileDialog::open().title(tr("Select a UI layout file.")).filter(tr("UI layout"), &["json"]).directory(dir);
     app.ask_file(dialog, Bound::App, move |app, paths| {
         let Some(path) = paths.first() else { return };
         let result = std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| crate::mode_layout::ModeLayout::read(&bytes)).map(|layout| {
@@ -481,7 +481,7 @@ pub(crate) fn template_name_of(file_name: &str) -> &str {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_as_template(app: &mut TextureCraftApp) {
     let dir = app.session.templates.dir.clone().unwrap_or_else(|| crate::user_dir("templates"));
-    let dialog = in_save_folder(app, FileDialog::save().title(tr("Save As Template")).filter(tr("Project template"), &["json"]), dir);
+    let dialog = in_save_folder(app, FileDialog::save().title(tr("Save template")).filter(tr("Project template"), &["json"]), dir);
     app.ask_file(dialog, Bound::Project, |app, paths| {
         let Some(path) = paths.first() else { return };
 

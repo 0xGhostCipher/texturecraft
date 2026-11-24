@@ -1355,17 +1355,24 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                     });
                 });
                 ui.separator();
-                let body_height = ui.available_height().max(0.0);
-                ui.allocate_ui_with_layout(vec2(ui.available_width(), body_height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    ui.set_height(body_height);
+                let body = egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), ui.available_height().max(0.0)));
+
+                // The tabs size their columns from the body's width. A child that cannot widen the
+                // resizable window holds them, so an overflow is clipped instead of growing the window each frame
+                let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::left_to_right(egui::Align::Min)));
+                body_ui.shrink_clip_rect(body);
+                ui.advance_cursor_after_rect(body);
+                let ui = &mut body_ui;
+                'tab: {
+                    ui.set_height(body.height());
                     match app.ui.export.tab {
                         1 => {
                             crate::export_templates::tab(app, ui, &presets);
-                            return;
+                            break 'tab;
                         }
                         2 => {
                             list_tab(app, ui);
-                            return;
+                            break 'tab;
                         }
                         _ => {}
                     }
@@ -1385,7 +1392,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                             _ => global_page(app, ui, &presets),
                         });
                     });
-                });
+                }
             });
         });
     });
