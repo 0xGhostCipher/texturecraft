@@ -223,4 +223,25 @@ mod tests {
         assert_eq!(h.state().ui.windows.unsaved, Some(Unsaved::Quit));
         assert!(prompt_is_usable(&h));
     }
+
+    #[test]
+    fn an_edit_after_a_clean_close_asks_once_the_save_returns() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file = temp_file("clean-close-then-edited");
+        let mut h = harness();
+        h.state_mut().session.modified = false;
+        h.state_mut().session.path = Some(file.display().to_string());
+        let (task, sender) = start_held_save(&mut h, &file, true);
+
+        request_close(&mut h);
+        assert!(h.state().ui.windows.unsaved.is_none(), "nothing to ask while the project is clean");
+        let rename = h.state_mut().run("textureSet.rename", serde_json::json!({"ts": 0, "name": "Edited while saving"}));
+        assert!(rename.is_some());
+        let closed = finish(&mut h, task, &sender);
+
+        assert!(!closed);
+        assert!(h.state().session.modified);
+        assert_eq!(h.state().ui.windows.unsaved, Some(Unsaved::Quit), "the close asks about the edit instead of being dropped");
+        assert!(prompt_is_usable(&h));
+    }
 }
