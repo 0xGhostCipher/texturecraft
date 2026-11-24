@@ -2,7 +2,7 @@
 
 use egui::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 use texturecraft_engine::core::{AxisBlend, BakedMap, EffectKind, Generator, GeneratorKind, LayerId, SectionParameters, Source, WearParameters};
 use texturecraft_engine::{ViewMode, execute};
@@ -42,13 +42,14 @@ fn generator(harness: &Harness<'_, TextureCraftApp>, effect: LayerId) -> Generat
     }
 }
 
-/// Drags the track under slider `label` to the right.
+/// Drags slider `label` from near its left end to the right
 fn drag_slider(harness: &mut Harness<'_, TextureCraftApp>, label: &str) {
-    harness.get_by_label(label).scroll_to_me();
+    harness.get_by_role_and_label(Role::Slider, label).scroll_to_me();
     harness.run_steps(3);
-    let rect = harness.get_by_label(label).rect();
-    let start = egui::pos2(rect.left() + 20.0, rect.bottom() + 10.0);
-    let end = start + egui::vec2(120.0, 0.0);
+    let rect = harness.get_by_role_and_label(Role::Slider, label).rect();
+    let start = egui::pos2(rect.left() + 12.0, rect.center().y);
+    // Three quarters along: off a 0.5 default, which a drag ending mid-track would land back on
+    let end = egui::pos2(rect.left() + rect.width() * 0.75, rect.center().y);
     harness.drag_at(start);
     harness.run_steps(2);
     harness.hover_at(end);
@@ -57,11 +58,31 @@ fn drag_slider(harness: &mut Harness<'_, TextureCraftApp>, label: &str) {
     harness.run_steps(3);
 }
 
+/// A press and release at `at`
+fn click_at(harness: &mut Harness<'_, TextureCraftApp>, at: egui::Pos2) {
+    harness.drag_at(at);
+    harness.run_steps(1);
+    harness.drop_at(at);
+    harness.run_steps(3);
+}
+
+/// Clicks the one live control named `label` with `role` (the panel's Restore defaults and a slot's share a name)
+fn click_live(harness: &mut Harness<'_, TextureCraftApp>, role: Role, label: &str) {
+    let live = |harness: &Harness<'_, TextureCraftApp>| {
+        harness.get_all_by_role_and_label(role, label).find(|node| !node.accesskit_node().is_disabled()).expect("a live control").rect()
+    };
+    let rect = live(harness);
+    harness.hover_at(rect.center());
+    harness.run_steps(2);
+    let at = live(harness).center();
+    click_at(harness, at);
+}
+
 #[test]
 fn global_blur_applies_as_one_undo_step() {
     let (mut harness, effect) = harness(false);
     let history = harness.state().session.history_labels().len();
-    drag_slider(&mut harness, "Global blur");
+    drag_slider(&mut harness, "Global Blur");
     assert!(generator(&harness, effect).global.blur > 0.0);
     assert_eq!(harness.state().session.history_labels().len(), history + 1);
     harness.state_mut().session.undo().unwrap();
@@ -71,15 +92,12 @@ fn global_blur_applies_as_one_undo_step() {
 #[test]
 fn restore_defaults_puts_the_generator_back_to_its_kind_defaults() {
     let (mut harness, effect) = harness(false);
+    assert!(harness.get_by_role_and_label(Role::Button, "Restore defaults").accesskit_node().is_disabled(), "at its defaults it does nothing");
     let edits = json!({"effect": effect.0, "level": 0.9, "blur": 0.5, "balance": 0.2, "resolutionFactor": -2, "seed": 99});
     execute(&mut harness.state_mut().session, "effect.set", &edits).unwrap();
-
     harness.run_steps(3);
-    harness.get_by_label("Restore defaults").scroll_to_me();
-    harness.run_steps(2);
 
-    harness.get_by_label("Restore defaults").click();
-    harness.run_steps(3);
+    click_live(&mut harness, Role::Button, "Restore defaults");
 
     assert_eq!(generator(&harness, effect), Generator::new(GeneratorKind::Curvature));
 }
@@ -102,7 +120,7 @@ fn a_wear_control_moves_an_earlier_wear_generator_onto_the_wear_controls() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "edgeWear", "level": 0.4}));
     assert_eq!(generator(&harness, effect).wear, None, "level keeps it on the earlier model");
 
-    drag_slider(&mut harness, "Wear level");
+    drag_slider(&mut harness, "Wear Level");
 
     let wear = generator(&harness, effect).wear.expect("on the wear controls now");
     let defaults = WearParameters::defaults(GeneratorKind::EdgeWear).unwrap();
@@ -113,29 +131,31 @@ fn a_wear_control_moves_an_earlier_wear_generator_onto_the_wear_controls() {
 #[test]
 fn restore_defaults_keeps_a_wear_generator_on_its_wear_controls() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "dirt", "grungeAmount": 0.9, "seed": 3}));
-    harness.get_by_label("Restore defaults").scroll_to_me();
-    harness.run_steps(2);
-    harness.get_by_label("Restore defaults").click();
-    harness.run_steps(3);
+    click_live(&mut harness, Role::Button, "Restore defaults");
     assert_eq!(generator(&harness, effect), Generator::new(GeneratorKind::Dirt));
+}
+
+/// The slot reading `value`: an image input's card
+fn slot_reading<'a>(harness: &'a Harness<'_, TextureCraftApp>, value: &str) -> egui_kittest::Node<'a> {
+    harness.get_all_by_role(Role::ComboBox).find(|node| node.value().as_deref() == Some(value)).expect("a slot reading it")
 }
 
 #[test]
 fn an_input_can_read_a_uniform_value_and_the_mesh_map_again() {
     let (mut harness, effect) = harness(false);
-    harness.get_all_by_role(Role::ComboBox).find(|node| node.value().as_deref() == Some("Mesh map: Curvature")).unwrap().scroll_to_me();
+    harness.get_by_role_and_label(Role::Button, "Image inputs").click();
     harness.run_steps(3);
-    harness.get_all_by_role(Role::ComboBox).find(|node| node.value().as_deref() == Some("Mesh map: Curvature")).unwrap().click();
+    slot_reading(&harness, "Mesh map: Curvature").scroll_to_me();
+    harness.run_steps(3);
+    slot_reading(&harness, "Mesh map: Curvature").click();
     harness.run_steps(2);
-    harness.get_by_label("Uniform value").click();
+    harness.get_by_role_and_label(Role::ListBoxOption, "Uniform value").click();
     harness.run_steps(3);
     assert!(matches!(generator(&harness, effect).inputs.get(&BakedMap::Curvature), Some(Source::Uniform(_))));
+    assert!(slot_reading(&harness, "Uniform value").rect().is_positive());
 
-    harness.get_all_by_role(Role::ComboBox).find(|node| node.value().as_deref() == Some("Uniform value")).unwrap().click();
-    harness.run_steps(2);
-    harness.get_by_label("Mesh map").click();
-    harness.run_steps(3);
-    assert!(generator(&harness, effect).inputs.is_empty());
+    click_live(&mut harness, Role::Button, "Restore defaults");
+    assert!(generator(&harness, effect).inputs.is_empty(), "the slot's reset reads the mesh map again");
 }
 
 /// How many nodes carry `label`
@@ -146,14 +166,14 @@ fn count(harness: &Harness<'_, TextureCraftApp>, label: &str) -> usize {
 #[test]
 fn each_kind_shows_its_section_rows_and_no_earlier_ones() {
     let rows = [
-        ("curvature", &["Sharp", "Huge", "Brightness", "Global contrast"][..], &["Balance", "Blending mode", "Level"][..]),
-        ("ambientOcclusion", &["Blur", "Balance", "Global contrast"][..], &["Brightness", "Blending mode", "Level"][..]),
-        ("position", &["Balance", "Brightness", "Right to left", "Front to back"][..], &["Blur", "Level", "Sharp"][..]),
-        ("worldSpaceNormals", &["Blur", "Balance", "Brightness", "Top to bottom"][..], &["Level", "Softness"][..]),
+        ("curvature", &["Sharp", "Huge", "Brightness", "Global Contrast"][..], &["Balance", "Blending Mode", "Level"][..]),
+        ("ambientOcclusion", &["Blur", "Balance", "Global Contrast"][..], &["Brightness", "Blending Mode", "Level"][..]),
+        ("position", &["Balance", "Brightness", "Right to Left", "Front to Back"][..], &["Blur", "Level", "Sharp"][..]),
+        ("worldSpaceNormals", &["Blur", "Balance", "Brightness", "Top To Bottom"][..], &["Level", "Softness"][..]),
         (
             "direction",
-            &["Horizontal angle", "Vertical angle", "Highlight glossiness", "Highlight level", "Light attenuation"][..],
-            &["Global blur", "Level"][..],
+            &["Horizontal Angle", "Vertical Angle", "Highlight Glossiness", "Highlight Level", "Light Attenuation"][..],
+            &["Global Blur", "Level"][..],
         ),
     ];
     for (kind, shown, hidden) in rows {
@@ -167,35 +187,23 @@ fn each_kind_shows_its_section_rows_and_no_earlier_ones() {
     }
 
     let (harness, _) = harness_with(false, json!({"generator": "worldSpaceNormals"}));
-    assert_eq!(count(&harness, "Blending mode"), 3);
-    for axis in ["Right to left", "Top to bottom", "Front to back"] {
-        assert_eq!(count(&harness, axis), 2, "{axis}: a section heading and its weight slider");
-    }
-    let (harness, _) = harness_with(false, json!({"generator": "direction"}));
-    assert_eq!(count(&harness, "Angle"), 2, "an Angle slider beside each dial");
+    assert_eq!(harness.get_all_by_role_and_label(Role::ComboBox, "Linear Dodge (Add)").count(), 3, "a blending mode per axis");
     let (harness, _) = harness_with(false, json!({"generator": "position", "level": 0.4}));
     assert!(count(&harness, "Level") > 0 && count(&harness, "Balance") > 0, "the earlier model keeps its level beside the section at its defaults");
-}
-
-/// The blending mode dropdown in the Front to back section: the first dropdown below its heading, the topmost "Front to back"
-fn front_to_back_dropdown<'a>(harness: &'a Harness<'_, TextureCraftApp>) -> egui_kittest::Node<'a> {
-    let heading = harness.query_all_by_label("Front to back").map(|node| node.rect().top()).fold(f32::INFINITY, f32::min);
-    let below = harness.get_all_by_role(Role::ComboBox).filter(|node| node.rect().top() > heading);
-    below.min_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap()
 }
 
 #[test]
 fn each_axis_has_its_own_blending_mode_dropdown() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "worldSpaceNormals"}));
-    let added = |harness: &Harness<'_, TextureCraftApp>| {
-        harness.get_all_by_role(Role::ComboBox).filter(|node| node.value().as_deref() == Some("Linear Dodge (Add)")).count()
+    let lowest = |harness: &Harness<'_, TextureCraftApp>| {
+        let dropdowns = harness.get_all_by_role_and_label(Role::ComboBox, "Linear Dodge (Add)");
+        dropdowns.max_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap().rect()
     };
-    assert_eq!(added(&harness), 3);
-    front_to_back_dropdown(&harness).scroll_to_me();
+    harness.get_by_role_and_label(Role::Slider, "Front to Back").scroll_to_me();
     harness.run_steps(3);
-    front_to_back_dropdown(&harness).click();
-    harness.run_steps(2);
-    harness.get_by_label("Multiply").click();
+    let at = lowest(&harness).center();
+    click_at(&mut harness, at);
+    harness.get_by_role_and_label(Role::ListBoxOption, "Multiply").click();
     harness.run_steps(3);
 
     let axes = generator(&harness, effect).section.unwrap().axes;
@@ -217,28 +225,55 @@ fn a_section_control_moves_an_earlier_generator_onto_the_section_controls() {
 }
 
 #[test]
-fn the_light_dial_turns_towards_the_pointer() {
-    let (mut harness, effect) = harness_with(false, json!({"generator": "direction"}));
-    harness.get_by_role_and_label(Role::Slider, "Horizontal angle").scroll_to_me();
+fn a_curvature_size_column_sets_its_size_alone_in_one_step() {
+    let (mut harness, effect) = harness(false);
+    let before = generator(&harness, effect).detail.unwrap().weights;
+    let history = harness.state().session.history_labels().len();
+    harness.get_by_role_and_label(Role::Slider, "Huge").scroll_to_me();
     harness.run_steps(3);
-    let rect = harness.get_by_role_and_label(Role::Slider, "Horizontal angle").rect();
-    let left = egui::pos2(rect.left() + 2.0, rect.center().y);
-    harness.drag_at(left);
+    let column = harness.get_by_role_and_label(Role::Slider, "Huge").rect();
+    let (low, high) = (egui::pos2(column.center().x, column.bottom() - 30.0), egui::pos2(column.center().x, column.top() + 24.0));
+    harness.drag_at(low);
     harness.run_steps(2);
-    harness.drop_at(left);
+    harness.hover_at(high);
+    harness.run_steps(2);
+    harness.drop_at(high);
     harness.run_steps(3);
-    let horizontal = generator(&harness, effect).light.unwrap().horizontal;
-    assert!(!(1.0..=359.0).contains(&horizontal), "0 is on the left, as in the reference: {horizontal}");
+
+    let after = generator(&harness, effect).detail.unwrap().weights;
+    let last = before.len() - 1;
+    assert!(after[last] > before[last], "dragged up, Huge rose: {} -> {}", before[last], after[last]);
+    assert_eq!(after[..last], before[..last], "the other sizes kept theirs");
+    assert_eq!(harness.state().session.history_labels().len(), history + 1);
 }
 
 #[test]
 fn restore_defaults_puts_a_light_back_on_its_defaults() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "direction", "lightHorizontal": 10.0, "highlightLevel": 0.7, "invert": true}));
-    harness.get_by_label("Restore defaults").scroll_to_me();
-    harness.run_steps(2);
-    harness.get_by_label("Restore defaults").click();
-    harness.run_steps(3);
+    click_live(&mut harness, Role::Button, "Restore defaults");
     assert_eq!(generator(&harness, effect), Generator::new(GeneratorKind::Direction));
+}
+
+#[test]
+fn micro_details_show_their_settings_once_switched_on() {
+    let (mut harness, effect) = harness_with(false, json!({"generator": "ambientOcclusion"}));
+    assert_eq!(count(&harness, "AO Radius"), 0, "they wait for Use Micro Details");
+    harness.get_by_role_and_label(Role::CheckBox, "Use Micro Details").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::CheckBox, "Use Micro Details").click();
+    harness.run_steps(3);
+    assert!(generator(&harness, effect).micro.is_some_and(|micro| micro.enabled));
+    for label in ["Micro Height", "Micro Normal", "AO Radius", "AO Depth"] {
+        assert!(count(&harness, label) > 0, "{label}");
+    }
+    assert_eq!(count(&harness, "Curvature Type"), 0, "Ambient Occlusion's micro details have no curvature");
+
+    let (mut harness, _) = harness_with(false, json!({"generator": "dirt", "microHeight": true}));
+    harness.get_by_role_and_label(Role::Button, "Micro Details").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Button, "Micro Details").click();
+    harness.run_steps(3);
+    assert!(slot_reading(&harness, "Empty").rect().is_positive(), "Micro Height on: its slot, empty");
 }
 
 #[test]
@@ -251,7 +286,7 @@ fn generator_panel_snapshots() {
     harness.render().unwrap().save(directory.join("generator-panel-default.png")).unwrap();
 
     for section in ["Attributes", "Resolution"] {
-        harness.get_by_label(section).click();
+        harness.get_by_role_and_label(Role::Button, section).click();
         harness.run_steps(3);
     }
     harness.run_steps(6);
@@ -276,66 +311,65 @@ fn generator_panel_snapshots() {
 
 #[test]
 #[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
-fn wear_panel_snapshots() {
+fn full_set_panel_snapshots() {
     let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
     std::fs::create_dir_all(&directory).unwrap();
-    for kind in ["edgeWear", "dirt", "fiberGlassEdgeWear"] {
-        let (mut harness, _) = harness_with(true, json!({"generator": kind}));
-        harness.run_steps(12);
-        harness.render().unwrap().save(directory.join(format!("wear-panel-{kind}.png"))).unwrap();
-    }
-}
+    let kinds = ["edgeWear", "fiberGlassEdgeWear", "dirt", "direction", "curvature", "ambientOcclusion", "position", "worldSpaceNormals"];
+    for kind in kinds {
+        let (mut harness, _) = harness_with(true, json!({"generator": kind, "seed": 12}));
+        if kind == "dirt" {
+            harness.get_by_role_and_label(Role::Button, "Micro Details").click();
+        }
 
-#[test]
-#[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
-fn section_panel_snapshots() {
-    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
-    std::fs::create_dir_all(&directory).unwrap();
-    for kind in ["curvature", "ambientOcclusion", "position", "worldSpaceNormals", "direction"] {
-        let (mut harness, _) = harness_with(true, json!({"generator": kind}));
-        harness.run_steps(12);
-        harness.render().unwrap().save(directory.join(format!("section-panel-{kind}.png"))).unwrap();
+        // The orbs render on the preview worker
+        for _ in 0..40 {
+            harness.run_steps(4);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
+            harness.state_mut().ui.prefs.brightness = brightness;
+            harness.run_steps(3);
+            harness.render().unwrap().save(directory.join(format!("generator-{kind}-{name}.png"))).unwrap();
+        }
     }
 }
 
 #[test]
 fn use_texture_shows_the_texture_rows_and_its_slot() {
     let (harness, _) = harness_with(false, json!({"generator": "position"}));
-    assert_eq!(count(&harness, "Use texture"), 1);
-    for label in ["Grayscale conversion", "Texture opacity", "Triplanar contrast", "Texture"] {
-        assert_eq!(count(&harness, label), 0, "{label} waits for Use texture");
+    assert_eq!(harness.get_all_by_role_and_label(Role::CheckBox, "Use Texture").count(), 1);
+    let dropdowns = |harness: &Harness<'_, TextureCraftApp>| harness.get_all_by_role(Role::ComboBox).count();
+    let closed = dropdowns(&harness);
+    for label in ["Texture Opacity", "Texture"] {
+        assert_eq!(count(&harness, label), 0, "{label} waits for Use Texture");
     }
 
     let (harness, _) = harness_with(false, json!({"generator": "position", "useTexture": true}));
-    for label in ["Grayscale conversion", "Texture opacity", "Triplanar", "Triplanar contrast", "Scale"] {
-        assert_eq!(count(&harness, label), 1, "{label}");
+    for label in ["Texture Opacity", "Triplanar", "Scale"] {
+        assert!(count(&harness, label) > 0, "{label}");
     }
-    assert_eq!(count(&harness, "Texture"), 2, "the Texture section and the Texture slot in Image inputs");
-    assert_eq!(count(&harness, "Blending mode"), 4, "the texture's beside the three axes'");
+    assert_eq!(count(&harness, "Triplanar Contrast"), 0, "it waits for Triplanar");
+    assert!(harness.get_by_role_and_label(Role::ComboBox, "Texture").rect().is_positive(), "the texture's slot in its card");
+    assert_eq!(dropdowns(&harness), closed + 3, "the texture's slot, Grayscale Conversion and Blending Mode");
 
     let (harness, _) = harness_with(false, json!({"generator": "dirt"}));
-    assert_eq!(count(&harness, "Use texture"), 0, "wear generators have no texture");
+    assert_eq!(count(&harness, "Use Texture"), 0, "wear generators have no texture");
 }
 
 #[test]
-fn the_texture_slot_reads_a_uniform_value_until_it_is_given_one() {
+fn the_texture_slot_takes_a_uniform_value_and_empties_again() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "ambientOcclusion", "useTexture": true}));
-    let slot = |harness: &Harness<'_, TextureCraftApp>| {
-        harness.get_all_by_role(Role::ComboBox).filter(|node| node.value().as_deref() == Some("Uniform value")).count()
-    };
-    assert_eq!(slot(&harness), 1, "an empty texture slot is a uniform value");
-    assert_eq!(count(&harness, "Value"), 1, "with its value slider");
-
-    harness.get_all_by_role(Role::ComboBox).find(|node| node.value().as_deref() == Some("Uniform value")).unwrap().scroll_to_me();
+    slot_reading(&harness, "Empty").scroll_to_me();
     harness.run_steps(3);
-    harness.get_all_by_role(Role::ComboBox).find(|node| node.value().as_deref() == Some("Uniform value")).unwrap().click();
+    slot_reading(&harness, "Empty").click();
     harness.run_steps(2);
-    assert_eq!(count(&harness, "Mesh map"), 0, "the texture has no mesh map to go back to");
-    // The slot's heading also reads "Uniform value": the menu entry is the button
-    harness.get_by_role_and_label(Role::Button, "Uniform value").click();
+    harness.get_by_role_and_label(Role::ListBoxOption, "Uniform value").click();
     harness.run_steps(3);
-    let texture = generator(&harness, effect).texture.unwrap();
-    assert_eq!(texture.source, Some(Source::Uniform([0.0; 3])));
+    assert!(matches!(generator(&harness, effect).texture.unwrap().source, Some(Source::Uniform(_))));
+    assert!(count(&harness, "Value") > 0, "with its value");
+
+    click_live(&mut harness, Role::Button, "Clear");
+    assert_eq!(generator(&harness, effect).texture.unwrap().source, None);
 }
 
 #[test]
@@ -345,7 +379,7 @@ fn texture_panel_snapshots() {
     std::fs::create_dir_all(&directory).unwrap();
     for kind in ["position", "ambientOcclusion"] {
         let (mut harness, _) = harness_with(true, json!({"generator": kind, "useTexture": true, "textureOpacity": 0.6, "textureBlend": "normal"}));
-        harness.get_by_label("Use texture").scroll_to_me();
+        harness.get_by_role_and_label(Role::CheckBox, "Use Texture").scroll_to_me();
         harness.run_steps(12);
         for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
             harness.state_mut().ui.prefs.brightness = brightness;

@@ -38,10 +38,14 @@ fn balance(harness: &Harness<'_, TextureCraftApp>, effect: LayerId) -> f32 {
     }
 }
 
-/// The track under the slider labelled `label` (the row below the label).
+/// The track of the slider labelled `label`
 fn track(harness: &Harness<'_, TextureCraftApp>, label: &str) -> egui::Rect {
-    let label_rect = harness.get_by_label(label).rect();
-    egui::Rect::from_min_max(egui::pos2(label_rect.left() + 6.0, label_rect.bottom() + 6.0), egui::pos2(label_rect.left() + 200.0, label_rect.bottom() + 14.0))
+    harness.get_by_role_and_label(Role::Slider, label).rect()
+}
+
+/// The point `share` of the way along `track`
+fn along(track: egui::Rect, share: f32) -> egui::Pos2 {
+    egui::pos2(track.left() + track.width() * share, track.center().y)
 }
 
 #[test]
@@ -49,12 +53,12 @@ fn dragging_a_slider_applies_it() {
     let (mut harness, effect) = selected_generator();
     assert_eq!(balance(&harness, effect), 0.5);
 
-    let track_rect = track(&harness, "Global balance");
-    harness.drag_at(egui::pos2(track_rect.right(), track_rect.center().y));
+    let track_rect = track(&harness, "Global Balance");
+    harness.drag_at(along(track_rect, 0.98));
     harness.run_steps(2);
-    harness.hover_at(egui::pos2(track_rect.left() + 20.0, track_rect.center().y));
+    harness.hover_at(along(track_rect, 0.08));
     harness.run_steps(2);
-    harness.drop_at(egui::pos2(track_rect.left() + 20.0, track_rect.center().y));
+    harness.drop_at(along(track_rect, 0.08));
     harness.run_steps(3);
 
     assert!(balance(&harness, effect) < 0.25, "the dragged balance applies: {}", balance(&harness, effect));
@@ -71,19 +75,19 @@ fn dragging_a_generator_slider_applies_live_as_one_undo_step() {
     };
     let steps = harness.state().session.history_labels().len();
     let track_rect = track(&harness, "Level");
-    let point_at = |x: f32| egui::pos2(track_rect.left() + x, track_rect.center().y);
-    harness.drag_at(point_at(10.0));
+    let point_at = |share: f32| along(track_rect, share);
+    harness.drag_at(point_at(0.05));
     harness.run_steps(2);
     let mut last = 0.0;
-    for x in [60.0, 160.0] {
-        harness.hover_at(point_at(x));
+    for share in [0.3, 0.8] {
+        harness.hover_at(point_at(share));
         harness.run_steps(2);
 
         assert!(level(&harness) > last && level(&harness) != 0.5, "the level follows the drag before it is released: {last} -> {}", level(&harness));
 
         last = level(&harness);
     }
-    harness.drop_at(point_at(160.0));
+    harness.drop_at(point_at(0.8));
     harness.run_steps(3);
 
     assert_eq!(level(&harness), last);
@@ -93,8 +97,8 @@ fn dragging_a_generator_slider_applies_live_as_one_undo_step() {
 #[test]
 fn clicking_a_slider_track_applies_it() {
     let (mut harness, effect) = selected_generator();
-    let track_rect = track(&harness, "Global balance");
-    let at = egui::pos2(track_rect.left() + 20.0, track_rect.center().y);
+    let track_rect = track(&harness, "Global Balance");
+    let at = along(track_rect, 0.08);
     harness.drag_at(at);
     harness.drop_at(at);
     harness.run_steps(3);
@@ -104,20 +108,22 @@ fn clicking_a_slider_track_applies_it() {
 
 /// The number field in the row of the slider labelled `label`
 fn number_field<'a>(harness: &'a Harness<'_, TextureCraftApp>, label: &str) -> egui_kittest::Node<'a> {
-    let row = harness.get_by_label(label).rect().center().y;
+    let row = track(harness, label).center().y;
     harness.get_all(by().role(Role::TextInput)).find(|node| (node.rect().center().y - row).abs() < 4.0).unwrap()
 }
 
-/// Focus the balance field and press `keys`, then type `text`, one key per frame like a person.
+/// Click the balance's value to type in it and press `keys`, then type `text`, one key per frame like a person.
 fn type_balance(harness: &mut Harness<'_, TextureCraftApp>, keys: &[egui::Key], text: &str) {
-    number_field(harness, "Global balance").focus();
+    harness.get_by_label("Global Balance value").click();
+    harness.run_steps(2);
+    number_field(harness, "Global Balance").focus();
     harness.run_steps(2);
     for key in keys {
         harness.key_press(*key);
         harness.run_steps(1);
     }
     for character in text.chars() {
-        number_field(harness, "Global balance").type_text(&character.to_string());
+        number_field(harness, "Global Balance").type_text(&character.to_string());
         harness.run_steps(1);
     }
 }
@@ -140,12 +146,12 @@ fn a_value_typed_in_the_number_field_applies() {
 fn a_track_drag_drops_text_typed_in_the_number_field() {
     let (mut harness, effect) = selected_generator();
     type_balance(&mut harness, &[egui::Key::End, egui::Key::Backspace], "5");
-    let track_rect = track(&harness, "Global balance");
-    harness.drag_at(egui::pos2(track_rect.right(), track_rect.center().y));
+    let track_rect = track(&harness, "Global Balance");
+    harness.drag_at(along(track_rect, 0.98));
     harness.run_steps(2);
-    harness.hover_at(egui::pos2(track_rect.left() + 20.0, track_rect.center().y));
+    harness.hover_at(along(track_rect, 0.08));
     harness.run_steps(2);
-    harness.drop_at(egui::pos2(track_rect.left() + 20.0, track_rect.center().y));
+    harness.drop_at(along(track_rect, 0.08));
     harness.run_steps(2);
     let dragged = balance(&harness, effect);
     assert!(dragged < 0.25, "the drag applies: {dragged}");
@@ -175,8 +181,8 @@ fn leaving_the_number_field_unchanged_keeps_the_value() {
 
     type_balance(&mut harness, &[egui::Key::End, egui::Key::Backspace], "9");
 
-    assert_eq!(number_field(&harness, "Global balance").value().as_deref(), Some("0.39"));
-    assert!(number_field(&harness, "Global balance").is_focused());
+    assert_eq!(number_field(&harness, "Global Balance").value().as_deref(), Some("0.39"));
+    assert!(number_field(&harness, "Global Balance").is_focused());
 
     harness.key_press(egui::Key::Escape);
     harness.run_steps(3);

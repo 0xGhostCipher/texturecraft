@@ -300,6 +300,11 @@ impl Thumbs {
         self.worker_rendered(ctx, ShelfPreview::Generator(kind), SPHERE_PX, false)
     }
 
+    /// A generator orb (`preview` a [`ShelfPreview::Generator`] or [`ShelfPreview::Curvature`]) rendered `size_px` wide, kept like a thumbnail; None until the worker returns it
+    pub fn generator_picture(&mut self, ctx: &egui::Context, preview: ShelfPreview, size_px: usize) -> Option<TextureHandle> {
+        self.worker_rendered(ctx, preview, size_px.clamp(1, texturecraft_engine::orb_preview::MAX_PREVIEW_SIZE_PX), false)
+    }
+
     /// Sphere thumbnail of library filter `id` applied to a sample material
     pub fn filter(&mut self, ctx: &egui::Context, id: &'static str) -> Option<TextureHandle> {
         self.shelf(ctx, ShelfPreview::Filter(id), SPHERE_PX)

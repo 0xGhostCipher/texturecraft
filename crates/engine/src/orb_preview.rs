@@ -86,13 +86,18 @@ impl OrbPreview {
     /// Row-major `size²` pixels of a mask holding one generator of `kind` at its defaults, with None outside the shape
     /// Returns None for sizes outside 1..=[`MAX_PREVIEW_SIZE_PX`]
     pub fn generator(&mut self, kind: GeneratorKind, size: usize) -> Option<Vec<Option<MaskPreviewPixel>>> {
+        self.generator_of(Generator::new(kind), size)
+    }
+
+    /// [`Self::generator`] for `generator` as given (a Curvature generator with one detail size alone)
+    pub fn generator_of(&mut self, generator: Generator, size: usize) -> Option<Vec<Option<MaskPreviewPixel>>> {
         if !valid_size(size) {
             return None;
         }
 
         // Each generator goes on the bare shape, not over the previous mask
         (self.session.doc, self.session.selected) = self.bare.clone();
-        let effects = vec![(EffectKind::Generator(Generator::new(kind)), BlendMode::Normal)];
+        let effects = vec![(EffectKind::Generator(generator), BlendMode::Normal)];
         let mask = smart_masks::build_mask(&mut self.session.doc.project, MaskBackground::Black, effects);
         self.session.doc.project.layer_mut(self.layer).ok()?.mask = Some(mask);
         self.mask_pixels(size)

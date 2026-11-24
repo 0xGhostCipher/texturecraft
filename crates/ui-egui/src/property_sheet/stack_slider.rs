@@ -17,4 +17,7 @@ pub(crate) struct StackSlider<'a> {
 
     /// A unit after the value ("°")
     pub(crate) suffix: &'a str,
+
+    /// An angle: a small dial before its value, as an angle row has
+    pub(crate) dial: bool,
 }

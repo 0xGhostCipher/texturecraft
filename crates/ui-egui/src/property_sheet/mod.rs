@@ -37,6 +37,8 @@ mod section_tabs;
 #[path = "property_sheet.rs"]
 mod sheet;
 mod sheet_measure;
+mod size_columns;
+mod size_columns_response;
 mod slider;
 mod slot;
 mod slot_response;
@@ -66,6 +68,7 @@ pub(crate) use section_tabs::{
     full_height_tab_rect, in_scope, room_past_end, section_tabs, shown_tab_box,
 };
 pub(crate) use sheet::PropertySheet;
+pub(crate) use size_columns_response::SizeColumnsResponse;
 pub(crate) use slot_response::SlotResponse;
 pub(crate) use stack_slider::StackSlider;
 

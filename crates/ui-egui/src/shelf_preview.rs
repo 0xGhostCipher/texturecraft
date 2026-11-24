@@ -6,7 +6,7 @@ use std::sync::Arc;
 use egui::ColorImage;
 use texturecraft_engine::compose::ImageRes;
 use texturecraft_engine::compose::ImageStore;
-use texturecraft_engine::core::{GeneratorKind, ProceduralKind};
+use texturecraft_engine::core::{CurvatureMode, Generator, GeneratorKind, ProceduralKind};
 use texturecraft_engine::materials;
 use texturecraft_engine::paint::BrushSettings;
 use texturecraft_engine::paint::alphas::LibraryAlpha;
@@ -30,6 +30,8 @@ pub enum ShelfPreview {
     SmartMask(&'static str),
     /// A mask generator at its defaults, rendered like a smart mask on the worker's baked orb
     Generator(GeneratorKind),
+    /// A Curvature generator in `mode`, with only detail size `solo` (finest first) when given, rendered like [`ShelfPreview::Generator`]
+    Curvature { mode: CurvatureMode, solo: Option<usize> },
     /// A library filter on a sample material on a sphere
     Filter(&'static str),
     /// A procedural pattern as a grayscale swatch
@@ -47,6 +49,18 @@ pub enum ShelfPreview {
 }
 
 impl ShelfPreview {
+    /// The Curvature generator [`ShelfPreview::Curvature`] renders
+    pub fn curvature_generator(mode: CurvatureMode, solo: Option<usize>) -> Generator {
+        let mut generator = Generator::new(GeneratorKind::Curvature);
+        let mut detail = generator.detail.take().unwrap_or_default();
+        detail.mode = mode;
+        if let Some(solo) = solo {
+            detail.weights = std::array::from_fn(|size| if size == solo { 1.0 } else { 0.0 });
+        }
+        generator.detail = Some(detail);
+        generator
+    }
+
     /// Resolve a saved brush's image alpha while the project images are available
     pub fn saved_brush(path: &std::path::Path, images: &ImageStore) -> Self {
         let settings = read_saved_brush(path);
@@ -75,6 +89,7 @@ impl ShelfPreview {
             ShelfPreview::SmartMaterial(id) => format!("smart-mat:{id}"),
             ShelfPreview::SmartMask(id) => format!("mask:{id}"),
             ShelfPreview::Generator(kind) => format!("generator:{kind:?}"),
+            ShelfPreview::Curvature { mode, solo } => format!("curvature:{mode:?}:{solo:?}"),
             ShelfPreview::Filter(id) => format!("filter:{id}"),
             ShelfPreview::Procedural(kind) => format!("proc:{kind:?}"),
             ShelfPreview::Alpha(alpha) => format!("alpha:{}", alpha.id),
@@ -90,7 +105,7 @@ impl ShelfPreview {
     pub fn image(&self, size: usize) -> Option<ColorImage> {
         match self {
             ShelfPreview::Material(id) => Some(sphere_image(size, &preview::material(id, size)?)),
-            ShelfPreview::SmartMask(_) | ShelfPreview::Generator(_) | ShelfPreview::SmartMaterial(_) => None,
+            ShelfPreview::SmartMask(_) | ShelfPreview::Generator(_) | ShelfPreview::Curvature { .. } | ShelfPreview::SmartMaterial(_) => None,
             ShelfPreview::Filter(id) => Some(sphere_image(size, &preview::filter(id, size)?)),
             ShelfPreview::Procedural(kind) => Some(procedural_image(*kind, size)),
             ShelfPreview::Alpha(alpha) => Some(alpha_image(alpha, size)),
