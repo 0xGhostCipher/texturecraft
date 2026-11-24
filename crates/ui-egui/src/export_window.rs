@@ -25,10 +25,6 @@ use map_row::MapRow;
 const REFERENCE_WINDOW_SIZE_POINTS: egui::Vec2 = egui::vec2(1100.0, 740.0);
 /// Space kept free around the content on a small screen: the title bar, the frame and a gap
 const WINDOW_VIEWPORT_MARGIN_POINTS: f32 = 72.0;
-/// Height of the tab row, the separators and the bottom bar around the tab body
-const WINDOW_CHROME_HEIGHT_POINTS: f32 = 80.0;
-/// The smallest tab body, so the lists and pages stay usable
-const MIN_BODY_HEIGHT_POINTS: f32 = 160.0;
 /// Width of the texture set list
 const LIST_WIDTH: f32 = 250.0;
 const ICON: f32 = 20.0;
@@ -873,7 +869,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
 
 /// The left column: Global settings, then a row per texture set with its export tick; a click
 /// on a row shows the set's page, "*" marks a set with overrides
-fn set_list(app: &mut TextureCraftApp, ui: &mut Ui, body_height: f32) {
+fn set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| list_menu(ui, |ui| set_checks_menu(app, ui)));
     });
@@ -883,7 +879,7 @@ fn set_list(app: &mut TextureCraftApp, ui: &mut Ui, body_height: f32) {
     }
 
     // Many texture sets scroll inside the list; the footer stays in view
-    let list_height = body_height - header.rect.height() - ui.spacing().item_spacing.y;
+    let list_height = ui.available_height();
     egui::ScrollArea::vertical().id_salt("export_texture_sets").max_height(list_height.max(0.0)).show(ui, |ui| set_rows(app, ui));
 }
 
@@ -1454,128 +1450,149 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut do_export = false;
     let mut canceled = false;
     let presets = texturecraft_engine::formats::builtin_presets();
-    let window_size = REFERENCE_WINDOW_SIZE_POINTS.min(ctx.content_rect().size() - vec2(WINDOW_VIEWPORT_MARGIN_POINTS, WINDOW_VIEWPORT_MARGIN_POINTS));
-    let body_height = (window_size.y - WINDOW_CHROME_HEIGHT_POINTS).max(MIN_BODY_HEIGHT_POINTS);
-    crate::windows::dialog("export_textures", tr("Export textures"), &mut open).fixed_size(window_size).show(ctx, |ui| {
+    // The reference size on a screen that has room for it, smaller on a smaller one; resizable from there.
+    // The window's size counts its frame and title bar, the reference size only the content
+    let style = ctx.global_style();
+    let title_height = ctx.fonts_mut(|fonts| fonts.row_height(&egui::TextStyle::Heading.resolve(&style))) + style.spacing.item_spacing.y;
+    let chrome = egui::Frame::window(&style).total_margin().sum() + vec2(0.0, title_height);
+    let window_size =
+        (REFERENCE_WINDOW_SIZE_POINTS + chrome).min(ctx.content_rect().size() - vec2(WINDOW_VIEWPORT_MARGIN_POINTS, WINDOW_VIEWPORT_MARGIN_POINTS));
+    let dialog = crate::windows::dialog(ctx, "export_textures", tr("Export Textures"), &mut open).default_size(window_size);
+    dialog.show(ctx, |ui| {
         // Nothing to export without a project
         if !app.session.project_open {
             ui.label(tr("No project is open"));
             return;
         }
 
-        ui.horizontal(|ui| {
-            // Boxed tabs side by side
-            ui.scope(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for (i, t) in [tr("Settings"), tr("Output templates"), tr("List of exports")].iter().enumerate() {
-                    if tab_button(ui, &t.to_uppercase(), app.ui.export.tab == i as u8).clicked() {
-                        app.ui.export.tab = i as u8;
-                    }
-                }
-            });
-
-            // The file list opens the destination folder
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if app.ui.export.tab == 2 {
-                    // The browser downloads the files instead
-                    #[cfg(target_arch = "wasm32")]
-                    crate::unavailable::greyed(ui, |ui| ui.button(tr("Open output directory")));
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if ui.button(tr("Open output directory")).clicked() {
-                        open_output_directory(app);
-                    }
-                } else if app.ui.export.tab == 1 {
-                    crate::export_templates::naming_pattern(ui);
-                } else if ui.add(footer_button(tr("Include all"))).on_hover_text(tr("Select every texture set, UV tile and output map")).clicked() {
-                    app.ui.export.skip.clear();
-                    for o in app.ui.export.sets.values_mut() {
-                        o.maps.values_mut().for_each(|m| m.enabled = true);
-                    }
-                    app.ui.export.sets.retain(|_, o| !o.is_default());
-                }
-            });
-        });
-        ui.separator();
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), body_height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
-            ui.set_height(body_height);
-            match app.ui.export.tab {
-                1 => {
-                    crate::export_templates::tab(app, ui, &presets);
-                    return;
-                }
-                2 => {
-                    list_tab(app, ui);
-                    return;
-                }
-                _ => {}
-            }
-
-            ui.vertical(|ui| {
-                ui.set_width(LIST_WIDTH);
-                set_list(app, ui, body_height);
-            });
-            ui.separator();
-            ui.vertical(|ui| match app.ui.export.page {
-                Some(ts) if ts < app.session.set_count() => set_page(app, ui, ts, &presets),
-                // A short or narrow window scrolls the settings, so the footer and every control stay reachable
-                _ => {
-                    egui::ScrollArea::both().id_salt("exp_global_scroll").auto_shrink([false; 2]).show(ui, |ui| global_page(app, ui, &presets));
-                }
-            });
-        });
-        ui.add_space(8.0);
-        ui.separator();
-
-        // While exporting: the progress and Cancel Export
-        if let Some(job) = &app.ui.export.job {
-            let done = job.total - job.pending.len();
-            let progress = if job.total == 0 { 1.0 } else { done as f32 / job.total as f32 };
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(tr("Cancel Export")).clicked() {
-                        app.ui.export.job = None;
-                    }
-                    let percent = format!("{:.0}%", progress * 100.0);
-                    ui.add(egui::ProgressBar::new(progress).text(percent));
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            // While exporting: the progress and Cancel Export
+            if let Some(job) = &app.ui.export.job {
+                let done = job.total - job.pending.len();
+                let progress = if job.total == 0 { 1.0 } else { done as f32 / job.total as f32 };
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(tr("Cancel Export")).clicked() {
+                            app.ui.export.job = None;
+                        }
+                        let percent = format!("{:.0}%", progress * 100.0);
+                        ui.add(egui::ProgressBar::new(progress).text(percent));
+                    });
                 });
-            });
-            return;
-        }
+            } else {
+                // OUTPUT TEMPLATES edits the templates only: no count, nothing to reset, save or export there
+                let templates_tab = app.ui.export.tab == 1;
+                let selected = if templates_tab { 0 } else { selected_texture_count(app) };
+                ui.horizontal(|ui| {
+                    // Only on SETTINGS
+                    if app.ui.export.tab == 0
+                        && ui.add(footer_button(tr("Reset all"))).on_hover_text(tr("Restore the export defaults and select every texture")).clicked()
+                    {
+                        // Keep ownership so Cancel can restore the opening settings
+                        let e = &mut app.ui.export;
+                        let (opened_with, owner, owner_id) = (e.opened_with.take(), std::mem::take(&mut e.owner), e.owner_id);
+                        app.ui.export = ExportUi { opened_with, owner, owner_id, ..ExportUi::default() };
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Nothing to write without a ticked texture set
+                        let any = !export_selection(app).is_empty() && !templates_tab;
+                        if ui
+                            .add_enabled(any, footer_button(tr("Export")))
+                            .on_hover_text(tr("Write the selected textures, and the extra files ticked in the settings"))
+                            .clicked()
+                        {
+                            do_export = true;
+                        }
 
-        // OUTPUT TEMPLATES edits the templates only: no count, nothing to reset, save or export there
-        let templates_tab = app.ui.export.tab == 1;
-        let selected = if templates_tab { 0 } else { selected_texture_count(app) };
-        ui.horizontal(|ui| {
-            // Only on SETTINGS
-            if app.ui.export.tab == 0
-                && ui.add(footer_button(tr("Reset all"))).on_hover_text(tr("Restore the export defaults and select every texture")).clicked()
-            {
-                // Keep ownership so Cancel can restore the opening settings
-                let e = &mut app.ui.export;
-                let (opened_with, owner, owner_id) = (e.opened_with.take(), std::mem::take(&mut e.owner), e.owner_id);
-                app.ui.export = ExportUi { opened_with, owner, owner_id, ..ExportUi::default() };
+                        // Saving closes the window without starting an export
+                        let save = ui.add_enabled(!templates_tab, footer_button(tr("Save settings")));
+                        if save.on_hover_text(tr("Keep these settings for the next export and close the window")).clicked() {
+                            app.ui.windows.export = false;
+                        }
+                        if ui.add(footer_button(tr("Cancel"))).on_hover_text(tr("Close the window and go back to the settings it opened with")).clicked() {
+                            canceled = true;
+                        }
+                        if !templates_tab {
+                            ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
+                        }
+                    });
+                });
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Nothing to write without a ticked texture set
-                let any = !export_selection(app).is_empty() && !templates_tab;
-                if ui
-                    .add_enabled(any, footer_button(tr("Export")))
-                    .on_hover_text(tr("Write the selected textures, and the extra files ticked in the settings"))
-                    .clicked()
-                {
-                    do_export = true;
-                }
+            ui.separator();
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.horizontal(|ui| {
+                    // Boxed tabs side by side
+                    ui.scope(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for (i, t) in [tr("Settings"), tr("Output templates"), tr("List of exports")].iter().enumerate() {
+                            if tab_button(ui, &t.to_uppercase(), app.ui.export.tab == i as u8).clicked() {
+                                app.ui.export.tab = i as u8;
+                            }
+                        }
+                    });
 
-                // Saving closes the window without starting an export
-                let save = ui.add_enabled(!templates_tab, footer_button(tr("Save settings")));
-                if save.on_hover_text(tr("Keep these settings for the next export and close the window")).clicked() {
-                    app.ui.windows.export = false;
-                }
-                if ui.add(footer_button(tr("Cancel"))).on_hover_text(tr("Close the window and go back to the settings it opened with")).clicked() {
-                    canceled = true;
-                }
-                if !templates_tab {
-                    ui.label(trf("{n} textures selected for export", &[("n", &selected)]));
+                    // The file list opens the destination folder
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if app.ui.export.tab == 2 {
+                            // The browser downloads the files instead
+                            #[cfg(target_arch = "wasm32")]
+                            crate::unavailable::greyed(ui, |ui| ui.button(tr("Open output directory")));
+                            #[cfg(not(target_arch = "wasm32"))]
+                            if ui.button(tr("Open output directory")).clicked() {
+                                open_output_directory(app);
+                            }
+                        } else if app.ui.export.tab == 1 {
+                            crate::export_templates::naming_pattern(ui);
+                        } else if ui.add(footer_button(tr("Include all"))).on_hover_text(tr("Select every texture set, UV tile and output map")).clicked() {
+                            app.ui.export.skip.clear();
+                            for o in app.ui.export.sets.values_mut() {
+                                o.maps.values_mut().for_each(|m| m.enabled = true);
+                            }
+                            app.ui.export.sets.retain(|_, o| !o.is_default());
+                        }
+                    });
+                });
+                ui.separator();
+                let body = egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), ui.available_height().max(0.0)));
+
+                // The tabs size their columns from the body's width. A child that cannot widen the
+                // resizable window holds them, so an overflow is clipped instead of growing the window each frame
+                let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::left_to_right(egui::Align::Min)));
+                body_ui.shrink_clip_rect(body);
+                ui.advance_cursor_after_rect(body);
+                let ui = &mut body_ui;
+                'tab: {
+                    ui.set_height(body.height());
+                    match app.ui.export.tab {
+                        1 => {
+                            crate::export_templates::tab(app, ui, &presets);
+                            break 'tab;
+                        }
+                        2 => {
+                            list_tab(app, ui);
+                            break 'tab;
+                        }
+                        _ => {}
+                    }
+
+                    ui.vertical(|ui| {
+                        ui.set_width(LIST_WIDTH);
+                        set_list(app, ui);
+                    });
+                    ui.separator();
+
+                    // A short or narrow window scrolls the settings, so the footer and every control stay reachable
+                    ui.vertical(|ui| {
+                        egui::ScrollArea::both().id_salt("export_settings_page").auto_shrink([false, false]).min_scrolled_height(0.0).show(ui, |ui| match app
+                            .ui
+                            .export
+                            .page
+                        {
+                            Some(ts) if ts < app.session.set_count() => set_page(app, ui, ts, &presets),
+                            _ => global_page(app, ui, &presets),
+                        });
+                    });
                 }
             });
         });

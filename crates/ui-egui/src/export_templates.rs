@@ -572,13 +572,13 @@ pub(crate) fn ask(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut yes = false;
     let (title, text, yes_label, no_label) = match &question {
         Ask::Delete(name) => (
-            tr("Delete template"),
+            tr("Delete Template"),
             trf("Delete the template \"{name}\"? Its file is removed and this cannot be undone.", &[("name", name)]),
             tr("Delete"),
             tr("Cancel"),
         ),
         Ask::Leave(_) => (
-            tr("Unfinished template edit"),
+            tr("Unfinished Template Edit"),
             trf(
                 "The last edit of the template \"{name}\" is not saved: {error}. Switching away drops it.",
                 &[("name", &app.ui.export.preset), ("error", &unfinished(app).unwrap_or_default())],
@@ -587,27 +587,22 @@ pub(crate) fn ask(app: &mut TextureCraftApp, ctx: &egui::Context) {
             tr("Keep editing"),
         ),
     };
-    egui::Window::new(title)
-        .id(egui::Id::unique("export_template_ask"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            ui.set_max_width(360.0);
-            ui.label(text);
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                yes = ui.button(yes_label).clicked();
-                cancel |= ui.button(no_label).clicked();
-            });
+    let mut open = true;
+    crate::windows::dialog(ctx, "export_template_ask", title, &mut open).default_width(360.0).show(ctx, |ui| {
+        ui.label(text);
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            yes = ui.button(yes_label).clicked();
+            cancel |= ui.button(no_label).clicked();
         });
+    });
     if yes {
         app.ui.export.ask = None;
         match question {
             Ask::Delete(name) => remove(app, name),
             Ask::Leave(act) => perform(app, ctx, act),
         }
-    } else if cancel {
+    } else if cancel || !open {
         app.ui.export.ask = None;
     }
 }
@@ -799,13 +794,15 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     let footer = 2.0 * ui.text_style_height(&egui::TextStyle::Body) + 3.0 * ui.spacing().item_spacing.y + 2.0 * ROW_MARGIN_POINTS;
     egui::ScrollArea::vertical().id_salt("exp_outputs").auto_shrink([false; 2]).max_height((ui.available_height() - footer).max(60.0)).show(ui, |ui| {
         ui.add_enabled_ui(editable, |ui| {
+            // Every row takes the column's width, not the width a wider row before it left
+            let row_width = ui.available_width();
             for ((index, map), row_split) in preset.maps.iter_mut().enumerate().zip(split.iter_mut()) {
                 let file = preview.as_ref().ok().and_then(|names| names.get(index).cloned().flatten());
                 let planned = match file {
                     Some(file) => format!("{} {file}", ic::ARROW_RIGHT),
                     None => tr("Not exported: no source in this texture set").to_string(),
                 };
-                changed |= output_row(ui, index, map_count, map, row_split, &planned, &mut edit);
+                changed |= ui.allocate_ui(vec2(row_width, 0.0), |ui| output_row(ui, index, map_count, map, row_split, &planned, &mut edit)).inner;
                 ui.add_space(ROW_GAP_POINTS);
             }
         });

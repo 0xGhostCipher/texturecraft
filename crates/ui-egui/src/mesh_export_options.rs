@@ -31,7 +31,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
 
     let mut open = true;
     let (mut export, mut cancel) = (false, false);
-    crate::windows::dialog("mesh_export_options", tr("Mesh Export Options"), &mut open).show(ctx, |ui| {
+    crate::windows::dialog(ctx, "mesh_export_options", tr("Mesh Export Options"), &mut open).show(ctx, |ui| {
         ui.set_width(DIALOG_WIDTH);
 
         // TextureCraft exports the mesh as it is: triangulated, without displacement
