@@ -550,6 +550,7 @@ fn apply_corner_uvs(mesh: &mut Mesh, layout: &[Vec2]) -> Result<()> {
     if layout.len() != mesh.indices.len() {
         return Err(FormatError::Invalid(format!("the saved UV layout has {} corners but the mesh has {}", layout.len(), mesh.indices.len())));
     }
+
     if layout.iter().any(|uv| !uv.is_finite()) {
         return Err(FormatError::Invalid("the saved UV layout has non-finite UVs".into()));
     }

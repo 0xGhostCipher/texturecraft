@@ -531,6 +531,7 @@ fn load_archive<R: Read + Seek>(mut zip: ZipArchive<R>, mut budget: LoadBudget) 
     if pf.project.mesh_rebuild_uvs && pf.mesh.is_some() && pf.mesh_uvs.is_none() {
         return Err(malformed(KIND, "the mesh UVs were rebuilt but the project holds no saved UV layout"));
     }
+
     if version < TANGENT_BENT_NORMAL_VERSION {
         drop_world_space_bent_normals(&mut pf);
     }

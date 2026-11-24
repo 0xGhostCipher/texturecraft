@@ -49,9 +49,11 @@ pub fn read_uv_layout(bytes: &[u8]) -> Result<Vec<Vec2>> {
     if magic != UV_LAYOUT_MAGIC {
         return Err(bad("bad magic"));
     }
+
     if u32::from_le_bytes(*version) != UV_LAYOUT_VERSION {
         return Err(bad("unsupported version"));
     }
+
     let corners = u32::from_le_bytes(*corners) as usize;
     if corners.checked_mul(CORNER_BYTES) != Some(body.len()) {
         return Err(bad("the corner count does not match the entry size"));
@@ -69,5 +71,6 @@ pub fn read_uv_layout(bytes: &[u8]) -> Result<Vec<Vec2>> {
     if layout.iter().any(|uv| !uv.is_finite()) {
         return Err(bad("non-finite UVs"));
     }
+
     Ok(layout)
 }
