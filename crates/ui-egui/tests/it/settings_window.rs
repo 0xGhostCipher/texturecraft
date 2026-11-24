@@ -156,6 +156,8 @@ fn the_resource_sliders_step_by_one_and_follow_the_arrow_keys() {
 
     let ram_percent = |h: &Harness<'_, TextureCraftApp>| h.state().ui.windows.settings_draft.as_ref().unwrap().prefs.save_ram_percent;
     let before = ram_percent(&h);
+    h.get_by_role_and_label(Role::Slider, "Max RAM while saving").scroll_to_me();
+    h.run_steps(3);
     h.get_by_role_and_label(Role::Slider, "Max RAM while saving").focus();
     h.run_steps(2);
     press_key(&mut h, Key::ArrowRight);
@@ -194,6 +196,9 @@ fn the_local_cache_directory_takes_a_folder_and_r_goes_back_to_the_default() {
     type_into(&mut h, "Local cache directory", &folder);
     assert_eq!(stored(&h), folder);
 
+    // The Files cache directory's R stays disabled; the local cache's R is the one that works
+    h.query_all_by_label("R").find(|node| !node.accesskit_node().is_disabled()).unwrap().scroll_to_me();
+    h.run_steps(3);
     h.query_all_by_label("R").find(|node| !node.accesskit_node().is_disabled()).unwrap().click();
     h.run_steps(3);
     assert!(stored(&h).is_empty(), "R goes back to the default folder");

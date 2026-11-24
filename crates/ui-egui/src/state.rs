@@ -167,7 +167,8 @@ pub struct Prefs {
     pub reserved_cores: u32,
     /// Maximum decompressed project size accepted on open, in GiB (at least one).
     pub project_open_limit_gib: u32,
-    /// Percent of the free RAM a project save may hold at once (desktop; 1 to 100).
+    /// Percent of the free RAM a project save may hold at once (desktop; 0 to 100, a save holds
+    /// at least 1).
     pub save_ram_percent: u8,
     /// Worker threads for painting, baking and export (desktop; 0: one per logical CPU). Read at
     /// startup, before the first parallel job.

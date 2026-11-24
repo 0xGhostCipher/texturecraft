@@ -326,7 +326,11 @@ Other preferences set through `ui.set {"prefs": {...}}`: `language` (`""` follow
 language), `work_threads` (worker threads for painting, baking and export; 0 uses every logical
 CPU; read at startup), `rotation_speed` (default 2), `zoom_speed` and `wheel_speed` (default 1,
 each from 0.1 to 10) with `zoom_inverse` and `wheel_inverse`, `gpu_raytracing` (false keeps bake
-rays on the CPU) and `libraries` (the folders the shelf scans for saved smart materials and masks).
+rays on the CPU), `show_world_axes` (the 3D view's X, Y and Z corner, default true) and `libraries`
+(the folders the shelf scans for saved smart materials and masks). `show_keyboard_helper`,
+`only_selected_material_when_painting`, `save_preprocessed_scene_files`, `live_preview_baking` and
+`local_cache_directory` (empty: the system's temporary folder) are kept for Settings but have no
+effect yet.
 For example, the `libraries` field can contain `[{"name": "Studio", "path": "/assets/studio"}]`.
 Use an absolute path on the host running TextureCraft. To change one preference, read `state.prefs`
 with `ui.inspect`, update that field and send the full `prefs` object to `ui.set`.
