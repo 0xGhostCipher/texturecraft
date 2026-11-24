@@ -9,7 +9,7 @@ use crate::TextureCraftApp;
 use crate::file_dialogs::{Bound, FileDialog};
 use crate::i18n::{LANGUAGES, SYSTEM_LANGUAGE, n_, tr, trf};
 use crate::state::{CAMERA_SPEED_RANGE, LibraryLocation, MAX_RECENT_PROJECTS, Prefs};
-use crate::theme::{Accent, Brightness, Tokens, caption};
+use crate::theme::{Tokens, caption};
 use crate::unavailable::NOT_AVAILABLE;
 use crate::widgets::icon_button;
 
@@ -274,9 +274,17 @@ fn section(ui: &mut Ui, title: &str) {
     ui.add_space(2.0);
 }
 
-/// A disabled check box in the right column of a row labelled `label`.
-fn disabled_check(ui: &mut Ui, label: egui::Id, mut checked: bool) {
-    not_available(ui.add_enabled(false, egui::Checkbox::without_text(&mut checked)).labelled_by(label));
+/// A check box in the right column of a row labelled `label`.
+fn check(ui: &mut Ui, label: egui::Id, checked: &mut bool) {
+    ui.add(egui::Checkbox::without_text(checked)).labelled_by(label);
+}
+
+/// A check box with its text.
+fn text_check(ui: &mut Ui, text: &str, checked: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        ui.checkbox(checked, tr(text));
+    });
 }
 
 /// A disabled check box with its text.
@@ -304,6 +312,35 @@ fn speed_slider(ui: &mut Ui, label: &str, value: &mut f32, width: f32) -> Respon
 /// Whether the Baking options say there is no GPU to trace rays on: no adapter, or the browser.
 pub fn gpu_note_shown(adapter: Option<&str>) -> bool {
     adapter.is_none() || cfg!(target_arch = "wasm32")
+}
+
+/// The Enable GPU raytracing check box for the hardware and the stored choice: whether it can be
+/// changed and whether it shows ticked. Without a GPU to trace on it is off and disabled; the
+/// stored choice is kept for a machine that has one.
+pub fn gpu_raytracing_check(adapter: Option<&str>, stored: bool) -> (bool, bool) {
+    let supported = !gpu_note_shown(adapter);
+    (supported, supported && stored)
+}
+
+/// The Max CPU threads slider's position for a stored `work_threads`: 0 (every thread) is the
+/// slider's end, the core count.
+#[cfg(not(target_arch = "wasm32"))]
+fn work_threads_shown(work_threads: u32, cores: u32) -> u32 {
+    if work_threads == 0 { cores } else { work_threads.min(cores).max(1) }
+}
+
+/// The stored `work_threads` for the slider at `threads`: its end keeps 0, so every thread works
+/// on any machine.
+#[cfg(not(target_arch = "wasm32"))]
+fn work_threads_stored(threads: u32, cores: u32) -> u32 {
+    if threads >= cores { 0 } else { threads }
+}
+
+/// The note right of a core slider: how many cores this machine has.
+#[cfg(not(target_arch = "wasm32"))]
+fn cores_in_total(ui: &mut Ui, cores: u32) {
+    let tk = Tokens::get(ui.ctx());
+    ui.label(RichText::new(trf("{count} cores in total", &[("count", &cores)])).color(tk.text_dim));
 }
 
 /// The General page.
@@ -339,8 +376,8 @@ fn general(
             .response
             .labelled_by(label);
     });
-    row(ui, tr("Show keyboard helper"), |ui, label| disabled_check(ui, label, true));
-    row(ui, tr("Show world axes"), |ui, label| disabled_check(ui, label, true));
+    row(ui, tr("Show keyboard helper"), |ui, label| check(ui, label, &mut p.show_keyboard_helper));
+    row(ui, tr("Show world axes"), |ui, label| check(ui, label, &mut p.show_world_axes));
     row(ui, tr("Background color"), |ui, _| {
         for (index, side, name) in [(0, "top", "Top background"), (1, "bottom", "Bottom background")] {
             let id = format!("settings_background_{side}");
@@ -352,20 +389,17 @@ fn general(
             ui.add_space(10.0);
         }
     });
-    row(ui, tr("Only display the selected material when painting"), |ui, label| disabled_check(ui, label, false));
+    row(ui, tr("Only display the selected material when painting"), |ui, label| check(ui, label, &mut p.only_selected_material_when_painting));
     row(ui, tr("Viewport Scaling"), |ui, label| {
-        ui.add_enabled_ui(false, |ui| {
-            not_available(
-                egui::ComboBox::from_id_salt("settings_viewport_scaling").width(CONTROL_WIDTH).selected_text(tr("Auto")).show_ui(ui, |_| {}).response,
-            )
+        // Auto is the one scaling the views have
+        egui::ComboBox::from_id_salt("settings_viewport_scaling")
+            .width(CONTROL_WIDTH)
+            .selected_text(tr("Auto"))
+            .show_ui(ui, |ui| {
+                ui.add(egui::Button::selectable(true, tr("Auto")));
+            })
+            .response
             .labelled_by(label);
-        });
-    });
-
-    row(ui, tr("Recent projects limit"), |ui, label| {
-        ui.add(egui::DragValue::new(&mut p.recent_projects_limit).range(0..=MAX_RECENT_PROJECTS))
-            .labelled_by(label)
-            .on_hover_text(tr("Number of recent projects to remember. 0 disables recent-project history."));
     });
 
     section(ui, n_("LAYER STACK OPTIONS"));
@@ -397,12 +431,17 @@ fn general(
     }
 
     section(ui, n_("BAKING OPTIONS"));
-    disabled_text_check(ui, n_("Save preprocessed scene files"), true);
-    disabled_text_check(ui, n_("Enable live preview baking process"), true);
+    text_check(ui, n_("Save preprocessed scene files"), &mut p.save_preprocessed_scene_files);
+    text_check(ui, n_("Enable live preview baking process"), &mut p.live_preview_baking);
+    let (gpu_raytracing_enabled, mut gpu_raytracing_ticked) = gpu_raytracing_check(gpu, p.gpu_raytracing);
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        ui.checkbox(&mut p.gpu_raytracing, tr("Enable GPU raytracing"))
+        let gpu_raytracing = ui
+            .add_enabled(gpu_raytracing_enabled, egui::Checkbox::new(&mut gpu_raytracing_ticked, tr("Enable GPU raytracing")))
             .on_hover_text(tr("Bakes cast their rays on the graphics card when one is available. Off, they run on the CPU."));
+        if gpu_raytracing.changed() {
+            p.gpu_raytracing = gpu_raytracing_ticked;
+        }
     });
     if gpu_note_shown(gpu) {
         ui.horizontal(|ui| {
@@ -413,6 +452,17 @@ fn general(
 
     section(ui, n_("PREVIEW OPTIONS"));
     row(ui, tr("Local cache directory"), |ui, label| {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let default = crate::local_cache_folder("").display().to_string();
+            ui.add(egui::TextEdit::singleline(&mut p.local_cache_directory).hint_text(default).desired_width(CONTROL_WIDTH - 24.0)).labelled_by(label);
+            if ui.add(egui::Button::new("R").frame(false)).on_hover_text(tr("Reset to the default folder")).clicked() {
+                p.local_cache_directory.clear();
+            }
+        }
+
+        // The browser has no folders
+        #[cfg(target_arch = "wasm32")]
         ui.add_enabled_ui(false, |ui| {
             let mut path = String::new();
             not_available(ui.add(egui::TextEdit::singleline(&mut path).desired_width(CONTROL_WIDTH - 24.0))).labelled_by(label);
@@ -431,7 +481,7 @@ fn general(
         not_available(ui.add_enabled(false, egui::Button::new(text).min_size(vec2(CONTROL_WIDTH, 40.0))));
     });
 
-    section(ui, n_("TEMPORARY FILES"));
+    section(ui, n_("FILES"));
     row(ui, tr("Cache directory"), |ui, label| {
         #[cfg(not(target_arch = "wasm32"))]
         let mut path = std::env::temp_dir().display().to_string();
@@ -442,57 +492,19 @@ fn general(
             not_available(ui.add(egui::Button::new("R").frame(false)));
         });
     });
+    #[cfg(not(target_arch = "wasm32"))]
+    row(ui, tr("Data folder"), |ui, label| {
+        let default = crate::data_folder("").display().to_string();
+        ui.add(egui::TextEdit::singleline(&mut p.data_folder).hint_text(default).desired_width(CONTROL_WIDTH - 30.0)).labelled_by(label);
+        if ui.button("...").on_hover_text(tr("Choose the data folder")).clicked() {
+            *pick = Some(SettingsFolder::DataFolder);
+        }
+    });
 
     section(ui, n_("SPARSE VIRTUAL TEXTURE"));
     disabled_text_check(ui, n_("Hardware support acceleration"), true);
 
-    section(ui, n_("IRAY HARDWARE"));
-    disabled_text_check(ui, gpu.unwrap_or(n_("no GPU")), true);
-    disabled_text_check(ui, n_("CPU"), false);
-
     // TextureCraft's own settings, after the reference sections
-    section(ui, n_("APPEARANCE"));
-    row(ui, tr("Interface scale"), |ui, label| {
-        ui.add(egui::Slider::new(&mut p.ui_scale, 0.75..=2.0).fixed_decimals(2)).labelled_by(label);
-    });
-    row(ui, tr("Brightness"), |ui, label| {
-        egui::ComboBox::from_id_salt("settings_brightness")
-            .width(140.0)
-            .selected_text(tr(p.brightness.label()))
-            .show_ui(ui, |ui| {
-                for b in Brightness::ALL {
-                    ui.selectable_value(&mut p.brightness, b, tr(b.label()));
-                }
-            })
-            .response
-            .labelled_by(label);
-    });
-    row(ui, tr("Accent color"), |ui, _| {
-        for a in Accent::ALL {
-            let (rect, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, p.accent == a, tr(a.label())));
-            let ring = if p.accent == a {
-                tk.text_strong
-            } else if resp.hovered() {
-                tk.text_dim
-            } else {
-                Color32::TRANSPARENT
-            };
-            ui.painter().circle(rect.center(), 6.5, a.colors(tk.dark).0, egui::Stroke::NONE);
-            ui.painter().circle_stroke(rect.center(), 9.0, egui::Stroke::new(1.5, ring));
-            if resp.on_hover_text(tr(a.label())).clicked() {
-                p.accent = a;
-            }
-        }
-    });
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        row(ui, tr("Title bar"), |ui, _| {
-            ui.checkbox(&mut p.system_title_bar, tr("System title bar (applies on restart)"))
-                .on_hover_text(tr("Use the operating system's window frame and buttons instead of TextureCraft's own title bar"));
-        });
-    }
-
     section(ui, n_("VIEWPORT"));
     row(ui, tr("Texture resolution"), |ui, _| {
         ui.horizontal(|ui| {
@@ -510,15 +522,22 @@ fn general(
     #[cfg(not(target_arch = "wasm32"))]
     {
         row(ui, tr("Max CPU threads for work"), |ui, label| {
-            ui.add(egui::DragValue::new(&mut p.work_threads).range(0..=available_cores))
+            let mut threads = work_threads_shown(p.work_threads, available_cores);
+            let slider = ui
+                .add(egui::Slider::new(&mut threads, 1..=available_cores.max(1)).step_by(1.0))
                 .labelled_by(label)
-                .on_hover_text(tr("Threads that paint, bake and export. 0 uses every CPU thread. Applies on restart."));
+                .on_hover_text(tr("Threads that paint, bake and export. Applies on restart."));
+            if slider.changed() {
+                p.work_threads = work_threads_stored(threads, available_cores);
+            }
+            cores_in_total(ui, available_cores);
         });
         row(ui, tr("Cores kept for the UI"), |ui, label| {
-            ui.add(egui::DragValue::new(&mut p.reserved_cores).range(0..=available_cores)).labelled_by(label);
+            ui.add(egui::Slider::new(&mut p.reserved_cores, 0..=available_cores).step_by(1.0)).labelled_by(label);
+            cores_in_total(ui, available_cores);
         });
         row(ui, tr("Max RAM while saving"), |ui, label| {
-            ui.add(egui::DragValue::new(&mut p.save_ram_percent).range(1..=100).suffix(" %")).labelled_by(label);
+            ui.add(egui::Slider::new(&mut p.save_ram_percent, 0..=100).step_by(1.0).suffix(" %")).labelled_by(label);
             let budget_bytes = texturecraft_engine::formats::save_ram_budget(available_ram_bytes, p.save_ram_percent);
             ui.label(format!("≈ {:.2} GiB", budget_bytes as f64 / (1_u64 << 30) as f64));
         });
@@ -528,10 +547,11 @@ fn general(
             .labelled_by(label)
             .on_hover_text(tr("Maximum decompressed project data. Increase this limit to open larger projects."));
     });
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        note(ui, tr("Saving uses the other cores and at most this share of the free RAM. At least one core always works."));
-    }
+    row(ui, tr("Recent projects limit"), |ui, label| {
+        ui.add(egui::DragValue::new(&mut p.recent_projects_limit).range(0..=MAX_RECENT_PROJECTS))
+            .labelled_by(label)
+            .on_hover_text(tr("Number of recent projects to remember. 0 disables recent-project history."));
+    });
 
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -539,36 +559,7 @@ fn general(
         row(ui, tr("Autosave every"), |ui, label| {
             ui.add(egui::DragValue::new(&mut p.autosave_minutes).range(0..=120).suffix(format!(" {}", tr("min")))).labelled_by(label);
         });
-        note(ui, &trf("0 turns autosave off. Copies go to {folder}", &[("folder", &crate::user_dir("autosave").display())]));
-
-        section(ui, n_("FOLDERS"));
-        row(ui, tr("Data folder"), |ui, label| {
-            let default = crate::data_folder("").display().to_string();
-            ui.add(egui::TextEdit::singleline(&mut p.data_folder).hint_text(default).desired_width(CONTROL_WIDTH - 30.0)).labelled_by(label);
-            if ui.button("...").on_hover_text(tr("Choose the data folder")).clicked() {
-                *pick = Some(SettingsFolder::DataFolder);
-            }
-        });
-        for (label, dir) in [(tr("Smart materials"), crate::library_dir()), (tr("UI layouts"), crate::user_dir("layouts"))] {
-            row(ui, label, |ui, _| ui.label(RichText::new(dir.display().to_string()).small().color(tk.text_dim)));
-        }
-        note(
-            ui,
-            tr(
-                "Autosaves, smart materials, presets, templates and UI layouts go to the data folder. A new folder applies on restart; files already saved stay where they are.",
-            ),
-        );
     }
-}
-
-/// A small dim note under a section's rows.
-#[cfg(not(target_arch = "wasm32"))]
-fn note(ui: &mut Ui, text: &str) {
-    let tk = Tokens::get(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        ui.add(egui::Label::new(RichText::new(text).small().color(tk.text_dim)).wrap());
-    });
 }
 
 /// The built-in library locations as (name, path): the user's assets in the data folder, the
@@ -795,6 +786,16 @@ mod tests {
         let draft = SettingsDraft::of(&app);
         apply(&mut app, draft);
         assert_eq!(app.next_autosave, 70.0, "an unchanged interval keeps the deadline");
+    }
+
+    #[test]
+    fn max_cpu_threads_shows_every_thread_at_the_slider_end_and_keeps_it_as_every_thread() {
+        let cores = 8;
+
+        assert_eq!(work_threads_shown(0, cores), cores, "every thread is the slider's end");
+        assert_eq!(work_threads_shown(64, cores), cores, "a larger machine's choice stays inside this one");
+        assert_eq!(work_threads_stored(cores, cores), 0, "the end follows any machine's core count");
+        assert_eq!(work_threads_stored(work_threads_shown(3, cores), cores), 3);
     }
 
     #[test]

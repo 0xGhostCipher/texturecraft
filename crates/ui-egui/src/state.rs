@@ -187,6 +187,22 @@ pub struct Prefs {
     /// The plain background of the 3D and 2D views at Environment Opacity 0 (Settings > General >
     /// Background color): the color at the top and at the bottom, linear RGB.
     pub background: [[f32; 3]; 2],
+    /// The 3D view draws the X, Y and Z axes in its corner.
+    pub show_world_axes: bool,
+    /// Settings > General > Show keyboard helper. Stored only: TextureCraft has no keyboard helper yet.
+    pub show_keyboard_helper: bool,
+    /// Settings > General > Only display the selected material when painting. Stored only: the
+    /// views always show every texture set.
+    pub only_selected_material_when_painting: bool,
+    /// Settings > Baking options > Save preprocessed scene files. Stored only: bakes keep no
+    /// preprocessed scene files.
+    pub save_preprocessed_scene_files: bool,
+    /// Settings > Baking options > Enable live preview baking process. Stored only: the live bake
+    /// preview always runs.
+    pub live_preview_baking: bool,
+    /// Settings > Preview options > Local cache directory (desktop). Empty or relative: the
+    /// system's temporary folder. Stored only: TextureCraft writes no preview cache yet.
+    pub local_cache_directory: String,
 }
 
 /// The orbit speed the built-in navigation runs at.
@@ -200,7 +216,7 @@ impl Default for Prefs {
             ui_scale: 1.0,
             autosave_minutes: 10,
             recent_projects_limit: 10,
-            language: "en".into(),
+            language: crate::i18n::SYSTEM_LANGUAGE.into(),
             viewport_texture: 0,
             brightness: crate::theme::Brightness::default(),
             accent: crate::theme::Accent::default(),
@@ -218,6 +234,12 @@ impl Default for Prefs {
             gpu_raytracing: true,
             libraries: Vec::new(),
             background: texturecraft_render::DEFAULT_BACKGROUND,
+            show_world_axes: true,
+            show_keyboard_helper: true,
+            only_selected_material_when_painting: false,
+            save_preprocessed_scene_files: true,
+            live_preview_baking: true,
+            local_cache_directory: String::new(),
         }
     }
 }

@@ -29,7 +29,7 @@ fn no_two_default_shortcuts_are_the_same() {
         }
     }
     for (_, row) in &NOT_AVAILABLE_ACTIONS {
-        let key = row.default.unwrap();
+        let Some(key) = row.default else { continue };
         assert!(!seen.contains_key(key), "{} shows {key}, which another item has", row.label);
     }
 }
@@ -82,4 +82,29 @@ fn a_key_listed_for_a_missing_function_is_reported_as_shared() {
     h.run_steps(4);
     assert!(h.query_by_label_contains("One or several errors").is_some(), "Space is Toggle animation's");
     assert!(h.get_by_label("OK").accesskit_node().is_disabled());
+}
+
+#[test]
+fn the_manipulator_rows_follow_export_textures_in_the_reference_order() {
+    let mut h = harness();
+    let ctx = h.ctx.clone();
+    menus::invoke(h.state_mut(), &ctx, "ui.settings");
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Tab, "Shortcuts").click();
+    h.run_steps(4);
+
+    let rows = [
+        "Export Textures...",
+        "Show/Hide manipulator",
+        "Increase the manipulator size",
+        "Decrease the manipulator size",
+        "Cycle through manipulation spaces",
+        "Toggle warp edition mode",
+        "Translate tool",
+        "Rotate tool",
+        "Reimport mesh",
+    ];
+    let tops: Vec<f32> = rows.iter().map(|label| h.get_by_label(label).rect().top()).collect();
+
+    assert!(tops.windows(2).all(|pair| pair[0] < pair[1]), "{rows:?} run top to bottom: {tops:?}");
 }

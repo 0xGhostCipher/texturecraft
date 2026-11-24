@@ -342,11 +342,8 @@ pub(crate) fn start_ui(saved: Option<UiState>, session: &mut Session) -> UiState
             ui.tool_settings.apply(&mut session.tool);
             ui
         }
-        None => {
-            let mut ui = UiState::default();
-            ui.prefs.language = i18n::SYSTEM_LANGUAGE.into();
-            ui
-        }
+        // The default language follows the operating system
+        None => UiState::default(),
     }
 }
 
@@ -1228,13 +1225,25 @@ pub fn data_folder(pref: &str) -> std::path::PathBuf {
     std::path::Path::new(&home).join("Documents").join("TextureCraft")
 }
 
-/// The data folder in use (Settings › Folders › Data folder).
+/// The folder for a `Prefs::local_cache_directory` value: that path when it is absolute,
+/// otherwise the system's temporary folder.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn local_cache_folder(pref: &str) -> std::path::PathBuf {
+    let chosen = std::path::Path::new(pref.trim());
+    if chosen.is_absolute() {
+        return chosen.to_path_buf();
+    }
+
+    std::env::temp_dir()
+}
+
+/// The data folder in use (Settings › Files › Data folder).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> std::path::PathBuf {
     DATA_FOLDER.get().cloned().unwrap_or_else(|| data_folder(""))
 }
 
-/// `<sub>` in the data folder in use (Settings › Folders › Data folder).
+/// `<sub>` in the data folder in use (Settings › Files › Data folder).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn user_dir(sub: &str) -> std::path::PathBuf {
     data_dir().join(sub)

@@ -4,8 +4,10 @@ use egui::{Event, Key, Modifiers, Role};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use texturecraft_engine::Session;
-use texturecraft_ui_egui::settings_window::{DEFAULT_LIBRARY_NOTE, GPU_RAYTRACING_UNAVAILABLE, PROJECT_OPEN_NOTE, SHORTCUT_ERRORS, SettingsPage};
-use texturecraft_ui_egui::state::{LibraryLocation, UiState};
+use texturecraft_ui_egui::settings_window::{
+    DEFAULT_LIBRARY_NOTE, GPU_RAYTRACING_UNAVAILABLE, PROJECT_OPEN_NOTE, SHORTCUT_ERRORS, SettingsPage, gpu_raytracing_check,
+};
+use texturecraft_ui_egui::state::{LibraryLocation, Prefs, UiState};
 use texturecraft_ui_egui::unavailable::NOT_AVAILABLE;
 use texturecraft_ui_egui::{TextureCraftApp, menus};
 
@@ -84,29 +86,117 @@ fn the_left_column_switches_between_the_three_pages() {
 fn the_general_page_starts_at_the_reference_defaults() {
     let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
     open_settings(&mut h);
-    h.state_mut().ui.windows.settings_draft.as_mut().unwrap().prefs.language = texturecraft_ui_egui::i18n::SYSTEM_LANGUAGE.into();
+
+    // A reset puts the defaults in the window; the app itself keeps English for the exact-text checks
+    h.state_mut().ui.windows.settings_draft.as_mut().unwrap().prefs = Prefs::default();
     h.run_steps(3);
+
     assert_eq!(h.get_by_role_and_label(Role::ComboBox, "Language").value().as_deref(), Some("Default (System Language)"));
-    assert_eq!(h.get_by_role_and_label(Role::ComboBox, "Viewport Scaling").value().as_deref(), Some("Auto"));
+    let scaling = h.get_by_role_and_label(Role::ComboBox, "Viewport Scaling");
+    assert_eq!(scaling.value().as_deref(), Some("Auto"));
+    assert!(!scaling.accesskit_node().is_disabled(), "Viewport Scaling can be opened");
     assert_eq!(h.get_by_role_and_label(Role::SpinButton, "Local cache budget (in MB)").accesskit_node().numeric_value(), Some(4000.0));
-    for label in [
-        "Show keyboard helper",
-        "Show world axes",
-        "Use simplified thumbnails (improves performance)",
-        "Save preprocessed scene files",
-        "Enable live preview baking process",
-        "Enable GPU raytracing",
-        "Hardware support acceleration",
-    ] {
+    for label in ["Show keyboard helper", "Show world axes", "Save preprocessed scene files", "Enable live preview baking process"] {
+        assert!(toggled(&h, label), "{label} is ticked");
+        assert!(!h.get_by_label(label).accesskit_node().is_disabled(), "{label} can be changed");
+    }
+    for label in ["Use simplified thumbnails (improves performance)", "Hardware support acceleration"] {
         assert!(toggled(&h, label), "{label} is ticked");
     }
-    for label in ["Only display the selected material when painting", "CPU"] {
-        assert!(!toggled(&h, label), "{label} is not ticked");
-    }
+    let only_selected = "Only display the selected material when painting";
+    assert!(!toggled(&h, only_selected) && !h.get_by_label(only_selected).accesskit_node().is_disabled());
     assert!(h.query_all_by_label("Inverse direction").all(|node| node.accesskit_node().toggled() == Some(egui::accesskit::Toggled::False)));
 
-    let prefs = texturecraft_ui_egui::state::Prefs::default();
+    let local_cache = h.get_by_role_and_label(Role::TextInput, "Local cache directory");
+    assert!(!local_cache.accesskit_node().is_disabled(), "the local cache directory can be edited");
+    assert_eq!(texturecraft_ui_egui::local_cache_folder(&Prefs::default().local_cache_directory), std::env::temp_dir());
+
+    let prefs = Prefs::default();
+    assert_eq!(prefs.language, texturecraft_ui_egui::i18n::SYSTEM_LANGUAGE, "a reset follows the system language");
     assert_eq!((prefs.rotation_speed, prefs.zoom_speed, prefs.wheel_speed), (2.0, 1.0, 1.0));
+}
+
+#[test]
+fn the_general_page_keeps_the_reference_sections_and_moves_data_folder_and_recent_projects() {
+    let mut h = harness(Session::closed().unwrap());
+    open_settings(&mut h);
+
+    for gone in ["TEMPORARY FILES", "IRAY HARDWARE", "APPEARANCE", "FOLDERS", "PRIVACY", "Interface scale", "Accent color"] {
+        assert!(h.query_by_label(gone).is_none(), "{gone} is not on the page");
+    }
+    for hint in ["Saving uses the other cores", "0 turns autosave off", "A new folder applies on restart"] {
+        assert!(h.query_by_label_contains(hint).is_none(), "the hint \"{hint}\" is gone");
+    }
+
+    let top = |h: &Harness<'_, TextureCraftApp>, label: &str| h.get_by_label(label).rect().top();
+    let data_folder = h.get_by_role_and_label(Role::TextInput, "Data folder").rect().top();
+    assert!(top(&h, "FILES") < data_folder && data_folder < top(&h, "SPARSE VIRTUAL TEXTURE"), "Data folder is in Files");
+    let recent = h.get_by_role_and_label(Role::SpinButton, "Recent projects limit").rect().top();
+    assert!(top(&h, "RESOURCES") < recent && recent < top(&h, "AUTOSAVE"), "Recent projects limit is in Resources");
+    assert!(top(&h, "INTERFACE OPTIONS") < top(&h, "RESOURCES"));
+}
+
+#[test]
+fn the_resource_sliders_step_by_one_and_follow_the_arrow_keys() {
+    let mut h = harness(Session::closed().unwrap());
+    open_settings(&mut h);
+
+    let threads = h.get_by_role_and_label(Role::Slider, "Max CPU threads for work").accesskit_node();
+    let cores = threads.max_numeric_value().unwrap();
+    assert_eq!(threads.numeric_value(), Some(cores), "every thread works by default");
+    assert_eq!(threads.min_numeric_value(), Some(1.0));
+    let reserved = h.get_by_role_and_label(Role::Slider, "Cores kept for the UI").accesskit_node();
+    assert_eq!((reserved.min_numeric_value(), reserved.max_numeric_value()), (Some(0.0), Some(cores)));
+    let ram = h.get_by_role_and_label(Role::Slider, "Max RAM while saving").accesskit_node();
+    assert_eq!((ram.min_numeric_value(), ram.max_numeric_value()), (Some(0.0), Some(100.0)));
+    for label in ["Max CPU threads for work", "Cores kept for the UI", "Max RAM while saving"] {
+        assert_eq!(h.get_by_role_and_label(Role::Slider, label).accesskit_node().numeric_value_step(), Some(1.0), "{label} moves in steps of 1");
+    }
+    assert_eq!(h.query_all_by_label(&format!("{cores} cores in total")).count(), 2, "both core sliders name the total");
+
+    let ram_percent = |h: &Harness<'_, TextureCraftApp>| h.state().ui.windows.settings_draft.as_ref().unwrap().prefs.save_ram_percent;
+    let before = ram_percent(&h);
+    h.get_by_role_and_label(Role::Slider, "Max RAM while saving").focus();
+    h.run_steps(2);
+    press_key(&mut h, Key::ArrowRight);
+    assert_eq!(ram_percent(&h), before + 1, "the right arrow adds one percent");
+    press_key(&mut h, Key::ArrowLeft);
+    press_key(&mut h, Key::ArrowLeft);
+    assert_eq!(ram_percent(&h), before - 1, "the left arrow takes one percent");
+}
+
+#[test]
+fn the_enabled_interface_options_answer_the_keyboard() {
+    let mut h = harness(Session::closed().unwrap());
+    open_settings(&mut h);
+    let draft = |h: &Harness<'_, TextureCraftApp>| h.state().ui.windows.settings_draft.as_ref().unwrap().prefs.clone();
+    let before = draft(&h);
+
+    for label in ["Show keyboard helper", "Show world axes", "Only display the selected material when painting"] {
+        h.get_by_label(label).focus();
+        h.run_steps(2);
+        press_key(&mut h, Key::Space);
+    }
+
+    let after = draft(&h);
+    assert_ne!(after.show_keyboard_helper, before.show_keyboard_helper);
+    assert_ne!(after.show_world_axes, before.show_world_axes);
+    assert_ne!(after.only_selected_material_when_painting, before.only_selected_material_when_painting);
+}
+
+#[test]
+fn the_local_cache_directory_takes_a_folder_and_r_goes_back_to_the_default() {
+    let mut h = harness(Session::closed().unwrap());
+    open_settings(&mut h);
+    let folder = std::env::temp_dir().join("tc-settings-local-cache").display().to_string();
+    let stored = |h: &Harness<'_, TextureCraftApp>| h.state().ui.windows.settings_draft.as_ref().unwrap().prefs.local_cache_directory.clone();
+
+    type_into(&mut h, "Local cache directory", &folder);
+    assert_eq!(stored(&h), folder);
+
+    h.query_all_by_label("R").find(|node| !node.accesskit_node().is_disabled()).unwrap().click();
+    h.run_steps(3);
+    assert!(stored(&h).is_empty(), "R goes back to the default folder");
 }
 
 #[test]
@@ -115,16 +205,7 @@ fn a_control_the_app_lacks_is_disabled_and_says_so_on_hover() {
     h.ctx.all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);
     open_settings(&mut h);
     let away = h.get_by_role_and_label(Role::Tab, "Libraries").rect().center();
-    for label in [
-        "Show keyboard helper",
-        "Show world axes",
-        "Only display the selected material when painting",
-        "Use simplified thumbnails (improves performance)",
-        "Save preprocessed scene files",
-        "Enable live preview baking process",
-        "Hardware support acceleration",
-        "CPU",
-    ] {
+    for label in ["Use simplified thumbnails (improves performance)", "Hardware support acceleration"] {
         h.hover_at(away);
         h.run_steps(3);
         assert!(h.query_by_label(NOT_AVAILABLE).is_none(), "no hint before hovering {label}");
@@ -139,7 +220,6 @@ fn a_control_the_app_lacks_is_disabled_and_says_so_on_hover() {
     for step in ["−", "+"] {
         assert!(h.query_all_by_label(step).any(|node| node.accesskit_node().is_disabled()), "the cache budget's {step} is disabled");
     }
-    assert!(!h.get_by_label("Enable GPU raytracing").accesskit_node().is_disabled(), "GPU raytracing switches bakes to the CPU");
     for label in ["Rotation speed", "Zoom speed", "Wheel speed"] {
         assert!(h.query_by_label(label).is_some(), "{label} is shown");
     }
@@ -151,7 +231,7 @@ fn cancel_drops_the_changes_and_ok_applies_and_keeps_them() {
     let before = h.state().ui.prefs.clone();
     open_settings(&mut h);
     h.get_by_role_and_label(Role::SpinButton, "Autosave every").set_value_accesskit(25.0);
-    click(&mut h, "Enable GPU raytracing");
+    click(&mut h, "Show world axes");
     h.run_steps(2);
     assert_eq!(h.state().ui.prefs, before, "edits wait for OK");
     click(&mut h, "Cancel");
@@ -165,20 +245,20 @@ fn cancel_drops_the_changes_and_ok_applies_and_keeps_them() {
         "a new window starts from the settings in use"
     );
     h.get_by_role_and_label(Role::SpinButton, "Autosave every").set_value_accesskit(25.0);
-    h.get_by_role_and_label(Role::SpinButton, "Max CPU threads for work").set_value_accesskit(1.0);
+    h.get_by_role_and_label(Role::Slider, "Max CPU threads for work").set_value_accesskit(1.0);
     h.get_by_role_and_label(Role::SpinButton, "Max project size on open").set_value_accesskit(12.0);
     h.run_steps(2);
     h.query_all_by_label("Inverse direction").next().unwrap().scroll_to_me();
     h.run_steps(3);
     h.query_all_by_label("Inverse direction").next().unwrap().click();
     h.run_steps(2);
-    click(&mut h, "Enable GPU raytracing");
+    click(&mut h, "Show world axes");
     click(&mut h, "OK");
 
     let prefs = h.state().ui.prefs.clone();
     assert!(!h.state().ui.windows.settings, "OK closes the window");
     assert_eq!((prefs.autosave_minutes, prefs.work_threads, prefs.project_open_limit_gib), (25, 1, 12));
-    assert!(prefs.zoom_inverse && !prefs.wheel_inverse && !prefs.gpu_raytracing);
+    assert!(prefs.zoom_inverse && !prefs.wheel_inverse && !prefs.show_world_axes);
     assert!(prefs.drag_zoom_scale() < 0.0, "inverted zoom runs the other way");
 
     let mut storage = MemoryStorage::default();
@@ -434,16 +514,22 @@ fn the_libraries_page_hides_the_add_row_with_a_project_open_and_explains_the_def
 }
 
 #[test]
-fn the_baking_options_say_when_there_is_no_gpu_to_trace_on() {
-    // The condition, with and without an adapter (the harness's own adapter is not under test)
+fn gpu_raytracing_is_on_and_checkable_with_a_gpu_and_off_and_disabled_without() {
+    let with_gpu = !cfg!(target_arch = "wasm32");
+    assert_eq!(gpu_raytracing_check(Some("Some GPU"), true), (with_gpu, with_gpu), "a GPU keeps it on and checkable");
+    assert_eq!(gpu_raytracing_check(Some("Some GPU"), false), (with_gpu, false), "a GPU shows the stored choice");
+    assert_eq!(gpu_raytracing_check(None, true), (false, false), "without a GPU it is off and disabled");
     assert!(texturecraft_ui_egui::settings_window::gpu_note_shown(None));
-    assert_eq!(texturecraft_ui_egui::settings_window::gpu_note_shown(Some("Some GPU")), cfg!(target_arch = "wasm32"));
 
-    // The page shows the note exactly when the harness has no adapter (the IRAY HARDWARE row says "no GPU")
+    // The page follows the harness's own adapter, whichever it has
     let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
     open_settings(&mut h);
-    let no_gpu = h.query_by_label("no GPU").is_some();
-    assert_eq!(h.query_by_label(GPU_RAYTRACING_UNAVAILABLE).is_some(), no_gpu, "the note shows with no GPU and only then");
+    let supported = h.state().render_state.is_some() && with_gpu;
+    let check = h.get_by_label("Enable GPU raytracing");
+    assert_eq!(!check.accesskit_node().is_disabled(), supported, "it can be changed exactly when there is a GPU");
+    assert_eq!(toggled(&h, "Enable GPU raytracing"), supported, "it is on exactly when there is a GPU");
+    assert_eq!(h.query_by_label(GPU_RAYTRACING_UNAVAILABLE).is_some(), !supported, "the note shows with no GPU and only then");
+    assert!(h.state().ui.prefs.gpu_raytracing, "the stored choice stays for a machine with a GPU");
 }
 
 #[test]

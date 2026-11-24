@@ -1101,7 +1101,9 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
     solo_notice(app, ui, rect);
     view_header(app, ui, rect, "v3d");
     mask_view_badge(app, ui, rect);
-    axis_gizmo(ui, rect, app, None);
+    if app.ui.prefs.show_world_axes {
+        axis_gizmo(ui, rect, app, None);
+    }
     crate::nav_buttons::show(app, ui, rect, crate::nav_buttons::NavView::Scene);
 }
 

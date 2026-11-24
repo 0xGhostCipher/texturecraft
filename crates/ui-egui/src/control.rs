@@ -111,6 +111,12 @@ fn refresh_draft_preferences(draft: &mut Prefs, previous: &Prefs, current: &Pref
         gpu_raytracing,
         libraries,
         background,
+        show_world_axes,
+        show_keyboard_helper,
+        only_selected_material_when_painting,
+        save_preprocessed_scene_files,
+        live_preview_baking,
+        local_cache_directory,
     );
 }
 

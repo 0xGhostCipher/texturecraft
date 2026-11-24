@@ -36,7 +36,14 @@ pub struct Binding {
 ///
 /// They are not in [`bindings`], so no key runs them, but another item given their key is reported
 /// as sharing it.
-pub static NOT_AVAILABLE_ACTIONS: [(&str, Binding); 2] = [
+pub static NOT_AVAILABLE_ACTIONS: [(&str, Binding); 9] = [
+    ("file.reimportMesh", Binding { id: "ui.manipulator.toggle", group: "Viewport", label: "Show/Hide manipulator", default: Some("Q") }),
+    ("file.reimportMesh", Binding { id: "ui.manipulator.grow", group: "Viewport", label: "Increase the manipulator size", default: None }),
+    ("file.reimportMesh", Binding { id: "ui.manipulator.shrink", group: "Viewport", label: "Decrease the manipulator size", default: Some("-") }),
+    ("file.reimportMesh", Binding { id: "ui.manipulator.space", group: "Viewport", label: "Cycle through manipulation spaces", default: Some("T") }),
+    ("file.reimportMesh", Binding { id: "ui.warpEdit", group: "Viewport", label: "Toggle warp edition mode", default: Some("Shift+V") }),
+    ("file.reimportMesh", Binding { id: "ui.manipulator.translate", group: "Viewport", label: "Translate tool", default: Some("W") }),
+    ("file.reimportMesh", Binding { id: "ui.manipulator.rotate", group: "Viewport", label: "Rotate tool", default: Some("E") }),
     ("file.reimportMesh", Binding { id: "ui.pauseEngine", group: "Commands", label: "Pause Engine Computation", default: Some("Shift+Esc") }),
     ("viewport.frame", Binding { id: "ui.toggleAnimation", group: "Viewport", label: "Toggle animation", default: Some("Space") }),
 ];

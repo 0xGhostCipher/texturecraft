@@ -33,11 +33,11 @@ fn resource_settings_follow_hardware_persist_and_apply_before_control_requests()
     harness.run_steps(3);
     let edited = |harness: &Harness<'_, TextureCraftApp>| harness.state().ui.windows.settings_draft.as_ref().unwrap().prefs.clone();
     assert_eq!(edited(&harness).reserved_cores, available_cores, "preferences from a larger machine are clamped");
-    harness.get_by_role_and_label(egui::Role::SpinButton, "Cores kept for the UI").set_value_accesskit(f64::from(u32::MAX));
+    harness.get_by_role_and_label(egui::Role::Slider, "Cores kept for the UI").set_value_accesskit(f64::from(u32::MAX));
     harness.run_steps(3);
     assert_eq!(edited(&harness).reserved_cores, available_cores, "editing cannot exceed this machine's CPU count");
     assert!(harness.query_by_label("≈ 8.00 GiB").is_some(), "50% of 16 GiB is shown beside the percentage");
-    harness.get_by_role_and_label(egui::Role::SpinButton, "Max RAM while saving").set_value_accesskit(25.0);
+    harness.get_by_role_and_label(egui::Role::Slider, "Max RAM while saving").set_value_accesskit(25.0);
     harness.run_steps(3);
     assert!(harness.query_by_label("≈ 4.00 GiB").is_some(), "the byte estimate follows the edited percentage");
 
