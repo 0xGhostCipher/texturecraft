@@ -52,10 +52,6 @@ impl UiState {
         let (current, other) = if self.dock_is_baking { (layout.baking, layout.painting) } else { (layout.painting, layout.baking) };
         self.dock = current;
         self.inactive_mode_dock = other;
-        if self.dock_is_rendering {
-            // Legacy layouts share their painting arrangement with Rendering
-            self.inactive_render_dock = Some(self.dock.clone());
-        }
 
         // A popup open against the rail shows a panel of the old arrangement
         self.rail_panel = None;

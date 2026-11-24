@@ -4,7 +4,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
-use texturecraft_engine::LogEntry;
+use texturecraft_engine::SessionLog;
 
 // Retain two segments to bound each run's log while preserving recent history
 const MAX_LOG_SEGMENT_BYTES: u64 = 8 * 1024 * 1024;
@@ -17,8 +17,7 @@ pub(crate) struct SessionLogFile {
     file: File,
     bytes: u64,
     log_id: u64,
-    cursor: usize,
-    last: Option<LogEntry>,
+    cursor: u64,
 }
 
 /// Remove all but the `keep` newest session folders in `logs`. Their names start with a UTC time, so
@@ -52,7 +51,7 @@ impl SessionLogFile {
         }
 
         let file = OpenOptions::new().create_new(true).append(true).open(&path)?;
-        Ok(Self { path, file, bytes: 0, log_id: 0, cursor: 0, last: None })
+        Ok(Self { path, file, bytes: 0, log_id: 0, cursor: 0 })
     }
 
     pub fn text(&mut self) -> io::Result<String> {
@@ -67,19 +66,12 @@ impl SessionLogFile {
         Ok(text)
     }
 
-    pub fn sync(&mut self, log_id: u64, entries: &[LogEntry]) -> io::Result<()> {
-        let same_tail = self.log_id == log_id && self.cursor.checked_sub(1).and_then(|i| entries.get(i)) == self.last.as_ref();
-        if same_tail && self.cursor == entries.len() {
-            return Ok(());
+    pub fn sync(&mut self, log_id: u64, log: &SessionLog) -> io::Result<()> {
+        if self.log_id != log_id {
+            self.log_id = log_id;
+            self.cursor = 0;
         }
-
-        let start = if same_tail { self.cursor } else { 0 };
-        for entry in entries.get(start..).unwrap_or_default() {
-            // Only reconcile timestamps after removal; appended entries can predate the last sync
-            if !same_tail && self.log_id == log_id && self.last.as_ref().is_some_and(|last| entry.time <= last.time) {
-                continue;
-            }
-
+        for (occurrence, entry) in log.entries_after(self.cursor) {
             let text = crate::windows::log_text(std::slice::from_ref(entry));
             let line = text.split_once('\n').map(|(_, line)| line).unwrap_or_default();
 
@@ -92,38 +84,25 @@ impl SessionLogFile {
             }
             self.file.write_all(line.as_bytes())?;
             self.bytes = self.bytes.saturating_add(line.len() as u64);
+            self.cursor = occurrence;
         }
-        self.file.flush()?;
-        self.log_id = log_id;
-        self.cursor = entries.len();
-        self.last = entries.last().cloned();
-        Ok(())
+        self.file.flush()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use texturecraft_engine::{LogLevel, SessionLog};
 
-    #[test]
-    fn log_file_keeps_messages_after_panel_clear_and_across_projects() {
+    fn temp_log() -> SessionLogFile {
         let dir = std::env::temp_dir().join(format!("texturecraft-session-log-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("{}.txt", chrono::Utc::now().timestamp_nanos_opt().unwrap()));
-        let mut file = SessionLogFile::new(path.clone()).unwrap();
-        let mut log = SessionLog::new();
-        log.push("first".into());
-        file.sync(1, log.entries()).unwrap();
-        file.sync(1, log.entries()).unwrap();
-        log.clear();
-        file.sync(1, log.entries()).unwrap();
-        log.error("UI", "second");
-        file.sync(1, log.entries()).unwrap();
-        file.sync(2, &[LogEntry::new(LogLevel::Info, "UI", "new project")]).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(text.matches("first").count(), 1);
-        assert!(text.contains("second") && text.contains("new project"));
+        SessionLogFile::new(path).unwrap()
+    }
+
+    fn remove_log(file: SessionLogFile) {
+        let path = file.path.clone();
         drop(file);
         std::fs::remove_file(path).unwrap();
     }
@@ -147,5 +126,70 @@ mod tests {
         assert!(other.exists() && file.path.exists(), "other folders and the new log stay");
         drop(file);
         std::fs::remove_dir_all(logs).unwrap();
+    }
+
+    #[test]
+    fn log_file_keeps_messages_after_panel_clear_and_across_projects() {
+        let mut file = temp_log();
+        let mut log = SessionLog::new();
+        log.push("first".into());
+        file.sync(1, &log).unwrap();
+        file.sync(1, &log).unwrap();
+        log.clear();
+        file.sync(1, &log).unwrap();
+        log.error("UI", "second");
+        file.sync(1, &log).unwrap();
+        let mut next_project = SessionLog::new();
+        next_project.info("UI", "new project");
+        file.sync(2, &next_project).unwrap();
+        let text = file.text().unwrap();
+        assert_eq!(text.matches("first").count(), 1);
+        assert!(text.contains("second") && text.contains("new project"));
+        remove_log(file);
+    }
+
+    #[test]
+    fn removing_the_tail_does_not_hide_an_earlier_timestamp_append() {
+        let mut file = temp_log();
+        let mut pending = SessionLog::new();
+        pending.push("deferred message".into());
+
+        let mut log = SessionLog::new();
+        log.push("kept message".into());
+        log.push("removed tail".into());
+        file.sync(1, &log).unwrap();
+
+        assert!(pending[0].time <= log[1].time);
+        log.retain(|entry| entry.message != "removed tail");
+        log.append(pending);
+        file.sync(1, &log).unwrap();
+
+        let text = file.text().unwrap();
+        for message in ["deferred message", "kept message", "removed tail"] {
+            assert_eq!(text.matches(message).count(), 1, "{message}");
+        }
+        remove_log(file);
+    }
+
+    #[test]
+    fn removing_an_earlier_timestamp_tail_does_not_replay_the_survivors() {
+        let mut file = temp_log();
+        let mut pending = SessionLog::new();
+        pending.push("removed tail".into());
+
+        let mut log = SessionLog::new();
+        log.push("kept message".into());
+        log.append(pending);
+        assert!(log[0].time >= log[1].time);
+        file.sync(1, &log).unwrap();
+
+        log.retain(|entry| entry.message != "removed tail");
+        file.sync(1, &log).unwrap();
+        file.sync(1, &log).unwrap();
+
+        let text = file.text().unwrap();
+        assert_eq!(text.matches("kept message").count(), 1);
+        assert_eq!(text.matches("removed tail").count(), 1);
+        remove_log(file);
     }
 }

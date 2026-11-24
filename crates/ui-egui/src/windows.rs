@@ -350,7 +350,7 @@ pub(crate) fn show_log(app: &mut TextureCraftApp, _ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let result = match app.session_log_file.as_mut() {
-            Some(file) => file.sync(app.session.log_id, app.session.log.entries()).map(|()| file.path.clone()),
+            Some(file) => file.sync(app.session.log_id, &app.session.log).map(|()| file.path.clone()),
             None => Err(std::io::Error::other(tr("No session log file is available"))),
         };
         match result.and_then(|path| app.file_dialogs.show_folder(&path)) {
@@ -367,7 +367,7 @@ pub(crate) fn export_log(app: &mut TextureCraftApp) {
     let text = log_text(app.session.log.entries());
     #[cfg(not(target_arch = "wasm32"))]
     let text = if let Some(file) = &mut app.session_log_file {
-        match file.sync(app.session.log_id, app.session.log.entries()).and_then(|()| file.text()) {
+        match file.sync(app.session.log_id, &app.session.log).and_then(|()| file.text()) {
             Ok(lines) => format!("{}{lines}", log_text(&[])),
             Err(error) => {
                 app.toast(trf("Could not export the log: {error}", &[("error", &error)]), true);

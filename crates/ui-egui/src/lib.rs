@@ -455,13 +455,6 @@ impl TextureCraftApp {
         if cc.winit_window().is_none() {
             app.file_dialogs.without_window();
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        if cc.winit_window().is_some() {
-            match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
-                Ok(file) => app.session_log_file = Some(file),
-                Err(error) => app.toast(format!("{}: {error}", i18n::tr("Could not create the session log")), true),
-            }
-        }
         app.ui.rename = None;
         app.ui.windows.new_project = false;
         i18n::set_language(&app.ui.prefs.language);
@@ -472,6 +465,13 @@ impl TextureCraftApp {
         {
             // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
+
+            if cc.winit_window().is_some() {
+                match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
+                    Ok(file) => app.session_log_file = Some(file),
+                    Err(error) => app.toast(format!("{}: {error}", i18n::tr("Could not create the session log")), true),
+                }
+            }
 
             // An export folder still at the default follows the data folder
             if app.ui.export.dir == data_folder("").join("export").display().to_string() {
@@ -1150,7 +1150,7 @@ impl eframe::App for TextureCraftApp {
         self.toasts.retain(|toast| toast.until > now);
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(file) = &mut self.session_log_file
-            && let Err(error) = file.sync(self.session.log_id, self.session.log.entries())
+            && let Err(error) = file.sync(self.session.log_id, &self.session.log)
         {
             self.session_log_file = None;
             self.toast(format!("{}: {error}", i18n::tr("Could not update the session log")), true);

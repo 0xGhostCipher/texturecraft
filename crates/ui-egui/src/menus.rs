@@ -203,7 +203,7 @@ pub fn invoke(app: &mut TextureCraftApp, ctx: &egui::Context, id: &str) {
         return;
     }
 
-    if matches!(id, "file.open" | "file.close" | "project.sample") && crate::windows::ask_to_save(app, crate::state::Unsaved::Command(id.into())) {
+    if matches!(id, "file.open" | "file.close") && crate::windows::ask_to_save(app, crate::state::Unsaved::Command(id.into())) {
         return;
     }
 

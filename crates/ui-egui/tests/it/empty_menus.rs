@@ -79,7 +79,7 @@ fn reset_restores_the_empty_workspace_and_checked_disabled_quick_mask() {
         assert!(!h.state().ui.dock.is_open(panel));
     }
     assert!(h.state().ui.toolbar_tools && h.state().ui.toolbar_docks);
-    h.get_by_label("Viewport").click();
+    h.get_all_by_label("Viewport").min_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap().click();
     h.run_steps(3);
     let quick = h.get_by_label_contains("Enable Quick Mask");
     assert!(quick.accesskit_node().is_disabled());
