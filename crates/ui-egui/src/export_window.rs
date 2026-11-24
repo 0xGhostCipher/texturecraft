@@ -5,7 +5,7 @@
 use egui::{RichText, Ui, vec2};
 use egui_phosphor::regular as ic;
 use serde_json::json;
-use texturecraft_engine::formats::{ExportPreset, FileFormat, MapSpec, SourceRef};
+use texturecraft_engine::formats::{ExportPreset, FileFormat};
 
 use crate::TextureCraftApp;
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,7 +51,7 @@ const TAB_TEXT_SIZE: f32 = 12.5;
 const LIST_ROW_HEIGHT: f32 = 24.0;
 const LIST_ROW_INDENT: f32 = 16.0;
 /// Width of the bottom bar's buttons, the same for all as in the reference
-const FOOTER_BUTTON_WIDTH: f32 = 125.0;
+const FOOTER_BUTTON_WIDTH: f32 = 126.0;
 
 /// The output sizes the Size list offers, in texels per side
 pub(crate) const SIZES: [u32; 7] = [128, 256, 512, 1024, 2048, 4096, 8192];
@@ -528,21 +528,14 @@ fn map_rows(app: &mut TextureCraftApp, ts: usize) -> Vec<MapRow> {
         let format = f.get("format").and_then(serde_json::Value::as_str).unwrap_or("png").to_string();
         let bit_depth = f.get("bitDepth").and_then(serde_json::Value::as_u64).unwrap_or(8) as u8;
         let dithering = f.get("dithering").and_then(serde_json::Value::as_bool).unwrap_or(false);
-        let pattern = preset.as_ref().and_then(|p| p.maps.get(map)).map(|m| m.file.replace("$channel", channel_id(m))).unwrap_or_default();
+        let pattern = preset
+            .as_ref()
+            .and_then(|p| p.maps.get(map))
+            .map(|m| m.file.replace("$channel", texturecraft_engine::formats::export::channel_label(m)))
+            .unwrap_or_default();
         rows.push(MapRow { map, pattern, inherited: FileType { format: file_type_name(&format), bit_depth, dithering } });
     }
     rows
-}
-
-/// What `$channel` becomes in `map`'s file name: the id of its first map, as the export names it
-fn channel_id(map: &MapSpec) -> &'static str {
-    let first = map.channels.iter().find_map(|(_, source)| match source {
-        SourceRef::Channel { channel, .. } => Some(channel.id()),
-        SourceRef::Virtual { map, .. } => Some(map.id()),
-        SourceRef::Baked { map, .. } => Some(map.id()),
-        SourceRef::Constant(_) => None,
-    });
-    first.unwrap_or("constant")
 }
 
 /// The Output maps section of texture set `ts`'s page
@@ -1049,8 +1042,9 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, builtins: &[Expor
     }
 }
 
-/// Width of the LIST OF EXPORTS console
+/// The LIST OF EXPORTS console's and file tree's least width, as in the reference
 const CONSOLE_WIDTH: f32 = 300.0;
+const MIN_TREE_WIDTH: f32 = 300.0;
 /// Width of the strip between the file tree and the console
 const SPLITTER_WIDTH: f32 = 14.0;
 /// Padding of the CONSOLE header band, about 45 points high as in the reference
@@ -1072,24 +1066,37 @@ fn success(tk: &Tokens) -> egui::Color32 {
 fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
     let hidden = app.ui.export.console_hidden;
-    let tree_width = ui.available_width() - if hidden { 24.0 } else { CONSOLE_WIDTH + 24.0 };
+
+    // Tree and console keep at least their reference width
+    let spacing = ui.spacing().item_spacing.x;
+    let room = ui.available_width() - SPLITTER_WIDTH - 2.0 * spacing;
+    let console_width = app.ui.export.console_width.min(room - MIN_TREE_WIDTH).max(CONSOLE_WIDTH);
+    let tree_width = if hidden { room } else { room - console_width };
     ui.vertical(|ui| {
         ui.set_width(tree_width);
         egui::ScrollArea::vertical().id_salt("exp_list").auto_shrink([false; 2]).show(ui, |ui| export_tree(app, ui, &tk));
     });
 
-    // The thin toggle at the console's left edge, on a strip the whole height
-    let toggle = if hidden { ic::CARET_DOUBLE_LEFT } else { ic::CARET_DOUBLE_RIGHT };
-    let strip = egui::Rect::from_min_size(ui.cursor().min, vec2(SPLITTER_WIDTH, ui.available_height()));
+    // The strip at the console's left edge: a click hides or shows the console, a drag resizes it
+    let (strip, response) = ui.allocate_exact_size(vec2(SPLITTER_WIDTH, ui.available_height()), egui::Sense::click_and_drag());
+    let tooltip = if hidden { tr("Show Console") } else { tr("Hide Console") };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tooltip));
+    let glyph = if hidden { ic::CARET_DOUBLE_LEFT } else { ic::CARET_DOUBLE_RIGHT };
+    let glyph_color = if response.hovered() { tk.text_strong } else { tk.text };
     ui.painter().rect_filled(strip, 0.0, tk.chrome);
-    let r = ui.add_sized(strip.size(), egui::Button::new(toggle).frame(false));
-    let r = if hidden { r } else { r.on_hover_text(tr("Hide Console")) };
-    if r.clicked() {
+    ui.painter().text(strip.center(), egui::Align2::CENTER_CENTER, glyph, egui::TextStyle::Body.resolve(ui.style()), glyph_color);
+    let response = response.on_hover_text(tooltip);
+    if !hidden && (response.hovered() || response.dragged()) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if response.dragged() && !hidden {
+        app.ui.export.console_width = (console_width - response.drag_delta().x).min(room - MIN_TREE_WIDTH).max(CONSOLE_WIDTH);
+    } else if response.clicked() {
         app.ui.export.console_hidden = !hidden;
     }
     if !hidden {
         ui.vertical(|ui| {
-            ui.set_width(CONSOLE_WIDTH);
+            ui.set_width(console_width);
             egui::Frame::new().fill(tk.row).inner_margin(egui::Margin::symmetric(CONSOLE_HEADER_MARGIN_X, CONSOLE_HEADER_MARGIN_Y)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(caption(&tr("Console").to_uppercase()).strong());
@@ -1384,6 +1391,11 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     }
     keep_file_type_visible(&mut app.ui.export);
     follow_texture_sets(app);
+
+    // A map waiting for its source channel belongs to the OUTPUT TEMPLATES tab
+    if app.ui.export.tab != 1 {
+        app.ui.export.pending_drop = None;
+    }
     if app.ui.export.opened_with.is_none() {
         let mut now = app.ui.export.clone();
         now.draft = None;
@@ -1426,7 +1438,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                     }
                 } else if app.ui.export.tab == 1 {
                     crate::export_templates::naming_pattern(ui);
-                } else if ui.button(tr("Include all")).on_hover_text(tr("Includes all Texture Sets, UV Tiles and output maps.")).clicked() {
+                } else if ui.add(footer_button(tr("Include all"))).on_hover_text(tr("Includes all Texture Sets, UV Tiles and output maps.")).clicked() {
                     app.ui.export.skip.clear();
                     for o in app.ui.export.sets.values_mut() {
                         o.maps.values_mut().for_each(|m| m.enabled = true);
