@@ -1503,7 +1503,10 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.separator();
             ui.vertical(|ui| match app.ui.export.page {
                 Some(ts) if ts < app.session.set_count() => set_page(app, ui, ts, &presets),
-                _ => global_page(app, ui, &presets),
+                // A short or narrow window scrolls the settings, so the footer and every control stay reachable
+                _ => {
+                    egui::ScrollArea::both().id_salt("exp_global_scroll").auto_shrink([false; 2]).show(ui, |ui| global_page(app, ui, &presets));
+                }
             });
         });
         ui.add_space(8.0);
