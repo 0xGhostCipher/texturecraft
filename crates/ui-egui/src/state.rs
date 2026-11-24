@@ -635,10 +635,12 @@ pub struct UiState {
     pub log_id: u64,
 }
 
+pub(crate) const MAX_RECENT_PROJECTS: u16 = 100;
+
 impl UiState {
     /// Keep recent-file history bounded, including values supplied through automation or old settings.
     pub(crate) fn trim_recent(&mut self) {
-        self.prefs.recent_projects_limit = self.prefs.recent_projects_limit.min(100);
+        self.prefs.recent_projects_limit = self.prefs.recent_projects_limit.min(MAX_RECENT_PROJECTS);
         self.recent.truncate(usize::from(self.prefs.recent_projects_limit));
     }
 
@@ -675,7 +677,7 @@ impl UiState {
         self.bake_layout_version = BAKE_LAYOUT_VERSION;
     }
 
-    /// Put the panels, tabs and floating panels of both modes back to their defaults; the view split,
+    /// Put the panels, tabs and floating panels of every mode back to their defaults; the view split,
     /// zoom, wireframes, symmetry display, mode and every setting stay as they are
     pub fn reset_panel_layout(&mut self) {
         let (painting, baking) = (Dock::default(), Dock::for_baking());

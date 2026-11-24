@@ -80,13 +80,13 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let (mut create, mut cancel) = (false, false);
 
-    // Start with a form that fits the viewport; subsequent sizes follow the user's resize.
+    // Start with a form that fits the viewport; subsequent sizes follow the user's resize
     let form_height = (ctx.content_rect().height() - DIALOG_VIEWPORT_MARGIN_POINTS - DIALOG_CHROME_HEIGHT_POINTS)
         .clamp(crate::project_form::MIN_FORM_HEIGHT_POINTS, crate::project_form::FORM_HEIGHT_POINTS);
     dialog(ctx, "new_project", tr("New Project"), &mut open).default_size(vec2(DIALOG_WIDTH_POINTS, form_height + DIALOG_CHROME_HEIGHT_POINTS)).show(
         ctx,
         |ui| {
-            // Lay out the actual footer first so it cannot make the window grow each frame.
+            // Lay out the actual footer first so it cannot make the window grow each frame
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 let can_create = app.ui.new_project.file.is_some();
                 ui.horizontal(|ui| {

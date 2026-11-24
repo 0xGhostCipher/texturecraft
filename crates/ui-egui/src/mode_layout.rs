@@ -45,15 +45,21 @@ impl ModeLayout {
     }
 
     pub fn read(bytes: &[u8]) -> Result<Self, String> {
-        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        if value.get("windows").is_some() {
-            let state: UiState = serde_json::from_value(value).map_err(|e| e.to_string())?;
-            return Ok(Self::of(&state, state.mode));
-        }
-        let layout: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        let layout: Self = if value.get("windows").is_some() {
+            let state: UiState = serde_json::from_value(value).map_err(|error| error.to_string())?;
+            if !crate::ui_state_store::fully_read(&state) {
+                return Err("Invalid UI layout".into());
+            }
+
+            Self::of(&state, state.mode)
+        } else {
+            serde_json::from_value(value).map_err(|error| error.to_string())?
+        };
         if !layout.split_ratio.is_finite() || !(0.0..=1.0).contains(&layout.split_ratio) || layout.dock.replaced_unreadable() {
             return Err("Invalid UI layout".into());
         }
+
         Ok(layout)
     }
 }

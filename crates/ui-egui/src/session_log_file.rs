@@ -6,6 +6,9 @@ use std::{
 };
 use texturecraft_engine::LogEntry;
 
+// Retain two segments to bound each run's log while preserving recent history
+const MAX_LOG_SEGMENT_BYTES: u64 = 8 * 1024 * 1024;
+
 pub(crate) struct SessionLogFile {
     pub path: PathBuf,
     file: File,
@@ -20,6 +23,7 @@ impl SessionLogFile {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+
         let file = OpenOptions::new().create_new(true).append(true).open(&path)?;
         Ok(Self { path, file, bytes: 0, log_id: 0, cursor: 0, last: None })
     }
@@ -41,16 +45,19 @@ impl SessionLogFile {
         if same_tail && self.cursor == entries.len() {
             return Ok(());
         }
+
         let start = if same_tail { self.cursor } else { 0 };
         for entry in entries.get(start..).unwrap_or_default() {
-            // Clearing lines in the panel must not append the remaining old lines twice.
-            if self.log_id == log_id && self.last.as_ref().is_some_and(|last| entry.time <= last.time) {
+            // Only reconcile timestamps after removal; appended entries can predate the last sync
+            if !same_tail && self.log_id == log_id && self.last.as_ref().is_some_and(|last| entry.time <= last.time) {
                 continue;
             }
+
             let text = crate::windows::log_text(std::slice::from_ref(entry));
             let line = text.split_once('\n').map(|(_, line)| line).unwrap_or_default();
-            // Bound each run's disk use. Keep one previous segment when the active log rolls.
-            if self.bytes.saturating_add(line.len() as u64) > 8 * 1024 * 1024 {
+
+            // Keep one previous segment when the active log rolls
+            if self.bytes.saturating_add(line.len() as u64) > MAX_LOG_SEGMENT_BYTES {
                 self.file.flush()?;
                 std::fs::copy(&self.path, self.path.with_file_name("log.previous.txt"))?;
                 self.file.set_len(0)?;
@@ -62,9 +69,7 @@ impl SessionLogFile {
         self.file.flush()?;
         self.log_id = log_id;
         self.cursor = entries.len();
-        if let Some(last) = entries.last() {
-            self.last = Some(last.clone());
-        }
+        self.last = entries.last().cloned();
         Ok(())
     }
 }

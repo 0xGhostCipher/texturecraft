@@ -21,8 +21,11 @@ mod map_row;
 use inherited_settings::InheritedSettings;
 use map_row::MapRow;
 
-/// Height of the window's tab body, above its buttons
+/// Initial height of the window's tab body, above its buttons
 const BODY_HEIGHT: f32 = 440.0;
+const DEFAULT_WINDOW_WIDTH_POINTS: f32 = 900.0;
+// Initial space for the tabs, separators and footer
+const WINDOW_CHROME_HEIGHT_POINTS: f32 = 80.0;
 /// Width of the texture set list
 const LIST_WIDTH: f32 = 180.0;
 const ICON: f32 = 20.0;
@@ -1266,7 +1269,9 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut do_export = false;
     let mut canceled = false;
     let presets = texturecraft_engine::formats::builtin_presets();
-    crate::windows::dialog(ctx, "export_textures", tr("Export Textures"), &mut open).default_size(vec2(900.0, BODY_HEIGHT + 80.0)).show(ctx, |ui| {
+    let dialog = crate::windows::dialog(ctx, "export_textures", tr("Export Textures"), &mut open)
+        .default_size(vec2(DEFAULT_WINDOW_WIDTH_POINTS, BODY_HEIGHT + WINDOW_CHROME_HEIGHT_POINTS));
+    dialog.show(ctx, |ui| {
         // Nothing to export without a project
         if !app.session.project_open {
             ui.label(tr("No project is open"));

@@ -137,7 +137,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let (mut ok, mut cancel, mut select) = (std::mem::take(&mut config.confirm), false, false);
 
-    // Start with a form that fits the viewport; subsequent sizes follow the user's resize.
+    // Start with a form that fits the viewport; subsequent sizes follow the user's resize
     let form_height = (ctx.content_rect().height() - DIALOG_VIEWPORT_MARGIN_POINTS - DIALOG_CHROME_HEIGHT_POINTS)
         .clamp(crate::project_form::MIN_FORM_HEIGHT_POINTS, crate::project_form::FORM_HEIGHT_POINTS);
     let dialog = crate::windows::dialog(ctx, "project_config", tr("Project Configuration"), &mut open)
@@ -158,7 +158,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 let form_height = ui.available_height().max(0.0);
                 let scroll = egui::ScrollArea::both()
                     .id_salt("project_config_form")
-                        .content_margin(crate::windows::dialog_scroll_margin(ui))
+                    .content_margin(crate::windows::dialog_scroll_margin(ui))
                     .min_scrolled_width(0.0)
                     .min_scrolled_height(0.0)
                     .max_height(form_height)

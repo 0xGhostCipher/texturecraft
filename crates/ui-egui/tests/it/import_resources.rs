@@ -12,7 +12,7 @@ use texturecraft_ui_egui::file_dialogs::{Answer, Request};
 
 use super::temp_dir::TempDir;
 
-const TITLE: &str = "Import resources";
+const TITLE: &str = "Import Resources";
 /// The prefix field's tooltip, which is its accessible label.
 const PREFIX_HINT: &str = "Put in front of the resource's name. Characters other than letters, digits and _ . - become _";
 

@@ -18,6 +18,8 @@ use crate::widgets::primary_button;
 const WINDOW_WIDTH_POINTS: f32 = 640.0;
 /// Height of the file list
 const LIST_HEIGHT_POINTS: f32 = 300.0;
+// Initial space for the title, file controls, destination and footer
+const WINDOW_CHROME_HEIGHT_POINTS: f32 = 200.0;
 /// Width of a row's prefix field and usage dropdown
 const PREFIX_WIDTH_POINTS: f32 = 160.0;
 const USAGE_WIDTH_POINTS: f32 = 110.0;
@@ -115,7 +117,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut remove = false;
 
     crate::windows::dialog(ctx, "import_resources", tr("Import Resources"), &mut open)
-        .default_size(egui::vec2(WINDOW_WIDTH_POINTS, LIST_HEIGHT_POINTS + 200.0))
+        .default_size(egui::vec2(WINDOW_WIDTH_POINTS, LIST_HEIGHT_POINTS + WINDOW_CHROME_HEIGHT_POINTS))
         .show(ctx, |ui| {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.horizontal(|ui| {

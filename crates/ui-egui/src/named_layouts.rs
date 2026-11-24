@@ -1,4 +1,4 @@
-//! Window > Layouts: panel arrangements saved under a name and switched from the menu.
+//! Named panel arrangements retained for shortcuts and automation.
 //!
 //! A named layout holds the painting and the baking dock (which panels are shown, where, and
 //! how big). Switching to one touches nothing else: not the mode, the zoom, the wireframes, the
@@ -52,6 +52,10 @@ impl UiState {
         let (current, other) = if self.dock_is_baking { (layout.baking, layout.painting) } else { (layout.painting, layout.baking) };
         self.dock = current;
         self.inactive_mode_dock = other;
+        if self.dock_is_rendering {
+            // Legacy layouts share their painting arrangement with Rendering
+            self.inactive_render_dock = Some(self.dock.clone());
+        }
 
         // A popup open against the rail shows a panel of the old arrangement
         self.rail_panel = None;

@@ -520,8 +520,13 @@ pub fn load_layout(app: &mut TextureCraftApp) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) -> bool {
     match id {
-        "file.open" => {
-            app.ask_file(FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS), Bound::App, |app, paths| {
+        "file.open" | "project.sample" => {
+            let dialog = if id == "project.sample" {
+                FileDialog::open().title(tr("Open Sample Project")).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT])
+            } else {
+                FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS)
+            };
+            app.ask_file(dialog, Bound::App, |app, paths| {
                 if let Some(path) = paths.first() {
                     open_path(app, &path.display().to_string());
                 }
@@ -667,6 +672,7 @@ pub fn open_path(app: &mut TextureCraftApp, path: &str) {
 pub fn file_action(app: &mut TextureCraftApp, ctx: &egui::Context, id: &str) -> bool {
     match id {
         "file.open" => crate::web_files::open(ctx),
+        "project.sample" => crate::web_files::open_sample_project(ctx),
         "file.importResources" | "resource.import" => crate::web_files::import_images(ctx),
         "material.load" => crate::web_files::import_material(ctx),
         "file.save" | "file.saveAs" | "file.saveCopy" => crate::web_files::save_project(app),

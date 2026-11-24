@@ -8,7 +8,7 @@ use crate::TextureCraftApp;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::file_dialogs::{Bound, FileDialog};
 use crate::i18n::{LANGUAGES, SYSTEM_LANGUAGE, n_, tr, trf};
-use crate::state::{CAMERA_SPEED_RANGE, LibraryLocation, Prefs};
+use crate::state::{CAMERA_SPEED_RANGE, LibraryLocation, MAX_RECENT_PROJECTS, Prefs};
 use crate::theme::{Accent, Brightness, Tokens, caption};
 use crate::unavailable::NOT_AVAILABLE;
 use crate::widgets::icon_button;
@@ -78,9 +78,9 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     crate::windows::window("settings", tr("Settings"), &mut open)
         .default_size(vec2(content_width + frame_width, page_height + WINDOW_CHROME_HEIGHT_POINTS))
         .show(ctx, |ui| {
-            // Measure the footer through layout, then let the pages use only what remains.
+            // Measure the footer through layout, then let the pages use only what remains
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                // Recheck after drawing the page as well, before accepting any edits.
+                // Recheck after drawing the page as well, before accepting any edits
                 let conflict = crate::keymap::has_conflict(&app.settings_bindings);
                 ui.horizontal(|ui| {
                     if conflict {
@@ -363,7 +363,7 @@ fn general(
     });
 
     row(ui, tr("Recent projects limit"), |ui, label| {
-        ui.add(egui::DragValue::new(&mut p.recent_projects_limit).range(0..=100))
+        ui.add(egui::DragValue::new(&mut p.recent_projects_limit).range(0..=MAX_RECENT_PROJECTS))
             .labelled_by(label)
             .on_hover_text(tr("Number of recent projects to remember. 0 disables recent-project history."));
     });

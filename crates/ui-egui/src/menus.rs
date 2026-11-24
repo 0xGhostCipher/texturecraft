@@ -155,11 +155,13 @@ pub fn enabled(app: &TextureCraftApp, id: &str) -> bool {
     if id == "ui.recent.clear" {
         return !app.ui.recent.is_empty();
     }
-    // Opening the import dialog is independent of importing into a project.
+
+    // Opening the import dialog is independent of importing into a project
     #[cfg(not(target_arch = "wasm32"))]
     if id == "resource.import" {
         return true;
     }
+
     if let Some(panel) = crate::docking::view_panel(id) {
         let mode = if app.session.project_open { app.ui.mode } else { Mode::Painting };
         return panel.available_in(mode);
@@ -380,7 +382,7 @@ fn menu_item(app: &mut TextureCraftApp, ctx: &egui::Context, ui: &mut egui::Ui, 
         b = b.shortcut_text(sc);
     }
     if let Some(c) = checked {
-        // Keep the accessible checked state; the checkmark supplies the visual state.
+        // Keep the accessible checked state; the checkmark supplies the visual state
         b = b.selected(c);
         b.set_class(egui::Button::CLASS_SELECTED, false);
     }
