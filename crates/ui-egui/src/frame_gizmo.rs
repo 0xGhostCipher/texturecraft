@@ -136,10 +136,12 @@ impl FrameGizmo {
         let ring = steps[0]
             .zip(steps[1])
             .filter(|(across_step, up_step)| {
-                across_step.length() > f32::EPSILON && solve(*across_step, *up_step, egui::Vec2::X).is_some() && ring_open(app, rect, center, out)
+                ring_stretch(*across_step, *up_step) > f32::EPSILON
+                    && solve(*across_step, *up_step, egui::Vec2::X).is_some()
+                    && ring_open(app, rect, center, out)
             })
-            .and_then(|(step, _)| {
-                let radius = TURN_RING / step.length();
+            .and_then(|(across_step, up_step)| {
+                let radius = TURN_RING / ring_stretch(across_step, up_step);
                 let last = (TURN_RING_POINTS - 1) as f32;
                 let points = (0..TURN_RING_POINTS).map(|index| {
                     let (sin, cos) = (index as f32 / last * std::f32::consts::TAU).sin_cos();
@@ -196,6 +198,16 @@ const MIN_RING_FACING: f32 = (SHAFT_WIDTH + SHAFT_HALO_EXTRA_WIDTH) / TURN_RING;
 /// Whether a turn ring round `axis`, centred on screen at `center`, is seen open enough to show and grab
 pub(crate) fn ring_open(app: &TextureCraftApp, rect: Rect, center: Pos2, axis: Vec3) -> bool {
     view_ray(app, rect, center).dir.dot(axis).abs() >= MIN_RING_FACING
+}
+
+/// The longest screen length a unit circle in the frame's plane reaches (points per world unit): the largest singular value of the screen steps `across_step` and `up_step`, so a ring of world radius `TURN_RING / ring_stretch` spans about `TURN_RING` points whichever way the frame is turned
+fn ring_stretch(across_step: egui::Vec2, up_step: egui::Vec2) -> f32 {
+    let across_sq = across_step.length_sq();
+    let up_sq = up_step.length_sq();
+    let shear = across_step.dot(up_step);
+    let largest_eigenvalue = (across_sq + up_sq) * 0.5 + (((across_sq - up_sq) * 0.5).powi(2) + shear * shear).sqrt();
+
+    largest_eigenvalue.sqrt()
 }
 
 /// `delta` as a mix of screen steps `across_step` and `up_step` (None when they are parallel on screen)
@@ -674,6 +686,46 @@ pub(crate) mod tests {
         let Projection::Warp { frame, corners, .. } = projection(&harness, layer) else { panic!("still a warp") };
         assert!(frame.size[0] < warp.decal.size[0] * 0.75 && (frame.size[1] - warp.decal.size[1]).abs() < 1e-4, "the right edge dot narrows it: {frame:?}");
         assert_eq!(corners, Projection::FRAME_CORNERS, "its corners stay where they are on the frame");
+    }
+
+    /// The ring keeps about `TURN_RING` points on its longest screen extent however the camera orbits round the frame, also when the across direction is foreshortened
+    #[test]
+    fn the_ring_keeps_its_screen_size_at_oblique_angles() {
+        // Largest share of TURN_RING the ring may reach from the centre: perspective makes the near side a little longer
+        const MAX_RING_SHARE: f32 = 1.25;
+        // Smallest share of TURN_RING the ring may keep: the screen steps are measured over the frame's size, so they are a little rough
+        const MIN_RING_SHARE: f32 = 0.6;
+        const ORBIT_DEGREES: [f32; 6] = [0.0, 40.0, 60.0, 75.0, 80.0, 84.0];
+        // Dolly exponent stepping the camera back before it turns
+        const DOLLY_BACK: f32 = 1.5;
+        // The across direction counts as strongly foreshortened below this share of the up direction's screen length
+        const FORESHORTENED_SHARE: f32 = 0.4;
+
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for kind in ["planar", "warp"] {
+            let (mut harness, _) = fill_app(kind);
+            let mut foreshortened_shown = false;
+
+            // Seen from afar the foreshortening is not softened by perspective
+            harness.state_mut().session.camera.zoom(-DOLLY_BACK);
+            for degrees in ORBIT_DEGREES {
+                harness.state_mut().session.camera.set_angles(degrees.to_radians(), 0.0);
+                harness.run_steps(2);
+
+                let shown = gizmo(&harness);
+                let Some(ring) = shown.ring else { continue };
+                let reach = ring.iter().map(|at| at.distance(shown.center)).fold(0.0, f32::max);
+                let across_step = shown.steps[0].unwrap().length();
+                let up_step = shown.steps[1].unwrap().length();
+
+                assert!(reach <= TURN_RING * MAX_RING_SHARE, "{kind} orbited {degrees} degrees: the ring reaches {reach} points");
+                assert!(reach >= TURN_RING * MIN_RING_SHARE, "{kind} orbited {degrees} degrees: the ring shrank to {reach} points");
+
+                foreshortened_shown |= across_step < up_step * FORESHORTENED_SHARE;
+            }
+
+            assert!(foreshortened_shown, "{kind}: the ring was checked with the across direction foreshortened");
+        }
     }
 
     /// Losing the focus mid-drag (Alt+Tab) ends a frame drag as a release does: one undo step, and moves after it (egui still has the button down) leave the frame alone
