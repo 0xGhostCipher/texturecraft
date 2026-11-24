@@ -349,6 +349,7 @@ fn bake_rows(
                 .collect()
         })
         .collect();
+
     let row_offsets: Vec<usize> = samples_by_row
         .iter()
         .scan(0, |sample_count, row| {
@@ -362,11 +363,12 @@ fn bake_rows(
         true => {
             let (rays, frontal_distances): (Vec<tracing::Ray>, Vec<f32>) = samples().map(|sample| context.transfer_ray(&sample.surface, sample.bary)).unzip();
             let hits = scene.closest(1, &rays, context.ignore_transfer_backface())?;
-            hits.into_par_iter().zip(frontal_distances).map(|(hit, front)| context.transfer(hit, front)).collect()
+            hits.into_par_iter().zip(&rays).zip(frontal_distances).map(|((hit, ray), front)| context.transfer(hit, front, ray.max_distance)).collect()
         }
         false => Vec::new(),
     };
     let transfer = |sample_index: usize| transfers.get(sample_index).and_then(Option::as_ref);
+
     let curvature = match context.traces_curvature() {
         true => {
             let items: Vec<(&Surface, Option<&map::Transfer>)> = samples_by_row
@@ -379,6 +381,7 @@ fn bake_rows(
         }
         false => Vec::new(),
     };
+
     let queries: Vec<tracing::Query> = match context.ao.is_some() || context.bent.is_some() || context.thickness.is_some() {
         true => samples_by_row
             .par_iter()
@@ -388,6 +391,7 @@ fn bake_rows(
             .collect(),
         false => Vec::new(),
     };
+
     // Share occlusion results when the bent-normal ray settings match
     let separate_bent_pass = context.bent.filter(|_| context.bent != context.ao);
     let passes: Vec<tracing::Hemisphere> = [context.ao, separate_bent_pass, context.thickness].into_iter().flatten().collect();

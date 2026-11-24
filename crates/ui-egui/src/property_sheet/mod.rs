@@ -13,6 +13,11 @@ mod compare_row;
 mod compare_row_response;
 mod eye_toggle;
 mod factor_slider;
+mod file_list;
+mod file_list_add;
+mod file_list_response;
+mod file_row;
+mod fold_section;
 mod gradient_rows;
 mod group;
 mod hold_pad;
@@ -42,6 +47,7 @@ mod slot;
 mod slot_response;
 mod source_card;
 mod stack_slider;
+mod stacked_rows;
 mod switch_control;
 mod tooltip;
 mod track;
@@ -55,6 +61,10 @@ pub(crate) use action_row_response::ActionRowResponse;
 pub(crate) use band_response::BandResponse;
 pub(crate) use button_icon::ButtonIcon;
 pub(crate) use compare_row_response::CompareRowResponse;
+pub(crate) use file_list_add::FileListAdd;
+pub(crate) use file_list_response::FileListResponse;
+pub(crate) use file_row::FileRow;
+pub(crate) use fold_section::FoldSection;
 pub(crate) use id_color_row_response::IdColorRowResponse;
 pub(crate) use number_field::NumberField;
 pub(crate) use preview_lower::PreviewLower;
@@ -68,6 +78,7 @@ pub(crate) use section_tabs::{
 pub(crate) use sheet::PropertySheet;
 pub(crate) use slot_response::SlotResponse;
 pub(crate) use stack_slider::StackSlider;
+pub(crate) use stacked_rows::{CHECK_SIZE, paint_check};
 
 /// Side padding: every row starts and ends this far inside the panel
 pub(crate) const SIDE_PADDING_POINTS: f32 = 12.0;

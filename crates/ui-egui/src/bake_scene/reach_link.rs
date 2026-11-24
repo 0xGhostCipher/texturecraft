@@ -2,7 +2,6 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 use texturecraft_engine::Session;
 use texturecraft_engine::bake::{HighPolyReach, high_poly_missed};
-use texturecraft_engine::core::HighPolySettings;
 
 use super::cage_shell_key::CageShellKey;
 use crate::gpu::SceneSync;
@@ -13,8 +12,8 @@ type ShownDistances = (Vec<(f32, f32)>, Option<usize>);
 /// The red on the high poly: each texture set's ray reach, worked out on a worker thread, and the distances the GPU's colors show
 #[derive(Default)]
 pub(super) struct ReachLink {
-    /// Each set's ray inputs and high-poly settings (backfaces, name matching), and the id of the high poly, the reach was started for
-    keys: Vec<Option<(CageShellKey, HighPolySettings)>>,
+    /// Each set's ray inputs, and the id of the high poly, the reach was started for
+    keys: Vec<Option<CageShellKey>>,
     high_id: u64,
     job: Option<Receiver<Vec<Option<HighPolyReach>>>>,
     reach: Vec<Option<HighPolyReach>>,
@@ -56,14 +55,7 @@ impl ReachLink {
         }
 
         let set_count = session.doc.project.texture_sets.len();
-        let keys: Vec<Option<(CageShellKey, HighPolySettings)>> = session
-            .doc
-            .project
-            .texture_sets
-            .iter()
-            .enumerate()
-            .map(|(texture_set, set)| Some((CageShellKey::of(session, texture_set)?, set.bake.high_poly.clone())))
-            .collect();
+        let keys: Vec<Option<CageShellKey>> = (0..set_count).map(|texture_set| CageShellKey::of(session, texture_set)).collect();
 
         if keys != self.keys || high_id != self.high_id {
             // The GPU keeps displayed colors; stale CPU arrays need not overlap the rebuild
@@ -87,7 +79,7 @@ impl ReachLink {
             return;
         }
 
-        let Some(vertex_count) = session.bake_meshes.merged_high().map(|high| high.mesh.positions.len()) else { return };
+        let Some(vertex_count) = session.doc.bake_meshes.merged_high().map(|high| high.mesh.positions.len()) else { return };
 
         out.bake_high_missed = Some((self.high_id, high_poly_missed(&self.reach, &shown.0, only_set, vertex_count)));
         self.shown = Some(shown);
@@ -164,7 +156,7 @@ mod tests {
         link.sync(&session, 2, None, &mut out);
         let (high_id, missed) = out.bake_high_missed.unwrap();
         assert_eq!(high_id, 2);
-        assert_eq!(missed, vec![0.0; session.bake_meshes.merged_high().unwrap().mesh.positions.len()]);
+        assert_eq!(missed, vec![0.0; session.doc.bake_meshes.merged_high().unwrap().mesh.positions.len()]);
         assert!(link.reach[0].is_none(), "the latest setting bakes without a high poly");
     }
 }

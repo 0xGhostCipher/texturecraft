@@ -135,9 +135,18 @@ alone) and `alphaInvert` (swaps paint and no paint inside the stamp square). The
 procedural, library and imported alphas alike and are returned by `tool.brush` with the other
 values. The alpha's rotation is the brush `angle`.
 
-Bake mode applies edits in Common Settings and Mesh Map Settings to every texture set. Each
-set keeps its own enabled mesh-map checkboxes and Include in Bake flag. Edits update only the
-changed fields; Restore Defaults resets the whole parameter section across all sets.
+Bake mode applies an edit in Common Settings or Mesh Map Settings to the texture sets sharing that
+group's settings: Common Settings, and each map's settings, are shared by any set of texture sets
+(at first every set shares them). Each set keeps its own enabled mesh-map checkboxes and Include in
+Bake flag. An edit reaches the sets sharing its group with only the fields it changed, so values
+that differ elsewhere stay; Restore Defaults resets the whole parameter section across those sets.
+
+`bake.sync {group: "common" | <map id>, ts: [indices] | "all"}` makes exactly these sets share the
+group from now on; sets joining take the settings the group shares. `bake.copy {what: "settings" |
+"checked" | "check", map?, from?, ts}` copies once: every setting with which maps are checked (or
+one map's settings), which maps are checked, or checks one map; settings also reach the sets sharing a group with a target, while
+checkboxes stay per set. Each is one
+undo step. `bake.settings` with `model` keeps each set's sync membership.
 
 `bake.settings {ts: "all", patch: {maps: {ao: {parameters: {rays: {rays: 128}}}}}}` changes
 only AO secondary rays. A `patch` uses the nested `BakeSettings` field names and named enum

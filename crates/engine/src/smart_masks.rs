@@ -223,14 +223,17 @@ impl Session {
             .and_then(|root| pf.project.layers.get(&root))
             .and_then(|l| l.mask.clone())
             .ok_or_else(|| EngineError::Other("the smart mask file has no mask".into()))?;
+
         let resources: BTreeMap<String, Arc<Vec<u8>>> = pf.resources.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
         let src = crate::session::Document {
+            bake_meshes: Default::default(),
             bake_paint: BTreeMap::new(),
             project: pf.project,
             pixels: pf.pixels,
             baked: BTreeMap::new(),
             resources: BTreeMap::new(),
         };
+
         let label = src.project.texture_sets.first().map(|t| t.name.clone()).unwrap_or_default();
         self.edit(&format!("Apply smart mask {label}"), |s| {
             let (ts, _, _) = s.doc.project.locate(layer).ok_or_else(|| EngineError::Other("layer not in a stack".into()))?;

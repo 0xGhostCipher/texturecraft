@@ -1,6 +1,6 @@
 use egui::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+use egui_kittest::kittest::{NodeT, Queryable, by};
 use texturecraft_engine::core::{BakeResolution, BakeSettings, BakedMap, CageType, CurvatureMethod, HeightNormalization};
 use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::docking::Panel;
@@ -45,9 +45,14 @@ fn click(harness: &mut Harness<'_, TextureCraftApp>, label: &str) {
     harness.run_steps(3);
 }
 
-fn number_field<'a>(harness: &'a Harness<'_, TextureCraftApp>, label: &str) -> egui_kittest::Node<'a> {
-    let label_row = harness.get_by_label(label).rect().center().y;
-    harness.get_all_by_role(Role::TextInput).find(|node| (node.rect().center().y - label_row).abs() < 4.0).unwrap()
+/// Type `text` as the value of the slider labelled `label`: a click on its value turns it into a field with the value selected
+fn type_slider_value(harness: &mut Harness<'_, TextureCraftApp>, label: &str, text: &str) {
+    harness.get_by_role_and_label(Role::Label, &format!("{label} value")).click();
+    harness.run_steps(2);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.event(egui::Event::Text(text.into()));
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
 }
 
 #[test]
@@ -99,7 +104,7 @@ fn common_settings_edits_update_all_sets_and_keep_their_map_selection() {
 
     let mut expected = before.clone();
     for texture_set in &mut expected.texture_sets {
-        texture_set.bake.common.apply_diffusion = false;
+        texture_set.bake.common.apply_diffusion = true;
     }
     assert_eq!(harness.state().session.doc.project, expected);
 
@@ -129,14 +134,7 @@ fn secondary_rays_edit_from_another_set_updates_all_sets() {
     select_map(&mut harness, "Ambient Occlusion");
     let history_steps = harness.state().session.history_labels().len();
 
-    number_field(&harness, "Secondary Rays").focus();
-    harness.run_steps(2);
-    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-    harness.run_steps(1);
-    number_field(&harness, "Secondary Rays").type_text("128");
-    harness.run_steps(1);
-    harness.key_press(egui::Key::Enter);
-    harness.run_steps(3);
+    type_slider_value(&mut harness, "Secondary Rays", "128");
 
     let session = &harness.state().session;
     assert_eq!(session.ts(), 1);
@@ -333,12 +331,14 @@ fn restoring_common_defaults_keeps_each_sets_inclusion_and_maps() {
 
     harness.state_mut().ui.dock.focus(Panel::CommonSettings);
     harness.run_steps(3);
-    harness.get_all_by_role_and_label(Role::Button, "Restore Defaults").next().unwrap().click();
+    harness.get_by_role_and_label(Role::Button, "Reset Common Settings").click();
     harness.run_steps(3);
 
     let mut expected = before.clone();
     expected.texture_sets[1].bake.common = Default::default();
     expected.texture_sets[1].bake.common.is_enabled = false;
+    // The section holds the High-Poly Parameters too, so its reset covers them
+    expected.texture_sets[1].bake.high_poly = Default::default();
     let session = &mut harness.state_mut().session;
     assert_eq!(session.doc.project, expected);
     session.undo().unwrap();
@@ -385,10 +385,10 @@ fn height_controls_follow_manual_normalization_and_the_row_checkbox_enables_heig
     assert!(harness.query_by_label("Normalization").is_none());
     select_map(&mut harness, "Height");
     assert!(!harness.state().session.doc.project.texture_sets[0].bake.maps.height.is_enabled, "selecting is not enabling");
-    assert!(harness.query_by_label("Scaling Divisor").is_none());
+    assert!(harness.get_by_label("Scaling Divisor").accesskit_node().is_disabled());
     click(&mut harness, "Normalization");
     click(&mut harness, "Manual");
-    harness.get_by_label("Scaling Divisor");
+    assert!(!harness.get_by_label("Scaling Divisor").accesskit_node().is_disabled());
     assert_eq!(harness.state().session.doc.project.texture_sets[0].bake.maps.height.parameters.normalization, HeightNormalization::Manual);
 
     click_checkbox(&mut harness, "Height");
@@ -396,7 +396,7 @@ fn height_controls_follow_manual_normalization_and_the_row_checkbox_enables_heig
     click(&mut harness, "Restore Defaults");
     assert!(harness.state().session.doc.project.texture_sets[0].bake.maps.height.is_enabled, "Restore Defaults keeps the map enabled");
     assert_eq!(harness.state().session.doc.project.texture_sets[0].bake.maps.height.parameters.normalization, HeightNormalization::RelativeToLowMesh);
-    assert!(harness.query_by_label("Scaling Divisor").is_none());
+    assert!(harness.get_by_label("Scaling Divisor").accesskit_node().is_disabled());
     click_checkbox(&mut harness, "Height");
     assert!(!harness.state().session.doc.project.texture_sets[0].bake.maps.height.is_enabled);
 }
@@ -417,7 +417,8 @@ fn clicking_a_row_shows_that_maps_settings_without_changing_what_bakes() {
     assert!(harness.query_by_label("Attenuation").is_none());
     assert_eq!(enabled_maps(&harness), before);
 
-    click(&mut harness, &format!("{} Common Settings", egui_phosphor::regular::GEAR));
+    harness.get_by_role_and_label(Role::Button, "Common Settings").click();
+    harness.run_steps(3);
     assert!(harness.state().ui.dock.is_visible(Panel::CommonSettings));
     assert_eq!(enabled_maps(&harness), before);
 }
@@ -437,9 +438,7 @@ fn the_breadcrumb_switches_the_shown_map() {
     harness.get_by_label("Sampling Radius");
     assert_eq!(harness.get_all_by_role_and_label(Role::Button, "Position").count(), 1, "only the list row before the menu opens");
 
-    let dropdowns: Vec<_> = harness.get_all_by_label(egui_phosphor::regular::CARET_RIGHT).collect();
-    let [_texture_set_dropdown, map_dropdown] = dropdowns.as_slice() else { panic!("the breadcrumb has a texture set and a map dropdown") };
-    map_dropdown.click();
+    harness.get_by_label("Switch Mesh Map").click();
     harness.run_steps(3);
     assert_eq!(harness.get_all_by_role_and_label(Role::Button, "Position").count(), 2, "the map menu lists Position");
 
@@ -452,19 +451,21 @@ fn the_breadcrumb_switches_the_shown_map() {
 }
 
 #[test]
-fn curvature_controls_follow_the_method_and_notes_visibility_rules() {
+fn curvature_controls_follow_the_method_and_grey_out_by_their_switches() {
     let mut harness = harness(Some(BakedMap::Curvature));
     let curvature = |harness: &Harness<'_, TextureCraftApp>| harness.state().session.doc.project.texture_sets[0].bake.maps.curvature.parameters;
 
     assert_eq!(curvature(&harness).method, CurvatureMethod::Mesh);
     assert!(harness.query_by_label("Details").is_none());
     harness.get_by_label("Sampling Radius");
-    assert!(harness.query_by_label("Value Bounds Min").is_none());
-    assert!(harness.query_by_label("Value Bounds Max").is_none());
+    for bound in ["Value Bounds Min", "Value Bounds Max"] {
+        assert!(harness.get_by_label(bound).accesskit_node().is_disabled(), "{bound} is greyed while tonemapping is automatic");
+    }
 
-    click(&mut harness, "Auto Tonemapping");
-    harness.get_by_label("Value Bounds Min");
-    harness.get_by_label("Value Bounds Max");
+    click(&mut harness, "Auto Tonemapping (per UV Tile)");
+    for bound in ["Value Bounds Min", "Value Bounds Max"] {
+        assert!(!harness.get_by_label(bound).accesskit_node().is_disabled());
+    }
     assert!(!curvature(&harness).mesh.auto_tonemapping);
 
     click(&mut harness, "Method");
@@ -473,9 +474,9 @@ fn curvature_controls_follow_the_method_and_notes_visibility_rules() {
     assert!(harness.query_by_label("Sampling Radius").is_none());
     harness.get_by_label("Details");
 
-    harness.get_by_label("Seams Intensity");
+    assert!(!harness.get_by_label("Seams Intensity").accesskit_node().is_disabled());
     click(&mut harness, "Enable Seams");
-    assert!(harness.query_by_label("Seams Intensity").is_none());
+    assert!(harness.get_by_label("Seams Intensity").accesskit_node().is_disabled());
 }
 
 #[test]
@@ -490,13 +491,12 @@ fn cage_and_skew_controls_require_a_high_poly_and_grey_out_with_a_reason() {
     }
     harness.get_by_label("The cage applies once a high poly mesh is loaded.");
     harness.get_by_label("Skew Correction applies once a high poly mesh is loaded.");
-    assert!(harness.get_by_label("Remove").accesskit_node().is_disabled(), "nothing selected to remove");
 
     harness.state_mut().session.add_high_poly_bytes("High.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n".to_vec()).unwrap();
     harness.run_steps(3);
     assert!(!harness.get_by_label("Max Frontal Distance").accesskit_node().is_disabled());
     assert!(harness.query_by_label("The cage applies once a high poly mesh is loaded.").is_none());
-    harness.get_by_label("Skew Correction");
+    harness.get_by_role_and_label(Role::Button, "Reset Skew Correction");
     harness.state_mut().session.doc.project.texture_sets[0].bake.cage.average_normals = false;
     harness.run_steps(3);
     assert!(harness.get_by_label("Edge Protection").accesskit_node().is_disabled(), "the section shows greyed");
@@ -505,11 +505,24 @@ fn cage_and_skew_controls_require_a_high_poly_and_grey_out_with_a_reason() {
     harness.run_steps(3);
     harness.get_by_label("Skew Correction is not available while the low poly mesh is used as the high poly mesh.");
     harness.get_by_label("The cage is not used while the low poly mesh is used as the high poly mesh.");
-    assert!(harness.get_by_label("Paint Cage").accesskit_node().is_disabled(), "the low poly as its own high poly has no cage to paint");
+    assert!(harness.get(by().label_contains("Paint Cage")).accesskit_node().is_disabled(), "the low poly as its own high poly has no cage to paint");
     let settings = &mut harness.state_mut().session.doc.project.texture_sets[0].bake;
     (settings.cage.average_normals, settings.high_poly.use_low_as_high) = (true, false);
     harness.run_steps(3);
     assert!(!harness.get_by_label("Edge Protection").accesskit_node().is_disabled());
+
+    click(&mut harness, "Cage Type");
+    click(&mut harness, "Automatic (Experimental)");
+    assert_eq!(harness.state().session.doc.project.texture_sets[0].bake.cage.kind, CageType::Automatic);
+    for distance_based_only in ["Max Frontal Distance", "Average Normals"] {
+        assert!(harness.query_by_label(distance_based_only).is_none(), "the automatic cage has no {distance_based_only}");
+    }
+    assert!(harness.query(by().label_contains("Paint Cage")).is_none(), "the automatic cage is not painted");
+    assert!(
+        harness.get_by_role_and_label(Role::CheckBox, "Matching Error").accesskit_node().is_disabled(),
+        "greyed with the automatic cage, as in the reference"
+    );
+    harness.get_by_label("Skew Correction needs a distance-based cage: the automatic cage is fitted to the high poly as it is.");
 
     click(&mut harness, "Cage Type");
     click(&mut harness, "Custom File");
@@ -518,14 +531,20 @@ fn cage_and_skew_controls_require_a_high_poly_and_grey_out_with_a_reason() {
     assert!(harness.query_by_label("Max Frontal Distance").is_none());
     assert!(harness.get_by_label("Edge Protection").accesskit_node().is_disabled(), "the section shows greyed");
     harness.get_by_label("Skew Correction needs a distance-based cage: a custom cage file sets the ray directions itself.");
+    harness.get_by_label("Load Cage");
+}
 
-    for button_size in [20.0, 28.0] {
-        harness.ctx.all_styles_mut(|style| style.spacing.interact_size = egui::Vec2::splat(button_size));
-        harness.run_steps(3);
-        for label in ["Remove", "Load Cage"] {
-            assert_eq!(harness.get_by_label(label).rect().size(), egui::Vec2::splat(button_size));
-        }
+#[test]
+fn output_sizes_run_from_32_to_8192_as_in_the_reference() {
+    let mut harness = harness(None);
+    harness.state_mut().ui.dock.focus(Panel::CommonSettings);
+    harness.run_steps(3);
+    harness.get_all_by_value("64").next().unwrap().click();
+    harness.run_steps(3);
+    for offered in ["32", "8192"] {
+        harness.get_by_label(offered);
     }
+    assert!(harness.query_by_label("16").is_none());
 }
 
 #[test]
@@ -535,7 +554,8 @@ fn a_loaded_cage_can_be_removed_while_the_cage_does_not_apply() {
     let session = &mut harness.state_mut().session;
     session.add_high_poly_bytes("High.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n".to_vec()).unwrap();
     let mesh = session.mesh.clone();
-    session.bake_meshes.cage = Some(texturecraft_engine::BakeMesh { name: "Cage.obj".into(), bytes: Default::default(), mesh, base_color: Vec::new() });
+    session.doc.bake_meshes.cage =
+        Some(texturecraft_engine::BakeMesh { name: "Cage.obj".into(), folder: None, bytes: Default::default(), mesh, base_color: Vec::new() });
     let settings = &mut session.doc.project.texture_sets[0].bake;
     (settings.cage.kind, settings.high_poly.use_low_as_high) = (CageType::CustomFile, true);
     harness.run_steps(3);
@@ -543,12 +563,15 @@ fn a_loaded_cage_can_be_removed_while_the_cage_does_not_apply() {
     assert!(harness.get_by_label("Load Cage").accesskit_node().is_disabled(), "the cage does not apply");
     assert!(!harness.get_by_label("Remove Cage").accesskit_node().is_disabled());
     click(&mut harness, "Remove Cage");
-    assert!(harness.state().session.bake_meshes.cage.is_none());
+    assert!(harness.state().session.doc.bake_meshes.cage.is_none());
 }
 
 #[test]
 fn the_view_menu_picks_the_neutral_or_the_painted_material_in_bake_mode() {
     let mut harness = harness(None);
+    // Mesh Map Settings in front would show its map's preview instead of the material
+    harness.state_mut().ui.dock.focus(Panel::CommonSettings);
+    harness.run_steps(2);
     assert!(harness.state().ui.bake_visualization.neutral_shown, "bake mode starts on the neutral material");
     harness.get_by_value("Neutral Material").click();
     harness.run_steps(3);
@@ -582,14 +605,13 @@ fn the_high_poly_scene_is_a_list_with_add_and_remove() {
     harness.state_mut().ui.dock.focus(Panel::CommonSettings);
     harness.run_steps(3);
     harness.get_by_label("Add High-Poly Meshes");
-    assert!(harness.get_by_label("Remove").accesskit_node().is_disabled(), "− waits for a selection");
+    harness.get_by_label("Gunhigh.obj");
 
-    harness.get_by_label("Gunhigh.obj").click();
-    harness.run_steps(3);
+    // Each file's row has its own ×
     harness.get_by_label("Remove").click();
     harness.run_steps(3);
-    assert!(harness.state().session.bake_meshes.high.is_empty());
-    assert!(harness.get_by_label("Remove").accesskit_node().is_disabled());
+    assert!(harness.state().session.doc.bake_meshes.high.is_empty());
+    assert!(harness.query_by_label("Remove").is_none());
 }
 
 #[test]

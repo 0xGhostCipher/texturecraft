@@ -48,6 +48,7 @@ mod generator_panel;
 pub mod gpu;
 mod gray_slider;
 mod grid_tile;
+mod high_poly_job;
 mod histogram_cache;
 pub mod i18n;
 pub mod id_color_pick;
@@ -182,6 +183,7 @@ use texturecraft_engine::bake::Progress;
 
 pub use bake_job::BakeJob;
 pub use control::ControlRequest;
+pub use high_poly_job::HighPolyJob;
 pub use running_bake::RunningBake;
 pub use state::UiState;
 
@@ -264,12 +266,16 @@ pub struct TextureCraftApp {
     /// The Import PBR textures dialog while it is open.
     pub pbr_import: Option<pbr_import::PbrDialog>,
     pub resize: Option<ResizeJob>,
+    /// High poly files being loaded for the bake
+    pub high_poly_job: Option<HighPolyJob>,
     pub link_cooks: Vec<LinkCook>,
     #[cfg(not(target_arch = "wasm32"))]
     link_imports: Vec<link_import::LinkImport>,
     pub thumbs: thumbs::Thumbs,
     /// The Layers panel's thumbnails and folded groups.
     pub layer_panel: layer_panel::LayerPanel,
+    /// The Mesh Map Bakers rows' thumbnails
+    pub(crate) bake_map_thumbnails: bake_mode::MapThumbnails,
     /// Last frame's viewport rect (logical points), for scripted input.
     pub viewport_rect: egui::Rect,
     pub fps: f32,
@@ -405,11 +411,13 @@ impl TextureCraftApp {
             bake_report: Default::default(),
             pbr_import: None,
             resize: None,
+            high_poly_job: None,
             link_cooks: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             link_imports: Vec::new(),
             thumbs: thumbs::Thumbs::default(),
             layer_panel: layer_panel::LayerPanel::default(),
+            bake_map_thumbnails: bake_mode::MapThumbnails::default(),
             viewport_rect: egui::Rect::NOTHING,
             fps: 0.0,
             ui_ms: 0.0,
@@ -599,9 +607,13 @@ impl TextureCraftApp {
         self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false });
     }
 
-    /// Start baking texture sets in the background, one after another. Invalid set indices
-    /// show an error without starting a preview or queuing any work.
+    /// Bake texture sets in the background, one after another; invalid set indices show an error without starting anything
     pub fn start_bake(&mut self, sets: Vec<usize>) {
+        self.start_bake_of(sets, None);
+    }
+
+    /// Bake `sets`: only map `only` when given, else each set's checked maps
+    pub fn start_bake_of(&mut self, sets: Vec<usize>, only: Option<texturecraft_engine::core::BakedMap>) {
         if self.bake.is_some() || sets.is_empty() {
             return;
         }
@@ -609,14 +621,19 @@ impl TextureCraftApp {
         // Restore the picker's view before the preview starts following baked maps
         id_color_pick::IdColorPick::end(self);
 
-        if let Err(error) = self.session.bake_preview_begin_for(&sets) {
-            self.toast(error.to_string(), true);
-            return;
+        match only {
+            Some(map) => self.session.bake_preview_begin(sets.iter().map(|set| (*set, vec![map])).collect()),
+            None => {
+                if let Err(error) = self.session.bake_preview_begin_for(&sets) {
+                    self.toast(error.to_string(), true);
+                    return;
+                }
+            }
         }
 
         let total = sets.len();
         self.bake_report = bake_report::BakeReport::started(self.last_time);
-        self.bake = Some(BakeJob { queue: sets, current: None, total, mesh_id: self.session.mesh_id });
+        self.bake = Some(BakeJob { queue: sets, current: None, total, mesh_id: self.session.mesh_id, only });
     }
 
     /// Re-cook MaterialCraft material layer `layer` in the background. While one cook of the layer
@@ -713,8 +730,7 @@ impl TextureCraftApp {
         }
     }
 
-    /// Show at most one streamed map per frame, then apply the set as one undo step after
-    /// its map channel closes. Closing the preview alone does not stop the background bake.
+    /// Show at most one streamed map per frame, then apply the set as one undo step once its map channel closes; closing the preview alone does not stop the bake
     fn poll_bake(&mut self, ctx: &egui::Context) {
         // Leaving Bake mode puts the view mode back; the bake goes on
         if self.session.bake_preview_active() && self.ui.mode != state::Mode::Baking {
@@ -736,7 +752,7 @@ impl TextureCraftApp {
             return;
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        ctx.request_repaint_after(BAKE_POLL_INTERVAL);
         if let Some(running) = &job.current {
             let set_index = running.set_index;
 
@@ -787,9 +803,15 @@ impl TextureCraftApp {
         }
 
         let set_index = job.queue.remove(0);
+        let only = job.only;
+
         self.session.bake_preview_set_current(set_index);
         match self.session.bake_task(set_index) {
-            Ok(task) => {
+            Ok(mut task) => {
+                if let Some(map) = only {
+                    task.settings.maps.select([map]);
+                }
+
                 let progress = Arc::new(Progress::new());
                 let worker_progress = progress.clone();
                 let maps_total = task.maps().len();
@@ -1015,6 +1037,9 @@ struct CameraGlide {
 
 const GLIDE_SECONDS: f64 = 0.35;
 
+/// How often a running bake is checked for finished maps: often enough that each shows within a few frames
+const BAKE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// The share of the running frame rate and frame time averages each frame keeps (an average over about ten frames)
 const FRAME_AVERAGE_KEEP: f32 = 0.9;
 /// The interface scale applied: wider than the Settings slider, so a scale set elsewhere still applies within reason
@@ -1107,6 +1132,8 @@ impl eframe::App for TextureCraftApp {
         }
         self.poll_bake(ctx);
         self.poll_resize(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_high_poly_job(ctx);
         self.poll_link_cooks(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_link_imports(ctx);
