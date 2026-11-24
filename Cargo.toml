@@ -10,7 +10,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-craft-usd = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-usd = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 # internal
 texturecraft-core = { path = "crates/core" }
 texturecraft-texel = { path = "crates/texel" }
@@ -41,7 +41,7 @@ skrifa = { version = "0.44", default-features = false, features = ["std"] }
 epaint_default_fonts = "0.37"
 log = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tga", "tiff", "exr", "hdr", "bmp", "webp"] }
-craft-image-codecs = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-image-codecs = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 half = "2"
 exr = { version = "1.73", default-features = false }
 eframe = { version = "0.37", default-features = false }
@@ -64,28 +64,28 @@ rustix = { version = "1", default-features = false, features = ["std", "fs", "pr
 # Shared Craft egui components (widget palette, icon buttons, panel docking): storytold/craft-libs,
 # MIT OR Apache-2.0, pinned to one rev.
 # Shared catalog lookup, pinned with the other Craft libraries.
-craft-i18n = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
-craft-ui = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
-craft-behavior = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
-craft-materialx = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
-craft-tcraft = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
-craft-zip = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
-craft-mesh = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107", default-features = false, features = ["stl", "ply", "fbx", "obj", "gltf", "dae", "abc"] }
-craft-mcmat = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-i18n = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
+craft-ui = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
+craft-behavior = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
+craft-materialx = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
+craft-tcraft = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
+craft-zip = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
+craft-mesh = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373", default-features = false, features = ["stl", "ply", "fbx", "obj", "gltf", "dae", "abc"] }
+craft-mcmat = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 # Who draws the window frame, and the app-drawn strip as the title bar (crates/ui-egui/src/titlebar.rs).
-craft-window = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107", features = ["ui"] }
+craft-window = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373", features = ["ui"] }
 # Release checks, the update prompt and the update helper (crates/ui-egui/src/updates_ui.rs).
-craft-update = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107", features = ["ui"] }
+craft-update = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373", features = ["ui"] }
 # File dialogs that never block the frame (crates/ui-egui/src/file_dialogs.rs).
-craft-dialogs = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-dialogs = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 # Shortcut chords, lookup and dispatch (crates/ui-egui/src/keymap.rs).
-craft-keymap = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107", features = ["egui"] }
+craft-keymap = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373", features = ["egui"] }
 # The macOS app menu whose Quit asks about unsaved changes (apps/texturecraft/src/main.rs).
-craft-menu = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-menu = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 # The UI runtime's host: who the app is to the framework's dialogs (crates/ui-egui/src/framework.rs).
-craft-host = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-host = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 # The theme mode the app hands the runtime (crates/ui-egui/src/framework.rs).
-craft-theme = { git = "https://github.com/aiongg/craft-libs", rev = "9fd8b0cdaad2b5320090f5a5892ba90fb8dab107" }
+craft-theme = { git = "https://github.com/aiongg/craft-libs", rev = "283490a0833e37cc748d29711ff73f81f091e373" }
 
 # egui 0.37 and winit: the suite's forks (storytold/egui, storytold/winit), as craft-libs pins them.
 [patch.crates-io]
