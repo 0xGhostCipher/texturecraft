@@ -2,12 +2,15 @@
 use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use texturecraft_engine::LogEntry;
 
 // Retain two segments to bound each run's log while preserving recent history
 const MAX_LOG_SEGMENT_BYTES: u64 = 8 * 1024 * 1024;
+/// Runs whose log folders stay in the logs folder, the new run's included, so the folder stays bounded
+const KEPT_SESSION_FOLDERS: usize = 10;
+const SESSION_FOLDER_PREFIX: &str = "session-";
 
 pub(crate) struct SessionLogFile {
     pub path: PathBuf,
@@ -18,7 +21,31 @@ pub(crate) struct SessionLogFile {
     last: Option<LogEntry>,
 }
 
+/// Remove all but the `keep` newest session folders in `logs`. Their names start with a UTC time, so
+/// name order is age order. Errors are ignored: a folder an older run still holds open stays for a later start.
+fn prune(logs: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(logs) else { return };
+    let mut folders: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| entry.file_name().to_str().is_some_and(|name| name.starts_with(SESSION_FOLDER_PREFIX)))
+        .map(|entry| entry.path())
+        .collect();
+    folders.sort();
+    let old = folders.len().saturating_sub(keep);
+    for folder in &folders[..old] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
+
 impl SessionLogFile {
+    /// Start this run's log in a new session folder under `logs`, after removing the oldest runs' folders.
+    pub fn start(logs: &Path) -> io::Result<Self> {
+        prune(logs, KEPT_SESSION_FOLDERS - 1);
+        let folder = format!("{SESSION_FOLDER_PREFIX}{}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S%.6fZ"), std::process::id());
+        Self::new(logs.join(folder).join("log.txt"))
+    }
+
     pub fn new(path: PathBuf) -> io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -99,5 +126,26 @@ mod tests {
         assert!(text.contains("second") && text.contains("new project"));
         drop(file);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn starting_a_run_removes_only_the_oldest_session_folders() {
+        let logs = std::env::temp_dir().join(format!("texturecraft-session-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&logs);
+        let older: Vec<PathBuf> = (0..KEPT_SESSION_FOLDERS + 2).map(|i| logs.join(format!("{SESSION_FOLDER_PREFIX}20260101T0000{i:02}.000000Z-1"))).collect();
+        for folder in &older {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        let other = logs.join("kept-by-the-user");
+        std::fs::create_dir_all(&other).unwrap();
+
+        let file = SessionLogFile::start(&logs).unwrap();
+
+        let survivors = older.iter().filter(|folder| folder.exists()).count();
+        assert_eq!(survivors + 1, KEPT_SESSION_FOLDERS, "the new run and the newest earlier runs remain");
+        assert!(!older[0].exists() && older.last().unwrap().exists(), "the oldest go first");
+        assert!(other.exists() && file.path.exists(), "other folders and the new log stay");
+        drop(file);
+        std::fs::remove_dir_all(logs).unwrap();
     }
 }

@@ -1,5 +1,6 @@
 //! File > Import resources...: a window to collect files, set what each is for, and import them
-//! together. Images become project resources; materials load as smart materials.
+//! together. Images become project resources; materials load as smart materials and MaterialX
+//! documents as fill layers.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,9 +62,18 @@ pub(crate) fn keys_in(app: &mut TextureCraftApp, input: &mut egui::InputState, n
     }
 }
 
-/// Whether the file is a material (loaded as a smart material, so it has no usage or prefix)
+fn extension_of(row: &ImportRow) -> String {
+    row.path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default()
+}
+
+/// Whether the file is a MaterialX document (added as a fill layer)
+fn is_materialx(row: &ImportRow) -> bool {
+    extension_of(row) == crate::windows::MATERIALX_EXT
+}
+
+/// Whether the file is a material (a smart material or a MaterialX document, so it has no usage or prefix)
 fn is_material(row: &ImportRow) -> bool {
-    row.path.extension().and_then(|e| e.to_str()).is_some_and(|e| MATERIAL_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+    MATERIAL_EXTS.contains(&extension_of(row).as_str()) || is_materialx(row)
 }
 
 fn file_name(row: &ImportRow) -> String {
@@ -256,6 +266,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     if add {
         let mut extensions: Vec<&str> = IMAGE_EXTS.to_vec();
         extensions.extend_from_slice(MATERIAL_EXTS);
+        extensions.push(crate::windows::MATERIALX_EXT);
         let opening_id = window.opening_id;
         app.ask_file(FileDialog::open_many().filter(tr("Resources"), &extensions), Bound::Project, move |app, paths| {
             let Some(stored) = app.ui.windows.import_resources.as_mut().filter(|stored| stored.opening_id == opening_id) else { return };
@@ -292,6 +303,10 @@ fn import_row(app: &mut TextureCraftApp, row: &ImportRow) -> bool {
         app.toast(trf("Could not import a path that is not UTF-8: {path}", &[("path", &row.path.display())]), true);
         return false;
     };
+
+    if is_materialx(row) {
+        return crate::windows::import_materialx(app, path);
+    }
 
     if is_material(row) {
         return app.run("material.load", json!({ "path": path })).is_some();

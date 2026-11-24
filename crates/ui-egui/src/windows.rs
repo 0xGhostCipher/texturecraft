@@ -516,6 +516,24 @@ pub fn load_layout(app: &mut TextureCraftApp) {
     app.toast(tr("Saving UI layouts to files is available in the desktop app"), false);
 }
 
+/// The extension of MaterialX documents (`file.importMaterialX`)
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MATERIALX_EXT: &str = "mtlx";
+
+/// Add the MaterialX material at `path` as a layer, logging what it could not read. Returns whether it was added.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn import_materialx(app: &mut TextureCraftApp, path: &str) -> bool {
+    let Some(result) = app.run("file.importMaterialX", json!({"path": path})) else { return false };
+
+    let name = result["material"].as_str().unwrap_or_default();
+    for warning in result["warnings"].as_array().into_iter().flatten().filter_map(serde_json::Value::as_str) {
+        app.session.log.warn(texturecraft_engine::log::LIBRARY_SOURCE, format!("MaterialX {name}: {warning}"));
+    }
+    app.toast(trf("Imported {name}", &[("name", &name)]), false);
+    app.ui.dock.focus(crate::docking::Panel::Layers);
+    true
+}
+
 /// File menu actions that need dialogs. Returns true when handled.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) -> bool {
@@ -561,16 +579,9 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             true
         }
         "file.importMaterialX" => {
-            app.ask_file(FileDialog::open().filter(tr("MaterialX materials"), &["mtlx"]), Bound::Project, |app, paths| {
-                if let Some(path) = paths.first()
-                    && let Some(result) = app.run("file.importMaterialX", json!({"path": path.display().to_string()}))
-                {
-                    let name = result["material"].as_str().unwrap_or_default();
-                    for warning in result["warnings"].as_array().into_iter().flatten().filter_map(serde_json::Value::as_str) {
-                        app.session.log.warn(texturecraft_engine::log::LIBRARY_SOURCE, format!("MaterialX {name}: {warning}"));
-                    }
-                    app.toast(trf("Imported {name}", &[("name", &name)]), false);
-                    app.ui.dock.focus(crate::docking::Panel::Layers);
+            app.ask_file(FileDialog::open().filter(tr("MaterialX materials"), &[MATERIALX_EXT]), Bound::Project, |app, paths| {
+                if let Some(path) = paths.first() {
+                    import_materialx(app, &path.display().to_string());
                 }
             });
             true

@@ -457,11 +457,7 @@ impl TextureCraftApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         if cc.winit_window().is_some() {
-            let path = crate::data_dir()
-                .join("logs")
-                .join(format!("session-{}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S%.6fZ"), std::process::id()))
-                .join("log.txt");
-            match session_log_file::SessionLogFile::new(path) {
+            match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
                 Ok(file) => app.session_log_file = Some(file),
                 Err(error) => app.toast(format!("{}: {error}", i18n::tr("Could not create the session log")), true),
             }

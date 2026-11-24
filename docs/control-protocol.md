@@ -507,9 +507,10 @@ Maps are found by file name, case-insensitively, from the last known word in the
   import is an error that changes nothing. `maps` describes detection; `channels` and `resources`
   describe the successful import. Scan validates import options without decoding pixels.
 
-In the app: File › Import PBR texture folder... or drop a folder, a `.zip` or several map files on the
-window. The dialog shows the maps found, lets you pick between candidates, set the normal convention and
-projection, and keep the material in the library (shelf › Materials).
+In the app: drop a folder, a `.zip` or several map files on the window. The dialog shows the maps found,
+lets you pick between candidates, set the normal convention and projection, and keep the material in the
+library (shelf › Materials). A `.mtlx` added in File › Import Resources is imported as `file.importMaterialX`
+does it.
 
 ## Smart masks
 

@@ -209,6 +209,33 @@ fn the_engine_command_still_imports_a_path_with_an_optional_prefix() {
 }
 
 #[test]
+fn a_materialx_document_imports_as_a_layer() {
+    let dir = TempDir::new("import-resources-materialx");
+    let file = dir.join("paint.mtlx");
+    std::fs::write(
+        &file,
+        r#"<?xml version="1.0"?>
+<materialx version="1.39">
+  <open_pbr_surface name="S" type="surfaceshader">
+    <input name="base_color" type="color3" value="0.8, 0.2, 0.1" />
+  </open_pbr_surface>
+  <surfacematerial name="Paint" type="material"><input name="surfaceshader" type="surfaceshader" nodename="S" /></surfacematerial>
+</materialx>"#,
+    )
+    .unwrap();
+    let mut h = app();
+    let layers = h.state().session.doc.project.layers.len();
+    invoke(&mut h);
+    add(&mut h, &[file]);
+
+    click(&mut h, "Import");
+
+    assert!(!is_open(&h), "the document was imported");
+    assert!(h.state().session.doc.project.layers.len() > layers, "the material became a layer");
+    assert!(resources(&h).is_empty(), "the document itself is not an image resource");
+}
+
+#[test]
 fn only_failed_rows_remain_after_a_partial_import() {
     let dir = TempDir::new("import-resources-retry");
     let good = png(&dir, "good.png");
