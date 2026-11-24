@@ -68,8 +68,7 @@ fn hover_name_field(h: &mut Harness<'_, TextureCraftApp>, index: usize) {
 /// The last button labelled `label` in the window (the newest output map's swatch)
 fn last_window_button<'h>(h: &'h Harness<'_, TextureCraftApp>, label: &str) -> egui_kittest::Node<'h> {
     h.get_all_by_role(egui::Role::Button)
-        .filter(|button| button.rect().max.x < RAIL_LEFT_EDGE && button.accesskit_node().label().as_deref() == Some(label))
-        .last()
+        .rfind(|button| button.rect().max.x < RAIL_LEFT_EDGE && button.accesskit_node().label().as_deref() == Some(label))
         .unwrap_or_else(|| panic!("no {label} button"))
 }
 
@@ -191,9 +190,12 @@ fn the_preview_ignores_a_texture_sets_output_map_settings() {
     h.state_mut().ui.export.preset = "Two".into();
     h.run_steps(4);
     assert!(h.query_by_label_contains("Not saved").is_none(), "the preview plans the template on show");
+    let plan = h.state_mut().run("export.plan", json!({"preset": "Two", "ts": ts})).unwrap();
     for index in 0..2 {
+        let file = plan.as_array().unwrap().iter().find(|f| f["map"] == index).unwrap()["file"].as_str().unwrap().to_string();
         hover_name_field(&mut h, index);
-        assert!(h.query_all_by_label_contains(egui_phosphor::regular::ARROW_RIGHT).next().is_some(), "map {index} shows its file");
+        let planned = format!("{} {file}", egui_phosphor::regular::ARROW_RIGHT);
+        assert!(h.query_all_by_label(&planned).next().is_some(), "map {index} shows its own file {file}");
     }
 }
 
@@ -346,11 +348,8 @@ fn the_tab_row_holds_the_naming_pattern_and_the_bottom_bar_only_cancels() {
     assert!(h.query_by_label_contains("textures selected for export").is_none());
     for greyed in ["Save settings", "Export"] {
         // The rail at the right edge has an Export button of its own
-        let button = h
-            .get_all_by_role(egui::Role::Button)
-            .filter(|b| b.rect().max.x < RAIL_LEFT_EDGE && b.accesskit_node().label().as_deref() == Some(greyed))
-            .last()
-            .unwrap();
+        let button =
+            h.get_all_by_role(egui::Role::Button).rfind(|b| b.rect().max.x < RAIL_LEFT_EDGE && b.accesskit_node().label().as_deref() == Some(greyed)).unwrap();
         assert!(button.accesskit_node().is_disabled(), "{greyed}");
     }
     assert!(!h.get_all_by_label("Cancel").last().unwrap().accesskit_node().is_disabled());
@@ -382,23 +381,24 @@ fn the_map_lists_stand_in_three_panes_with_the_reference_names() {
     let h = harness(&library);
 
     let input = h.get_by_label("Input maps").rect();
-    let mesh = h.get_by_label("Mesh maps").rect();
+    // A built-in template is called "Mesh maps" too: the pane's title comes after the Presets list
+    let mesh = h.get_all_by_label("Mesh maps").last().unwrap().rect();
     let converted = h.get_by_label("Converted maps").rect();
 
     assert!(mesh.left() > input.right(), "Mesh maps stand in a column right of Input maps");
     assert!(converted.top() > mesh.bottom() && (converted.left() - mesh.left()).abs() < 2.0, "Converted maps stand below Mesh maps");
-    for group in ["Base", "Transmission", "Subsurface", "Coat", "Fuzz/Sheen"] {
+    for group in ["Transmission", "Subsurface", "Fuzz/Sheen", "Thin-film", "Miscellaneous", "User Channels"] {
         assert!(h.query_all_by_label(group).next().is_some(), "group {group}");
     }
-    for name in ["Base metalness", "Specular roughness", "Coat normal", "Fuzz weight", "World space normal", "Bent normals", "Normal DirectX", "f0"] {
+    for name in ["Specular level", "Sheen opacity", "Coat normal", "Emissive", "World space normal", "Bent normals", "Normal DirectX", "f0"] {
         let entry = h.query_all_by_label(name).next().unwrap_or_else(|| panic!("{name}"));
         assert!(!entry.accesskit_node().is_disabled(), "{name} can be dragged");
     }
-    for name in ["Base weight", "Coat tangent", "1/ior", "Glossiness²", "2D View"] {
+    for name in ["Base weight", "Coat tangent", "Thin-film weight", "User31", "1/ior", "Glossiness²", "2D View"] {
         let entry = h.query_all_by_label(name).next().unwrap_or_else(|| panic!("{name}"));
         assert!(entry.accesskit_node().is_disabled(), "{name} is listed greyed");
     }
-    for gone in ["Drag onto an output channel", "Texture set channels", "Constants", "World Space Normal"] {
+    for gone in ["Drag onto an output channel", "Texture set channels", "Constants", "World Space Normal", "Emission color", "Other"] {
         assert!(h.query_by_label(gone).is_none(), "{gone}");
     }
 }
@@ -410,10 +410,11 @@ fn a_map_dropped_on_a_channel_asks_which_of_its_channels_to_use() {
     click(&mut h, "R+G+B+A");
     let last = h.state().session.export_preset("Mine").unwrap().maps.len() - 1;
 
-    let green = last_window_button(&h, "G").rect().center();
+    let green = last_window_button(&h, "G: Default black").rect().center();
     drop_on(&mut h, SourceRef::Channel { channel: Channel::BaseColor, component: 0 }, green);
 
     assert!(h.query_by_label("From Base color").is_some(), "the popup names the dropped map");
+    assert!(h.query_by_label("RGB Channels").is_none(), "only the RGB swatch offers RGB Channels");
     for choice in ["R Channel", "G Channel", "B Channel"] {
         assert!(!h.get_by_label(choice).accesskit_node().is_disabled(), "{choice}");
     }
@@ -426,23 +427,72 @@ fn a_map_dropped_on_a_channel_asks_which_of_its_channels_to_use() {
     let map = h.state().session.export_preset("Mine").unwrap().maps[last].clone();
     assert!(map.channels.contains(&(Dest::G, SourceRef::Channel { channel: Channel::BaseColor, component: 2 })), "{:?}", map.channels);
     assert!(h.query_by_label("From Base color").is_none(), "the popup closed");
-    assert!(h.query_all_by_label("G: Base color (B Channel)").next().is_some(), "the swatch names its map");
-    assert_eq!(h.state().ui.export.active_map, Some(last), "the lists mark this map's sources");
+    assert!(h.query_all_by_label("G: Base color (Blue)").next().is_some(), "the swatch names its map and channel");
 }
 
 #[test]
-fn a_gray_map_dropped_on_a_channel_offers_its_gray_channel() {
-    let library = TemplateLibrary::new("drop-gray");
+fn a_color_map_dropped_on_the_rgb_swatch_offers_rgb_channels() {
+    let library = TemplateLibrary::new("drop-rgb");
     let mut h = harness(&library);
-    click(&mut h, "R+G+B+A");
+    click(&mut h, "RGB+A");
+    let last = h.state().session.export_preset("Mine").unwrap().maps.len() - 1;
 
-    let alpha = last_window_button(&h, "A").rect().center();
-    drop_on(&mut h, SourceRef::Channel { channel: Channel::Metallic, component: 0 }, alpha);
+    let rgb = last_window_button(&h, "RGB: Default black").rect().center();
+    drop_on(&mut h, SourceRef::Channel { channel: Channel::BaseColor, component: 0 }, rgb);
+    h.get_by_label("RGB Channels").click();
+    h.run_steps(4);
 
-    assert!(h.query_by_label("From Base metalness").is_some());
+    let map = h.state().session.export_preset("Mine").unwrap().maps[last].clone();
+    let spread: Vec<_> = (0..3).map(|component| SourceRef::Channel { channel: Channel::BaseColor, component }).collect();
+    assert_eq!(map.channels.iter().take(3).map(|(_, source)| source.clone()).collect::<Vec<_>>(), spread);
+    assert!(h.query_all_by_label("RGB: Base color (RGB)").next().is_some());
+}
+
+#[test]
+fn escape_closes_the_from_popup_without_assigning() {
+    let library = TemplateLibrary::new("drop-escape");
+    let mut h = harness(&library);
+    click(&mut h, "Gray");
+    let before = h.state().session.export_preset("Mine").unwrap();
+
+    let gray = last_window_button(&h, "Gr: Default black").rect().center();
+    drop_on(&mut h, SourceRef::Channel { channel: Channel::Metallic, component: 0 }, gray);
+    assert!(h.query_by_label("From Metallic").is_some());
     assert!(!h.get_by_label("Gray Channel").accesskit_node().is_disabled());
     assert!(h.get_by_label("A Channel").accesskit_node().is_disabled());
     assert!(h.query_by_label("R Channel").is_none(), "a gray map has no R, G or B");
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+
+    assert!(h.query_by_label("From Metallic").is_none(), "Escape closes the popup");
+    assert!(h.state().ui.export.pending_drop.is_none());
+    assert_eq!(h.state().session.export_preset("Mine").unwrap(), before, "nothing was assigned");
+}
+
+#[test]
+fn dragging_a_grip_onto_another_row_moves_that_map_there() {
+    let library = TemplateLibrary::new("grip-drag");
+    let mut h = harness(&library);
+    let files = |h: &Harness<'_, TextureCraftApp>| h.state().session.export_preset("Mine").unwrap().maps.iter().map(|m| m.file.clone()).collect::<Vec<_>>();
+    let before = files(&h);
+
+    let from = h.get_all_by_label("Reorder").last().unwrap().rect().center();
+    let to = h.get_all_by_label("Reorder").next().unwrap().rect().center();
+    h.hover_at(from);
+    h.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    for step in 1..=4 {
+        h.hover_at(from + (to - from) * (step as f32 / 4.0));
+        h.run_steps(1);
+    }
+    h.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(4);
+
+    let mut expected = before.clone();
+    let moved = expected.pop().unwrap();
+    expected.insert(0, moved);
+    assert_eq!(files(&h), expected, "the last map is first now");
 }
 
 #[test]
@@ -451,16 +501,16 @@ fn a_click_on_a_channel_offers_clear_and_split_or_collapse_and_a_right_click_inv
     let mut h = harness(&library);
     click(&mut h, "RGB");
     let last = h.state().session.export_preset("Mine").unwrap().maps.len() - 1;
+    assert_eq!(h.state().session.export_preset("Mine").unwrap().maps[last].file, "RGB", "the reference's name for a new RGB row");
 
-    // The RGB swatch is the last "RGB" button, after the Create button of that name
-    last_window_button(&h, "RGB").click();
+    last_window_button(&h, "RGB: Default black").click();
     h.run_steps(4);
     assert!(h.query_by_label("Clear channel").is_some());
     h.get_by_label("Split/Collapse RGB").click();
     h.run_steps(4);
     assert_eq!(h.state().ui.export.draft_split.get(last), Some(&true), "R, G and B show apart");
 
-    let green = last_window_button(&h, "G");
+    let green = last_window_button(&h, "G: Default black");
     let at = green.rect().center();
     green.click_secondary();
     h.run_steps(4);
@@ -470,4 +520,35 @@ fn a_click_on_a_channel_offers_clear_and_split_or_collapse_and_a_right_click_inv
     invert.click();
     h.run_steps(4);
     assert_eq!(h.state().session.export_preset("Mine").unwrap().maps[last].inverted, vec![Dest::G]);
+    assert!(h.query_all_by_label("G: Default black, inverted").next().is_some(), "the swatch says it is inverted");
+}
+
+#[test]
+fn on_a_small_screen_an_rgba_row_keeps_its_controls_in_the_window() {
+    let session = texturecraft_engine::sample_session(256, 64).unwrap();
+    let library = TemplateLibrary::new("small-screen");
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    h.state_mut().ui.prefs.language = "en".into();
+    h.run_steps(4);
+    h.state_mut().session.load_export_presets(library.0.clone());
+    let base = texturecraft_engine::formats::builtin_preset("Unreal Engine (Packed)").unwrap();
+    h.state_mut().run("export.preset.save", json!({ "preset": texturecraft_engine::formats::ExportPreset { name: "Mine".into(), ..base } })).unwrap();
+    let ui = &mut h.state_mut().ui;
+    ui.windows.export = true;
+    ui.export.tab = 1;
+    ui.export.preset = "Mine".into();
+    h.run_steps(4);
+    click(&mut h, "R+G+B+A");
+
+    let input_maps = h.get_by_label("Input maps").rect();
+    let removes: Vec<egui::Rect> = h.get_all_by_label("Remove this output").map(|node| node.rect()).collect();
+    let alpha = last_window_button(&h, "A: Default white").rect();
+
+    assert!(!removes.is_empty());
+    for remove in removes {
+        assert!(remove.right() < input_maps.left(), "a row's × stays left of the Input maps pane: {remove:?} {input_maps:?}");
+    }
+    assert!(alpha.right() < input_maps.left(), "the last swatch too: {alpha:?}");
+    let cancel = h.get_all_by_label("Cancel").last().unwrap().rect();
+    assert!(cancel.max.x <= 1000.0 && cancel.max.y <= 700.0, "{cancel:?}");
 }

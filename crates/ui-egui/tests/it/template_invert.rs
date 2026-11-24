@@ -67,11 +67,11 @@ fn invert_toggle_changes_the_saved_template() {
     assert!(saved(&h).is_empty());
 
     // Three maps in R, G and B: one swatch per channel
-    for swatch in ["R: Specular roughness", "G: Base metalness", "B"] {
+    for swatch in ["R: Roughness (Grayscale)", "G: Metallic (Grayscale)", "B: Constant 0.50"] {
         assert!(h.query_all_by_label(swatch).next().is_some(), "{swatch}");
     }
-    toggle_invert(&mut h, "G: Base metalness");
+    toggle_invert(&mut h, "G: Metallic (Grayscale)");
     assert_eq!(saved(&h), vec![Dest::G], "the second channel (G) is inverted");
-    toggle_invert(&mut h, "G: Base metalness");
+    toggle_invert(&mut h, "G: Metallic (Grayscale), inverted");
     assert!(saved(&h).is_empty(), "a second click turns it off");
 }

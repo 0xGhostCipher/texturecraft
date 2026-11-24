@@ -22,19 +22,30 @@ mod map_drag;
 mod map_lists;
 mod pending_drop;
 mod row_edit;
+mod source_pick;
+mod swatch_look;
 
 pub use channel_target::ChannelTarget;
 use map_drag::MapDrag;
 use map_lists::{CONVERTED_MAPS, INPUT_MAPS, MESH_MAPS, MapEntry};
 pub use pending_drop::PendingDrop;
 use row_edit::RowEdit;
+use source_pick::SourcePick;
+use swatch_look::SwatchLook;
 
-const ICON: f32 = 20.0;
-const LIST_WIDTH: f32 = 220.0;
+const ICON_POINTS: f32 = 20.0;
+/// Width of the Presets list
+const LIST_WIDTH_POINTS: f32 = 220.0;
+/// The tab's width in the reference-size window: a narrower window narrows the side panes in
+/// proportion, so the output rows keep their room
+const REFERENCE_TAB_WIDTH_POINTS: f32 = 1085.0;
+/// The middle column's least width, and room for the separators and their spacing
+const MIN_OUTPUTS_WIDTH_POINTS: f32 = 200.0;
+const SEPARATOR_ALLOWANCE_POINTS: f32 = 6.0;
 /// Width of the Input maps pane
-const INPUTS_WIDTH: f32 = 170.0;
+const INPUTS_WIDTH_POINTS: f32 = 170.0;
 /// Width of the pane with Mesh maps above Converted maps
-const SIDE_MAPS_WIDTH: f32 = 165.0;
+const SIDE_MAPS_WIDTH_POINTS: f32 = 165.0;
 /// Share of the side pane's height that Mesh maps take; Converted maps get the rest
 const MESH_MAPS_SHARE: f32 = 0.45;
 const RENAME_ID: &str = "exp_rename";
@@ -42,35 +53,46 @@ const RENAME_ID: &str = "exp_rename";
 const NEW_PRESET: &str = "new_export_preset";
 
 /// Height of a Presets list row, and where its icon and name start
-const PRESET_ROW_HEIGHT: f32 = 18.0;
-const PRESET_ICON_INDENT: f32 = 2.0;
-const PRESET_TEXT_INDENT: f32 = 20.0;
+const PRESET_ROW_HEIGHT_POINTS: f32 = 18.0;
+const PRESET_ICON_INDENT_POINTS: f32 = 2.0;
+const PRESET_TEXT_INDENT_POINTS: f32 = 20.0;
 
 /// Height of a map list entry, the gap between entries, and where its marker and name sit
-const ENTRY_HEIGHT: f32 = 21.0;
-const ENTRY_GAP: f32 = 2.0;
-const ENTRY_TEXT_INDENT: f32 = 22.0;
-const ENTRY_TEXT_SIZE: f32 = 12.0;
-const MARKER_INDENT: f32 = 10.0;
-const MARKER_SIZE: f32 = 10.0;
+const ENTRY_HEIGHT_POINTS: f32 = 21.0;
+const ENTRY_GAP_POINTS: f32 = 2.0;
+const ENTRY_TEXT_INDENT_POINTS: f32 = 22.0;
+const ENTRY_TEXT_SIZE_POINTS: f32 = 12.0;
+const MARKER_INDENT_POINTS: f32 = 10.0;
+const MARKER_SIZE_POINTS: f32 = 10.0;
 /// How strongly a map TextureCraft does not have yet is dimmed
 const UNAVAILABLE_FADE: f32 = 0.6;
 
 /// An output map row: padding, gap below it, grip width, file name field width, icon size
-const ROW_MARGIN: f32 = 6.0;
-const ROW_GAP: f32 = 4.0;
-const GRIP_WIDTH: f32 = 5.0;
-const NAME_FIELD_WIDTH: f32 = 150.0;
-const ROW_ICON: f32 = 16.0;
+const ROW_MARGIN_POINTS: f32 = 6.0;
+const ROW_GAP_POINTS: f32 = 4.0;
+const GRIP_WIDTH_POINTS: f32 = 5.0;
+const NAME_FIELD_WIDTH_POINTS: f32 = 150.0;
+const ROW_ICON_POINTS: f32 = 16.0;
+/// The narrowest file name field, the "$" button and the format, bit depth and icon columns at a
+/// row's right end, and the gaps between a row's controls (besides the swatches')
+const MIN_NAME_FIELD_WIDTH_POINTS: f32 = 60.0;
+const DOLLAR_BUTTON_WIDTH_POINTS: f32 = 22.0;
+const ROW_LISTS_WIDTH_POINTS: f32 = 100.0;
+const ROW_GAPS: f32 = 4.0;
+/// The accent frame around a drop target: its stroke and its gap to the target
+const DROP_HIGHLIGHT_STROKE_POINTS: f32 = 1.5;
+const DROP_HIGHLIGHT_GAP_POINTS: f32 = 2.0;
+/// Side of the corner mark of an inverted swatch
+const INVERTED_MARK_POINTS: f32 = 8.0;
 
 /// A channel swatch: its side, the label's size and offset from the top, and the bars that show
 /// which channels of the source it reads
-const SWATCH_SIZE: f32 = 32.0;
-const SWATCH_TEXT_SIZE: f32 = 11.0;
-const SWATCH_TEXT_TOP: f32 = 3.0;
-const SWATCH_BAR_WIDTH: f32 = 18.0;
-const SWATCH_BAR_HEIGHT: f32 = 2.0;
-const SWATCH_BAR_BOTTOM: f32 = 9.0;
+const SWATCH_SIZE_POINTS: f32 = 32.0;
+const SWATCH_TEXT_SIZE_POINTS: f32 = 11.0;
+const SWATCH_TEXT_TOP_POINTS: f32 = 3.0;
+const SWATCH_BAR_WIDTH_POINTS: f32 = 18.0;
+const SWATCH_BAR_HEIGHT_POINTS: f32 = 2.0;
+const SWATCH_BAR_BOTTOM_POINTS: f32 = 9.0;
 
 /// Swatch colours: one hue per map, spread by the golden ratio so neighbours differ, muted to
 /// keep the white label readable
@@ -103,6 +125,17 @@ enum Layout {
 }
 
 impl Layout {
+    const ALL: [Layout; 4] = [Layout::Rgb, Layout::Rgba, Layout::Gray, Layout::GrayAlpha];
+
+    fn label(self) -> &'static str {
+        match self {
+            Layout::Rgb => "RGB",
+            Layout::Rgba => "RGBA",
+            Layout::Gray => n_("Gray"),
+            Layout::GrayAlpha => n_("Gray + A"),
+        }
+    }
+
     fn dests(self) -> &'static [Dest] {
         match self {
             Layout::Rgb => &[Dest::R, Dest::G, Dest::B],
@@ -124,20 +157,25 @@ impl Layout {
 }
 
 /// The reference's Create buttons: (label, the layout the new output map gets, whether R, G and
-/// B show as separate swatches)
-const CREATE: [(&str, Layout, bool); 5] = [
-    (n_("Gray"), Layout::Gray, false),
-    ("RGB", Layout::Rgb, false),
-    ("R+G+B", Layout::Rgb, true),
-    ("RGB+A", Layout::Rgba, false),
-    ("R+G+B+A", Layout::Rgba, true),
+/// B show as separate swatches, the new map's file name)
+const CREATE: [(&str, Layout, bool, &str); 5] = [
+    (n_("Gray"), Layout::Gray, false, "Grayscale"),
+    ("RGB", Layout::Rgb, false, "RGB"),
+    ("R+G+B", Layout::Rgb, true, "RGB"),
+    ("RGB+A", Layout::Rgba, false, "RGB Alpha"),
+    ("R+G+B+A", Layout::Rgba, true, "RGB Alpha"),
 ];
+
+/// The swatch right-click menu's constants: (label, value)
+const CONSTANTS: [(&str, f32); 3] = [(n_("Black"), 0.0), (n_("Gray 50%"), 0.5), (n_("White"), 1.0)];
+/// How fast dragging changes a constant
+const CONSTANT_DRAG_SPEED: f64 = 0.005;
 
 /// The naming patterns the input maps can be shown with (the reference's second one names
 /// another vendor's material and is left out)
 const NAMING_PATTERNS: [&str; 1] = ["OpenPBR"];
 /// Width of the Naming pattern list
-const NAMING_PATTERN_WIDTH: f32 = 150.0;
+const NAMING_PATTERN_WIDTH_POINTS: f32 = 150.0;
 
 /// `s` reading component `k` (only 3-component sources have more than one).
 fn with_component(s: &SourceRef, k: u8) -> SourceRef {
@@ -206,10 +244,21 @@ fn set_layout(map: &mut MapSpec, layout: Layout) {
     map.inverted = inverted;
 }
 
-fn new_map(layout: Layout) -> MapSpec {
-    let mut map = MapSpec { file: "$mesh_$textureSet_Output".into(), format: FileFormat::Png, bit_depth: 8, channels: Vec::new(), inverted: Vec::new() };
+/// A new empty png / 8 bits output map named `file`
+fn new_map(layout: Layout, file: &str) -> MapSpec {
+    let mut map = MapSpec { file: file.into(), format: FileFormat::Png, bit_depth: 8, channels: Vec::new(), inverted: Vec::new() };
     set_layout(&mut map, layout);
     map
+}
+
+/// `name`, or with "_1", "_2", ... when a map of `maps` already has it, as the reference names new rows
+fn unique_file(maps: &[MapSpec], name: &str) -> String {
+    let taken = |file: &str| maps.iter().any(|map| map.file == file);
+    if !taken(name) {
+        return name.to_string();
+    }
+
+    (1..).map(|n| format!("{name}_{n}")).find(|file| !taken(file)).unwrap_or_else(|| name.to_string())
 }
 
 /// An input map dropped on channel `dest`: a color or normal input dropped on R, G or B fills
@@ -238,7 +287,6 @@ fn sync_draft(app: &mut TextureCraftApp) {
             e.draft_maps.clear();
             e.draft_base = None;
             e.draft_split.clear();
-            e.active_map = None;
             e.pending_drop = None;
         }
         Some(saved) => {
@@ -247,7 +295,6 @@ fn sync_draft(app: &mut TextureCraftApp) {
                 e.draft_maps = (0..saved.maps.len()).map(Some).collect();
                 e.draft_base = Some(saved.clone());
                 e.draft_split.clear();
-                e.active_map = None;
                 e.pending_drop = None;
             } else if e.draft_base.as_ref() != Some(saved) {
                 // Match only unambiguous maps from the previous saved order
@@ -274,9 +321,12 @@ pub use crate::ask::Ask;
 pub use crate::list_action::ListAction;
 
 enum MapAction {
-    /// A new output map with this layout, its R, G and B split or not
-    Add(Layout, bool),
-    Move { from: usize, to: usize },
+    /// A new output map with this layout, its R, G and B split or not, and this file name
+    Add(Layout, bool, &'static str),
+    Move {
+        from: usize,
+        to: usize,
+    },
     Duplicate(usize),
     Remove(usize),
 }
@@ -287,32 +337,34 @@ pub fn tab(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]) {
     sync_draft(app);
     let height = ui.available_height();
     let names = crate::export_window::template_groups(app, builtins).1;
+    let scale = (ui.available_width() / REFERENCE_TAB_WIDTH_POINTS).min(1.0);
+    let (list_width, inputs_width, side_width) = (LIST_WIDTH_POINTS * scale, INPUTS_WIDTH_POINTS * scale, SIDE_MAPS_WIDTH_POINTS * scale);
     let mut list_action = None;
     ui.vertical(|ui| {
-        ui.set_width(LIST_WIDTH);
+        ui.set_width(list_width);
         ui.set_height(height);
         list_action = preset_list(app, ui, &names);
     });
     ui.separator();
     ui.vertical(|ui| {
         // Leave room for the two map panes and three separators
-        let panes = INPUTS_WIDTH + SIDE_MAPS_WIDTH + 8.0 * ui.spacing().item_spacing.x + 6.0;
-        ui.set_width((ui.available_width() - panes).max(200.0));
+        let panes = inputs_width + side_width + 8.0 * ui.spacing().item_spacing.x + SEPARATOR_ALLOWANCE_POINTS;
+        ui.set_width((ui.available_width() - panes).max(MIN_OUTPUTS_WIDTH_POINTS));
         ui.set_height(height);
         outputs(app, ui);
     });
 
-    // The panes mark the sources of the output map edited last
+    // The panes mark the maps the selected template's outputs read
     let marked = marked_sources(app, &Tokens::get(ui.ctx()));
     ui.separator();
     ui.vertical(|ui| {
-        ui.set_width(INPUTS_WIDTH);
+        ui.set_width(inputs_width);
         ui.set_height(height);
         input_maps(ui, &marked);
     });
     ui.separator();
     ui.vertical(|ui| {
-        ui.set_width(SIDE_MAPS_WIDTH);
+        ui.set_width(side_width);
         ui.set_height(height);
         mesh_and_converted_maps(ui, height, &marked);
     });
@@ -338,7 +390,7 @@ pub(crate) fn naming_pattern(ui: &mut Ui) {
         ui.label(tr("Select the naming pattern used to display the input maps on this page."));
         ui.label(tr("Some input maps (channels) may be named differently depending on the shader used as a Texture Set."));
     });
-    egui::ComboBox::from_id_salt("exp_naming").width(NAMING_PATTERN_WIDTH).selected_text(NAMING_PATTERNS[0]).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt("exp_naming").width(NAMING_PATTERN_WIDTH_POINTS).selected_text(NAMING_PATTERNS[0]).show_ui(ui, |ui| {
         for p in NAMING_PATTERNS {
             let _ = ui.selectable_label(true, p);
         }
@@ -357,13 +409,14 @@ fn preset_list(app: &mut TextureCraftApp, ui: &mut Ui, names: &[String]) -> Opti
 
         // Copy, "−" and "+" from left to right, without tooltips as in the reference
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_button_without_tooltip(ui, ic::PLUS, tr("New template"), false, ICON).clicked() {
+            if icon_button_without_tooltip(ui, ic::PLUS, tr("New template"), false, ICON_POINTS).clicked() {
                 act = Some(ListAction::New);
             }
-            if ui.add_enabled_ui(user, |ui| icon_button_without_tooltip(ui, ic::MINUS, tr("Delete the selected template"), false, ICON)).inner.clicked() {
+            if ui.add_enabled_ui(user, |ui| icon_button_without_tooltip(ui, ic::MINUS, tr("Delete the selected template"), false, ICON_POINTS)).inner.clicked()
+            {
                 act = Some(ListAction::Remove(sel.clone()));
             }
-            if icon_button_without_tooltip(ui, ic::COPY, tr("Duplicate the selected template"), false, ICON).clicked() {
+            if icon_button_without_tooltip(ui, ic::COPY, tr("Duplicate the selected template"), false, ICON_POINTS).clicked() {
                 act = Some(ListAction::Duplicate(sel.clone()));
             }
         });
@@ -425,7 +478,7 @@ fn preset_list(app: &mut TextureCraftApp, ui: &mut Ui, names: &[String]) -> Opti
 /// the accent colour
 fn preset_row(ui: &mut Ui, name: &str, selected: bool) -> egui::Response {
     let tokens = Tokens::get(ui.ctx());
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), PRESET_ROW_HEIGHT), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), PRESET_ROW_HEIGHT_POINTS), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, name));
 
     let painter = ui.painter();
@@ -433,12 +486,12 @@ fn preset_row(ui: &mut Ui, name: &str, selected: bool) -> egui::Response {
         painter.rect_filled(rect, tokens.radius, tokens.row_hover);
     }
     let font = egui::TextStyle::Body.resolve(ui.style());
-    painter.text(rect.left_center() + vec2(PRESET_ICON_INDENT, 0.0), egui::Align2::LEFT_CENTER, ic::FILE_TEXT, font.clone(), tokens.text_dim);
+    painter.text(rect.left_center() + vec2(PRESET_ICON_INDENT_POINTS, 0.0), egui::Align2::LEFT_CENTER, ic::FILE_TEXT, font.clone(), tokens.text_dim);
     let color = if selected { tokens.accent } else { tokens.text };
     let mut job = egui::text::LayoutJob::simple_singleline(name.to_string(), font, color);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - PRESET_TEXT_INDENT);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - PRESET_TEXT_INDENT_POINTS);
     let galley = painter.layout_job(job);
-    let top_left = egui::pos2(rect.left() + PRESET_TEXT_INDENT, rect.center().y - galley.size().y / 2.0);
+    let top_left = egui::pos2(rect.left() + PRESET_TEXT_INDENT_POINTS, rect.center().y - galley.size().y / 2.0);
     painter.galley(top_left, galley, color);
     response
 }
@@ -695,7 +748,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     let mut edit = RowEdit::default();
 
     // The selected template in a strip, "Current preset:" in bold
-    egui::Frame::new().fill(tokens.row).inner_margin(ROW_MARGIN).show(ui, |ui| {
+    egui::Frame::new().fill(tokens.row).inner_margin(ROW_MARGIN_POINTS).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(RichText::new(tr("Current preset:")).strong().color(tokens.text_strong));
@@ -711,9 +764,9 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
         ui.label(caption(tr("Output maps")));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(editable, |ui| {
-                for (label, layout, split) in CREATE.iter().rev() {
+                for (label, layout, split, file) in CREATE.iter().rev() {
                     if ui.button(tr(label)).clicked() {
-                        edit.action = Some(MapAction::Add(*layout, *split));
+                        edit.action = Some(MapAction::Add(*layout, *split, file));
                     }
                 }
                 ui.label(RichText::new(tr("Create:")).color(tokens.text_dim));
@@ -729,7 +782,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     split.resize(map_count, false);
 
     // Leave room for the footer text and the framed count below
-    let footer = 2.0 * ui.text_style_height(&egui::TextStyle::Body) + 3.0 * ui.spacing().item_spacing.y + 2.0 * ROW_MARGIN;
+    let footer = 2.0 * ui.text_style_height(&egui::TextStyle::Body) + 3.0 * ui.spacing().item_spacing.y + 2.0 * ROW_MARGIN_POINTS;
     egui::ScrollArea::vertical().id_salt("exp_outputs").auto_shrink([false; 2]).max_height((ui.available_height() - footer).max(60.0)).show(ui, |ui| {
         ui.add_enabled_ui(editable, |ui| {
             for ((index, map), row_split) in preset.maps.iter_mut().enumerate().zip(split.iter_mut()) {
@@ -739,7 +792,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
                     None => tr("Not exported: no source in this texture set").to_string(),
                 };
                 changed |= output_row(ui, index, map_count, map, row_split, &planned, &mut edit);
-                ui.add_space(ROW_GAP);
+                ui.add_space(ROW_GAP_POINTS);
             }
         });
     });
@@ -748,7 +801,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     // Count only maps that have sources in the current set
     if let Ok(names) = &preview {
         let exported = names.iter().flatten().count();
-        egui::Frame::new().fill(tokens.field).inner_margin(ROW_MARGIN).show(ui, |ui| {
+        egui::Frame::new().fill(tokens.field).inner_margin(ROW_MARGIN_POINTS).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(trf("{n} output maps will be exported.", &[("n", &exported)]));
         });
@@ -758,13 +811,12 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 
     // A drop asks for the source channel from the next frame on; one waiting from before shows now
-    let mut active = edit.touched.or(app.ui.export.active_map);
     let mut pending = app.ui.export.pending_drop.take();
     if edit.pending.is_some() {
         pending = edit.pending.take();
         ui.ctx().request_repaint();
     } else {
-        changed |= source_channel_popup(ui, &mut pending, &mut preset.maps, &mut active);
+        changed |= source_channel_popup(ui, &mut pending, &mut preset.maps);
     }
 
     // Where each map came from in the saved template, moved along with the maps
@@ -773,11 +825,11 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
         origin = (0..map_count).map(Some).collect();
     }
     let acted = match edit.action {
-        Some(MapAction::Add(layout, split_rgb)) => {
-            preset.maps.push(new_map(layout));
+        Some(MapAction::Add(layout, split_rgb, file)) => {
+            let file = unique_file(&preset.maps, file);
+            preset.maps.push(new_map(layout, &file));
             origin.push(None);
             split.push(split_rgb);
-            active = Some(map_count);
             true
         }
         Some(MapAction::Move { from, to }) if from < map_count && to < map_count && from != to => {
@@ -787,7 +839,6 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
             origin.insert(to, map_origin);
             let map_split = split.remove(from);
             split.insert(to, map_split);
-            active = Some(to);
             true
         }
         Some(MapAction::Duplicate(index)) if index < map_count => {
@@ -797,7 +848,6 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
                 preset.maps.insert(index + 1, copy);
                 origin.insert(index + 1, None);
                 split.insert(index + 1, copy_split);
-                active = Some(index + 1);
             }
             true
         }
@@ -805,7 +855,6 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
             preset.maps.remove(index);
             origin.remove(index);
             split.remove(index);
-            active = None;
             true
         }
         _ => false,
@@ -817,7 +866,6 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
     let e = &mut app.ui.export;
     e.draft_split = split;
-    e.active_map = active.filter(|index| *index < preset.maps.len());
     e.pending_drop = pending;
     if acted || changed {
         commit(app, preset, origin);
@@ -865,11 +913,17 @@ fn preview_names(app: &mut TextureCraftApp, preset: &ExportPreset) -> Result<Vec
 fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split: &mut bool, planned: &str, edit: &mut RowEdit) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let mut changed = false;
-    let frame = egui::Frame::new().fill(tokens.row).corner_radius(tokens.radius).inner_margin(ROW_MARGIN).show(ui, |ui| {
+    let frame = egui::Frame::new().fill(tokens.row).corner_radius(tokens.radius).inner_margin(ROW_MARGIN_POINTS).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
+            // The name field gives way in a narrow window, so the swatches and lists stay in the row
+            let swatches = swatch_targets(map, *split).len() as f32;
+            let spacing = ui.spacing().item_spacing.x;
+            let others = GRIP_WIDTH_POINTS + DOLLAR_BUTTON_WIDTH_POINTS + swatches * (SWATCH_SIZE_POINTS + spacing) + ROW_LISTS_WIDTH_POINTS;
+            let name_width = (ui.available_width() - others - ROW_GAPS * spacing).clamp(MIN_NAME_FIELD_WIDTH_POINTS, NAME_FIELD_WIDTH_POINTS);
+
             grip(ui, index, count, edit);
-            let name = ui.add(egui::TextEdit::singleline(&mut map.file).desired_width(NAME_FIELD_WIDTH)).on_hover_ui(|ui| {
+            let name = ui.add(egui::TextEdit::singleline(&mut map.file).desired_width(name_width)).on_hover_ui(|ui| {
                 ui.label(tr("File name without extension; variables insert names"));
                 ui.label(planned);
             });
@@ -878,10 +932,10 @@ fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split:
             changed |= channel_swatches(ui, index, map, split, edit);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.vertical(|ui| {
-                    if icon_button_without_tooltip(ui, ic::COPY, tr("Duplicate this output"), false, ROW_ICON).clicked() {
+                    if icon_button_without_tooltip(ui, ic::COPY, tr("Duplicate this output"), false, ROW_ICON_POINTS).clicked() {
                         edit.action = Some(MapAction::Duplicate(index));
                     }
-                    if icon_button_without_tooltip(ui, ic::X, tr("Remove this output"), false, ROW_ICON).clicked() {
+                    if icon_button_without_tooltip(ui, ic::X, tr("Remove this output"), false, ROW_ICON_POINTS).clicked() {
                         edit.action = Some(MapAction::Remove(index));
                     }
                 });
@@ -893,20 +947,14 @@ fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split:
         });
     });
 
-    // Another row's grip dropped here moves that row to this place
-    // Check the payload type before taking it, so a map list drop is not lost
+    // Another row's grip dropped here moves that row here (the type check keeps a map list drop)
     let row = frame.response;
     let row_dragged_over = row.dnd_hover_payload::<MapDrag>().is_some_and(|from| from.0 != index);
     if row_dragged_over {
-        ui.painter().rect_stroke(row.rect, tokens.radius, egui::Stroke::new(1.5, tokens.accent), egui::StrokeKind::Outside);
+        drop_highlight(ui, row.rect, &tokens);
     }
-    if row_dragged_over
-        && let Some(from) = row.dnd_release_payload::<MapDrag>()
-    {
+    if row_dragged_over && let Some(from) = row.dnd_release_payload::<MapDrag>() {
         edit.action = Some(MapAction::Move { from: from.0, to: index });
-    }
-    if changed {
-        edit.touched = Some(index);
     }
     changed
 }
@@ -916,15 +964,18 @@ fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split:
 fn grip(ui: &mut Ui, index: usize, count: usize, edit: &mut RowEdit) {
     let tokens = Tokens::get(ui.ctx());
     let enabled = ui.is_enabled();
-    let (rect, response) = ui.allocate_exact_size(vec2(GRIP_WIDTH, SWATCH_SIZE), egui::Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(vec2(GRIP_WIDTH_POINTS, SWATCH_SIZE_POINTS), egui::Sense::click_and_drag());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tr("Reorder")));
     let color = if response.hovered() || response.dragged() { tokens.text } else { tokens.text_dim };
     ui.painter().rect_filled(rect, 1.0, color);
     let response = response.on_hover_cursor(egui::CursorIcon::Grab);
     response.dnd_set_drag_payload(MapDrag(index));
 
+    // Up and down arrows move the focused grip's map instead of the focus
     let mut to = None;
     if response.has_focus() {
+        let arrows = egui::EventFilter { vertical_arrows: true, ..Default::default() };
+        ui.memory_mut(|memory| memory.set_focus_lock_filter(response.id, arrows));
         if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
             to = index.checked_sub(1);
         }
@@ -945,50 +996,54 @@ fn grip(ui: &mut Ui, index: usize, count: usize, edit: &mut RowEdit) {
     }
 }
 
-/// The "$" button: the file name variables, the reference's first, then TextureCraft's own
+/// The "$" button: the reference's file name variables, then TextureCraft's own ($channel)
 fn token_menu(ui: &mut Ui, file: &mut String) -> bool {
     let mut changed = false;
-    ui.menu_button("$", |ui| {
-        let mut add = |ui: &mut Ui, token: &str, what: &str| {
-            if ui.button(RichText::new(token).monospace()).on_hover_text(what).clicked() {
+    let menu = ui.menu_button("$", |ui| {
+        let mut add = |ui: &mut Ui, token: &str| {
+            if ui.button(RichText::new(token).monospace()).clicked() {
                 file.push_str(token);
                 changed = true;
                 ui.close();
             }
         };
         for token in REFERENCE_TOKENS {
-            match FILE_TOKENS.iter().find(|(ours, _)| *ours == token) {
-                Some(&(token, what)) => add(ui, token, what),
-                None => {
-                    ui.add_enabled(false, egui::Button::new(RichText::new(token).monospace())).on_disabled_hover_text(tr(NOT_AVAILABLE));
-                }
+            if FILE_TOKENS.iter().any(|(ours, _)| *ours == token) {
+                add(ui, token);
+            } else {
+                ui.add_enabled(false, egui::Button::new(RichText::new(token).monospace())).on_disabled_hover_text(tr(NOT_AVAILABLE));
             }
         }
-        for &(token, what) in FILE_TOKENS.iter().filter(|(token, _)| !REFERENCE_TOKENS.contains(token)) {
-            add(ui, token, what);
+        for &(token, _) in FILE_TOKENS.iter().filter(|(token, _)| !REFERENCE_TOKENS.contains(token)) {
+            add(ui, token);
         }
     });
+    menu.response.on_hover_text(tr("Add expressions in the path that will be replaced during export"));
     changed
 }
 
 /// The file type menu of an output map ("png˅")
 fn format_menu(ui: &mut Ui, map: &mut MapSpec) -> bool {
     let mut changed = false;
-    ui.menu_button(RichText::new(format!("{} {}", map.format.extension(), ic::CARET_DOWN)), |ui| {
+    let menu = ui.menu_button(RichText::new(format!("{} {}", map.format.extension(), ic::CARET_DOWN)), |ui| {
         for extension in MAP_FILE_TYPES {
             let Some(format) = FileFormat::from_extension(extension) else {
                 ui.add_enabled(false, egui::Button::selectable(false, extension)).on_disabled_hover_text(tr(NOT_AVAILABLE));
                 continue;
             };
 
+            // A new format starts at its default bit depth, as in the reference
             if ui.selectable_label(map.format == format, extension).clicked() {
-                changed |= map.format != format;
-                map.bit_depth = format.depth(map.bit_depth);
-                map.format = format;
+                if map.format != format {
+                    map.bit_depth = format.default_depth();
+                    map.format = format;
+                    changed = true;
+                }
                 ui.close();
             }
         }
     });
+    menu.response.on_hover_text(tr("File format"));
     changed
 }
 
@@ -997,7 +1052,7 @@ fn depth_menu(ui: &mut Ui, map: &mut MapSpec) -> bool {
     let format = map.format;
     let mut changed = false;
     let shown = crate::export_window::depth_label(Some(format), map.bit_depth, false);
-    ui.menu_button(RichText::new(format!("{shown} {}", ic::CARET_DOWN)), |ui| {
+    let menu = ui.menu_button(RichText::new(format!("{shown} {}", ic::CARET_DOWN)), |ui| {
         for (depth, dithering) in crate::export_window::depth_options(format) {
             let label = crate::export_window::depth_label(Some(format), depth, dithering);
             if dithering {
@@ -1009,21 +1064,40 @@ fn depth_menu(ui: &mut Ui, map: &mut MapSpec) -> bool {
             }
         }
     });
+    menu.response.on_hover_text(tr("Bit depth"));
     changed
 }
 
-/// Whether R, G and B read one map as one RGB swatch can show it: a color map's R, G and B, or
-/// the same gray map or constant in all three
-fn rgb_collapsed(map: &MapSpec) -> bool {
+/// R, G and B's sources, when the map has them
+fn rgb_sources(map: &MapSpec) -> Option<[&SourceRef; 3]> {
     let get = |dest: Dest| map.channels.iter().find(|(d, _)| *d == dest).map(|(_, s)| s);
-    let (Some(red), Some(green), Some(blue)) = (get(Dest::R), get(Dest::G), get(Dest::B)) else { return true };
-
-    let one_map = same_source(red, green) && same_source(green, blue);
-    let spread = red.components() == 3 && [red, green, blue].into_iter().zip(0u8..).all(|(s, k)| component_of(s) == k);
-    one_map && (spread || red.components() == 1)
+    Some([get(Dest::R)?, get(Dest::G)?, get(Dest::B)?])
 }
 
-/// The swatches an output map shows: Gray, or RGB (R, G, B when split), then A when it has alpha
+/// Whether R, G and B read one map (or one constant) and are inverted alike, so one RGB swatch
+/// can stand for them
+fn rgb_one_map(map: &MapSpec) -> bool {
+    let Some([red, green, blue]) = rgb_sources(map) else { return true };
+
+    let inverted = [Dest::R, Dest::G, Dest::B].map(|dest| map.inverted.contains(&dest));
+    same_source(red, green) && same_source(green, blue) && inverted.iter().all(|on| *on == inverted[0])
+}
+
+/// Whether R, G and B read a colour map's R, G and B in that order
+fn rgb_spread(map: &MapSpec) -> bool {
+    rgb_sources(map).is_some_and(|sources| sources.iter().zip(0u8..).all(|(source, k)| source.components() == 3 && component_of(source) == k))
+}
+
+/// Whether one RGB swatch shows R, G and B: one map, read as its R, G and B or as one channel in
+/// all three
+fn rgb_collapsed(map: &MapSpec) -> bool {
+    let Some(sources) = rgb_sources(map) else { return true };
+
+    let one_component = sources.iter().all(|source| component_of(source) == component_of(sources[0]));
+    rgb_one_map(map) && (rgb_spread(map) || one_component)
+}
+
+/// The swatches an output map shows: Gr, or RGB (R, G, B when split), then A when it has alpha
 fn swatch_targets(map: &MapSpec, split: bool) -> Vec<ChannelTarget> {
     let layout = Layout::of(map);
     let mut targets = match layout {
@@ -1037,7 +1111,7 @@ fn swatch_targets(map: &MapSpec, split: bool) -> Vec<ChannelTarget> {
     targets
 }
 
-/// The label on a swatch
+/// The letters on a swatch, as in the reference
 fn target_label(target: ChannelTarget) -> &'static str {
     match target {
         ChannelTarget::Rgb => "RGB",
@@ -1045,7 +1119,7 @@ fn target_label(target: ChannelTarget) -> &'static str {
         ChannelTarget::One(Dest::G) => "G",
         ChannelTarget::One(Dest::B) => "B",
         ChannelTarget::One(Dest::A) => "A",
-        ChannelTarget::One(Dest::L) => tr("Gray"),
+        ChannelTarget::One(Dest::L) => "Gr",
     }
 }
 
@@ -1055,24 +1129,71 @@ fn source_of(map: &MapSpec, target: ChannelTarget) -> Option<&SourceRef> {
     map.channels.iter().find(|(d, _)| d == dest).map(|(_, s)| s)
 }
 
-/// The source channel choices of "From <map>": (label, the component read; None: not available yet)
-fn source_choices(source: &SourceRef) -> Vec<(&'static str, Option<u8>)> {
-    if source.components() == 3 {
-        vec![(n_("Gray Channel"), None), (n_("R Channel"), Some(0)), (n_("G Channel"), Some(1)), (n_("B Channel"), Some(2)), (n_("A Channel"), None)]
-    } else {
-        vec![(n_("Gray Channel"), Some(0)), (n_("A Channel"), None)]
+/// The choices of "From <map>" in the reference order: "RGB Channels" only for a colour map on
+/// the RGB swatch; None marks a choice TextureCraft cannot read yet (a map's gray or alpha)
+fn source_choices(source: &SourceRef, target: ChannelTarget) -> Vec<(&'static str, Option<SourcePick>)> {
+    if source.components() != 3 {
+        return vec![(n_("Gray Channel"), Some(SourcePick::Component(0))), (n_("A Channel"), None)];
+    }
+
+    let mut choices = Vec::new();
+    if target == ChannelTarget::Rgb {
+        choices.push((n_("RGB Channels"), Some(SourcePick::AllRgb)));
+    }
+    choices.extend([
+        (n_("Gray Channel"), None),
+        (n_("R Channel"), Some(SourcePick::Component(0))),
+        (n_("G Channel"), Some(SourcePick::Component(1))),
+        (n_("B Channel"), Some(SourcePick::Component(2))),
+        (n_("A Channel"), None),
+    ]);
+    choices
+}
+
+/// Fill the swatch `target` from `source` as `pick` says
+fn apply_pick(map: &mut MapSpec, target: ChannelTarget, source: &SourceRef, pick: SourcePick) {
+    for (dest, channel_source) in &mut map.channels {
+        if !target.dests().contains(dest) {
+            continue;
+        }
+
+        let component = match pick {
+            SourcePick::AllRgb => slot_component(*dest),
+            SourcePick::Component(component) => component,
+        };
+        *channel_source = with_component(source, component);
     }
 }
 
-/// A source as a swatch names it: the map, and for one channel of a color map that channel
-fn source_name(source: &SourceRef, target: ChannelTarget) -> Option<String> {
-    let map = tr(map_lists::name_of(source)?);
-    let picked = source_choices(source).into_iter().find(|(_, component)| *component == Some(component_of(source)));
-    match picked {
-        Some((channel, _)) if source.components() == 3 && target != ChannelTarget::Rgb => {
-            Some(trf("{map} ({channel})", &[("map", &map), ("channel", &tr(channel))]))
+/// The channel of the source a swatch reads, as the reference's swatch tooltip names it
+fn read_channel_name(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -> &'static str {
+    if source.components() != 3 {
+        return n_("Grayscale");
+    }
+
+    if target == ChannelTarget::Rgb && rgb_spread(map) {
+        return "RGB";
+    }
+
+    match component_of(source) {
+        0 => n_("Red"),
+        1 => n_("Green"),
+        _ => n_("Blue"),
+    }
+}
+
+/// A swatch's tooltip in the reference's words: "Default black" or "Default white" when empty,
+/// else "<map> (<channel>)"; another constant (TextureCraft's own) gives its value
+fn swatch_tooltip(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -> String {
+    let alpha = target == ChannelTarget::One(Dest::A);
+    match source {
+        SourceRef::Constant(value) if alpha && (*value - CLEARED_ALPHA).abs() < f32::EPSILON => tr("Default white").to_string(),
+        SourceRef::Constant(value) if !alpha && (*value - CLEARED_VALUE).abs() < f32::EPSILON => tr("Default black").to_string(),
+        SourceRef::Constant(value) => trf("Constant {value}", &[("value", &format!("{value:.2}"))]),
+        _ => {
+            let name = map_lists::name_of(source).map_or_else(String::new, |name| tr(name).to_string());
+            trf("{map} ({channel})", &[("map", &name), ("channel", &tr(read_channel_name(map, source, target)))])
         }
-        _ => Some(map.to_string()),
     }
 }
 
@@ -1091,19 +1212,19 @@ fn source_color(source: &SourceRef, tokens: &Tokens) -> Option<Color32> {
     Some(egui::ecolor::Hsva::new(hue, SWATCH_SATURATION, value, 1.0).into())
 }
 
-/// The bars under a swatch's label: R, G and B for a color map on the RGB swatch, else the one
-/// channel read
-fn swatch_bars(source: &SourceRef, target: ChannelTarget, tokens: &Tokens) -> Vec<Color32> {
+/// The bars under a swatch's letters: red, green and blue for a colour map's RGB, else the one
+/// channel read (white for gray)
+fn swatch_bars(map: &MapSpec, source: &SourceRef, target: ChannelTarget, tokens: &Tokens) -> Vec<Color32> {
     match source {
         SourceRef::Constant(_) => Vec::new(),
-        _ if source.components() == 3 && target == ChannelTarget::Rgb => COMPONENT_COLORS.to_vec(),
+        _ if source.components() == 3 && target == ChannelTarget::Rgb && rgb_spread(map) => COMPONENT_COLORS.to_vec(),
         _ if source.components() == 3 => COMPONENT_COLORS.get(usize::from(component_of(source))).copied().into_iter().collect(),
         _ => vec![tokens.text_strong],
     }
 }
 
-/// An output map's channel swatches: drop targets for the map lists; a click opens Clear channel
-/// and Split/Collapse RGB, a right click Invert
+/// An output map's channel swatches: drop targets for the map lists. A click opens Clear channel
+/// (and Split/Collapse RGB on R, G, B), a right click TextureCraft's own tools.
 fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bool, edit: &mut RowEdit) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let mut changed = false;
@@ -1112,25 +1233,27 @@ fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bo
         let Some(source) = source_of(map, target).cloned() else { continue };
 
         let label = target_label(target);
-        let name = match source_name(&source, target) {
-            Some(source) => trf("{channel}: {map}", &[("channel", &label), ("map", &source)]),
-            None => label.to_string(),
-        };
-        let response = swatch(ui, label, &name, source_color(&source, &tokens), &swatch_bars(&source, target, &tokens)).on_hover_text(&name);
+        let inverted = target.dests().iter().all(|dest| map.inverted.contains(dest));
+        let tooltip = swatch_tooltip(map, &source, target);
+        let mut name = trf("{channel}: {tooltip}", &[("channel", &label), ("tooltip", &tooltip)]);
+        if inverted {
+            name = trf("{swatch}, inverted", &[("swatch", &name)]);
+        }
+        let look = SwatchLook { fill: source_color(&source, &tokens), bars: swatch_bars(map, &source, target, &tokens), inverted };
+        let response = swatch(ui, label, &name, &look).on_hover_ui(|ui| {
+            ui.label(&tooltip);
+            if inverted {
+                ui.label(tr("Inverted"));
+            }
+        });
 
         // A map dragged over the swatch, or dropped on it; a row's grip passes through to its row
         let map_dragged_over = response.dnd_hover_payload::<SourceRef>().is_some();
         if map_dragged_over {
-            ui.painter().rect_stroke(response.rect.expand(2.0), tokens.radius, egui::Stroke::new(1.5, tokens.accent), egui::StrokeKind::Outside);
+            drop_highlight(ui, response.rect.expand(DROP_HIGHLIGHT_GAP_POINTS), &tokens);
         }
         if map_dragged_over && let Some(input) = response.dnd_release_payload::<SourceRef>() {
-            edit.touched = Some(index);
-            if target == ChannelTarget::Rgb && input.components() == 3 {
-                drop_input(map, Dest::R, &input);
-                changed = true;
-            } else {
-                edit.pending = Some(PendingDrop { map: index, target, source: (*input).clone(), position: response.rect.center_bottom() });
-            }
+            edit.pending = Some(PendingDrop { map: index, target, source: (*input).clone(), position: response.rect.center_bottom() });
         }
 
         let rgb = matches!(target, ChannelTarget::Rgb | ChannelTarget::One(Dest::R | Dest::G | Dest::B));
@@ -1139,66 +1262,122 @@ fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bo
             if ui.button(tr("Clear channel")).clicked() {
                 clear_channel(map, target);
                 changed = true;
-                edit.touched = Some(index);
             }
-            if rgb && ui.button(tr("Split/Collapse RGB")).clicked() {
-                changed |= split_or_collapse(map, split, shows_split);
-                edit.touched = Some(index);
-            }
-        });
-
-        // Not in the reference's menu: inverting stays on the right click
-        response.context_menu(|ui| {
-            let on = target.dests().iter().all(|dest| map.inverted.contains(dest));
-            if ui.selectable_label(on, tr("Invert")).on_hover_text(tr("Write 1 minus the value in this channel")).clicked() {
-                map.inverted.retain(|dest| !target.dests().contains(dest));
-                if !on {
-                    map.inverted.extend_from_slice(target.dests());
+            if rgb {
+                // Collapsing would drop maps that R, G and B read differently
+                let mut checked = shows_split;
+                let can_toggle = !shows_split || rgb_one_map(map);
+                let item = ui.add_enabled(can_toggle, egui::Checkbox::new(&mut checked, tr("Split/Collapse RGB")));
+                let item = item.on_disabled_hover_text(tr("R, G and B read different maps: clear two of them to collapse"));
+                if item.changed() {
+                    changed |= split_or_collapse(map, split, shows_split);
                 }
-                changed = true;
-                edit.touched = Some(index);
-                ui.close();
             }
         });
+        response.context_menu(|ui| changed |= swatch_extras_menu(ui, map, target));
     }
     changed
 }
 
+/// TextureCraft's own swatch tools on the right click (the reference has none there): invert,
+/// constants and the output map's channel layout. True when the map changed.
+fn swatch_extras_menu(ui: &mut Ui, map: &mut MapSpec, target: ChannelTarget) -> bool {
+    let mut changed = false;
+    let on = target.dests().iter().all(|dest| map.inverted.contains(dest));
+    if ui.selectable_label(on, tr("Invert")).on_hover_text(tr("Write 1 minus the value in this channel")).clicked() {
+        map.inverted.retain(|dest| !target.dests().contains(dest));
+        if !on {
+            map.inverted.extend_from_slice(target.dests());
+        }
+        changed = true;
+        ui.close();
+    }
+    ui.separator();
+    for (label, value) in CONSTANTS {
+        if ui.button(tr(label)).clicked() {
+            set_constant(map, target, value);
+            changed = true;
+            ui.close();
+        }
+    }
+    if let Some(SourceRef::Constant(mut value)) = source_of(map, target).cloned() {
+        let constant = egui::DragValue::new(&mut value).range(0.0..=1.0).speed(CONSTANT_DRAG_SPEED).fixed_decimals(2);
+        if ui.add(constant).changed() {
+            set_constant(map, target, value);
+            changed = true;
+        }
+    }
+    ui.separator();
+    ui.menu_button(tr("Layout"), |ui| {
+        let current = Layout::of(map);
+        for layout in Layout::ALL {
+            if ui.selectable_label(layout == current, tr(layout.label())).clicked() && layout != current {
+                set_layout(map, layout);
+                changed = true;
+                ui.close();
+            }
+        }
+    });
+    changed
+}
+
+/// The swatch's channels write the constant `value`
+fn set_constant(map: &mut MapSpec, target: ChannelTarget, value: f32) {
+    for (dest, source) in &mut map.channels {
+        if target.dests().contains(dest) {
+            *source = SourceRef::Constant(value);
+        }
+    }
+}
+
+/// The accent frame around a drop target under a dragged map or row
+fn drop_highlight(ui: &Ui, rect: egui::Rect, tokens: &Tokens) {
+    ui.painter().rect_stroke(rect, tokens.radius, egui::Stroke::new(DROP_HIGHLIGHT_STROKE_POINTS, tokens.accent), egui::StrokeKind::Outside);
+}
+
 /// One channel swatch: `label` on top, filled with the source's colour, bars below for the
-/// channels it reads
-fn swatch(ui: &mut Ui, label: &str, name: &str, fill: Option<Color32>, bars: &[Color32]) -> egui::Response {
+/// channels it reads, a corner mark when inverted
+fn swatch(ui: &mut Ui, label: &str, name: &str, look: &SwatchLook) -> egui::Response {
     let tokens = Tokens::get(ui.ctx());
     let enabled = ui.is_enabled();
-    let (rect, response) = ui.allocate_exact_size(vec2(SWATCH_SIZE, SWATCH_SIZE), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(SWATCH_SIZE_POINTS, SWATCH_SIZE_POINTS), egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
 
     let painter = ui.painter();
     let border = if response.hovered() { tokens.accent } else { tokens.button_border };
-    painter.rect(rect, tokens.radius, fill.unwrap_or(tokens.button), egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
-    let label_font = egui::FontId::proportional(SWATCH_TEXT_SIZE);
-    painter.text(rect.center_top() + vec2(0.0, SWATCH_TEXT_TOP), egui::Align2::CENTER_TOP, label, label_font, tokens.text_strong);
-    let bar_width = SWATCH_BAR_WIDTH / bars.len().max(1) as f32;
-    let left = rect.center().x - SWATCH_BAR_WIDTH / 2.0;
-    for (k, color) in bars.iter().enumerate() {
-        let min = egui::pos2(left + k as f32 * bar_width, rect.bottom() - SWATCH_BAR_BOTTOM);
-        painter.rect_filled(egui::Rect::from_min_size(min, vec2(bar_width, SWATCH_BAR_HEIGHT)), 0.0, *color);
+    painter.rect(rect, tokens.radius, look.fill.unwrap_or(tokens.button), egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    let label_font = egui::FontId::proportional(SWATCH_TEXT_SIZE_POINTS);
+    painter.text(rect.center_top() + vec2(0.0, SWATCH_TEXT_TOP_POINTS), egui::Align2::CENTER_TOP, label, label_font, tokens.text_strong);
+    let bar_width = SWATCH_BAR_WIDTH_POINTS / look.bars.len().max(1) as f32;
+    let left = rect.center().x - SWATCH_BAR_WIDTH_POINTS / 2.0;
+    for (k, color) in look.bars.iter().enumerate() {
+        let min = egui::pos2(left + k as f32 * bar_width, rect.bottom() - SWATCH_BAR_BOTTOM_POINTS);
+        painter.rect_filled(egui::Rect::from_min_size(min, vec2(bar_width, SWATCH_BAR_HEIGHT_POINTS)), 0.0, *color);
+    }
+    if look.inverted {
+        let corner = rect.right_top();
+        let mark = vec![corner, corner - vec2(INVERTED_MARK_POINTS, 0.0), corner + vec2(0.0, INVERTED_MARK_POINTS)];
+        painter.add(egui::Shape::convex_polygon(mark, tokens.text_strong, egui::Stroke::NONE));
     }
     response
 }
 
-/// Clear channel: the swatch's channels write black, or opaque alpha
+/// Clear channel: the swatch is empty again ("Default black", "Default white" for alpha), not
+/// inverted
 fn clear_channel(map: &mut MapSpec, target: ChannelTarget) {
     for (dest, source) in &mut map.channels {
         if target.dests().contains(dest) {
             *source = SourceRef::Constant(if *dest == Dest::A { CLEARED_ALPHA } else { CLEARED_VALUE });
         }
     }
+    map.inverted.retain(|dest| !target.dests().contains(dest));
 }
 
-/// Split/Collapse RGB: the RGB swatch splits into R, G and B; split ones collapse into one RGB
-/// swatch reading R's map. True when the map changed.
+/// Split/Collapse RGB: the RGB swatch splits into R, G and B; split ones that read one map collapse
+/// into one RGB swatch reading that map's R, G and B. R, G and B reading different maps stay split,
+/// so no map is dropped. True when the map changed.
 fn split_or_collapse(map: &mut MapSpec, split: &mut bool, shows_split: bool) -> bool {
-    if !shows_split {
+    if !shows_split || !rgb_one_map(map) {
         *split = true;
         return false;
     }
@@ -1221,9 +1400,9 @@ fn split_or_collapse(map: &mut MapSpec, split: &mut bool, shows_split: bool) -> 
     true
 }
 
-/// "From <map>": which channel of the dropped map the output channel reads. True when the map
-/// changed.
-fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [MapSpec], active: &mut Option<usize>) -> bool {
+/// "From <map>": which channel of the dropped map the swatch reads; Escape or a click elsewhere
+/// assigns nothing. True when the map changed.
+fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [MapSpec]) -> bool {
     let Some(waiting) = pending.clone() else { return false };
     let Some(map) = maps.get_mut(waiting.map) else {
         *pending = None;
@@ -1232,7 +1411,7 @@ fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [
 
     let name = map_lists::name_of(&waiting.source).map_or_else(String::new, |name| tr(name).to_string());
     let mut picked = None;
-    let shown = egui::Popup::new(egui::Id::new("exp_source_channel"), ui.ctx().clone(), egui::PopupAnchor::Position(waiting.position), ui.layer_id())
+    let shown = egui::Popup::new(egui::Id::unique("exp_source_channel"), ui.ctx().clone(), egui::PopupAnchor::Position(waiting.position), ui.layer_id())
         .kind(egui::PopupKind::Menu)
         .layout(egui::Layout::top_down_justified(egui::Align::Min))
         .style(egui::containers::menu::menu_style)
@@ -1240,11 +1419,11 @@ fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.label(RichText::new(trf("From {map}", &[("map", &name)])).strong());
-            for (label, component) in source_choices(&waiting.source) {
-                match component {
-                    Some(component) => {
+            for (label, pick) in source_choices(&waiting.source, waiting.target) {
+                match pick {
+                    Some(pick) => {
                         if ui.button(tr(label)).clicked() {
-                            picked = Some(component);
+                            picked = Some(pick);
                         }
                     }
                     None => {
@@ -1253,27 +1432,23 @@ fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [
                 }
             }
         });
-    if picked.is_some() || shown.is_none_or(|menu| menu.response.should_close()) {
+    // The app can consume Escape before the popup sees it, so read the raw event
+    let escaped = ui.input(|input| input.raw.events.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })));
+    if picked.is_some() || escaped || shown.is_none_or(|menu| menu.response.should_close()) {
         *pending = None;
     }
-    let Some(component) = picked else { return false };
+    let Some(pick) = picked else { return false };
 
-    let source = with_component(&waiting.source, component);
-    for (dest, channel_source) in &mut map.channels {
-        if waiting.target.dests().contains(dest) {
-            *channel_source = source.clone();
-        }
-    }
-    *active = Some(waiting.map);
+    apply_pick(map, waiting.target, &waiting.source, pick);
     true
 }
 
-/// The sources of the output map edited last, with their colours, for the panes' markers
+/// The maps the selected template's outputs read, with their colours, for the panes' markers
 fn marked_sources(app: &TextureCraftApp, tokens: &Tokens) -> Vec<(SourceRef, Color32)> {
-    let Some(index) = app.ui.export.active_map else { return Vec::new() };
-    let Some(map) = app.ui.export.draft.as_ref().and_then(|draft| draft.maps.get(index)) else { return Vec::new() };
+    let Some(preset) = app.ui.export.draft.clone().or_else(|| selected(app)) else { return Vec::new() };
 
-    map.channels.iter().filter_map(|(_, source)| source_color(source, tokens).map(|color| (source.clone(), color))).collect()
+    let sources = preset.maps.iter().flat_map(|map| map.channels.iter().map(|(_, source)| source));
+    sources.filter_map(|source| source_color(source, tokens).map(|color| (source.clone(), color))).collect()
 }
 
 /// The Input maps pane: the input maps in their groups
@@ -1315,17 +1490,27 @@ fn map_entry(ui: &mut Ui, name: &str, source: Option<&SourceRef>, text_color: Co
     let tokens = Tokens::get(ui.ctx());
     let available = source.is_some();
     let sense = if available { egui::Sense::drag() } else { egui::Sense::hover() };
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ENTRY_HEIGHT), sense);
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ENTRY_HEIGHT_POINTS), sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ListItem, available, name));
 
     let painter = ui.painter();
-    let row = rect.shrink2(vec2(0.0, ENTRY_GAP / 2.0));
+    let row = rect.shrink2(vec2(0.0, ENTRY_GAP_POINTS / 2.0));
     painter.rect_filled(row, 0.0, if available && response.hovered() { tokens.row_hover } else { tokens.row });
     if let Some(color) = marker {
-        painter.rect_filled(egui::Rect::from_center_size(row.left_center() + vec2(MARKER_INDENT, 0.0), egui::Vec2::splat(MARKER_SIZE)), 1.0, color);
+        painter.rect_filled(
+            egui::Rect::from_center_size(row.left_center() + vec2(MARKER_INDENT_POINTS, 0.0), egui::Vec2::splat(MARKER_SIZE_POINTS)),
+            1.0,
+            color,
+        );
     }
     let color = if available { text_color } else { tokens.text_dim.gamma_multiply(UNAVAILABLE_FADE) };
-    painter.text(row.left_center() + vec2(ENTRY_TEXT_INDENT, 0.0), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(ENTRY_TEXT_SIZE), color);
+    painter.text(
+        row.left_center() + vec2(ENTRY_TEXT_INDENT_POINTS, 0.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(ENTRY_TEXT_SIZE_POINTS),
+        color,
+    );
     let Some(source) = source else {
         response.on_hover_text(tr(NOT_AVAILABLE));
         return;
@@ -1337,7 +1522,7 @@ fn map_entry(ui: &mut Ui, name: &str, source: Option<&SourceRef>, text_color: Co
         && let Some(at) = response.interact_pointer_pos()
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        let dragged = egui::Area::new(egui::Id::new(("exp_map_drag", name))).order(egui::Order::Tooltip).fixed_pos(at + vec2(8.0, 8.0));
+        let dragged = egui::Area::new(egui::Id::unique(("exp_map_drag", name))).order(egui::Order::Tooltip).fixed_pos(at + vec2(8.0, 8.0));
         dragged.show(ui.ctx(), |ui| chip(ui, name, true));
     }
 }
@@ -1352,7 +1537,7 @@ mod tests {
 
     #[test]
     fn layouts_keep_sources_and_drops_fill_rgb() {
-        let mut map = new_map(Layout::Rgb);
+        let mut map = new_map(Layout::Rgb, "t");
         drop_input(&mut map, Dest::G, &ch(Channel::BaseColor, 0));
         assert_eq!(map.channels, vec![(Dest::R, ch(Channel::BaseColor, 0)), (Dest::G, ch(Channel::BaseColor, 1)), (Dest::B, ch(Channel::BaseColor, 2))]);
         drop_input(&mut map, Dest::B, &ch(Channel::Metallic, 0));
@@ -1365,7 +1550,7 @@ mod tests {
         set_layout(&mut map, Layout::Rgb);
         assert_eq!(map.channels.get(1), Some(&(Dest::G, ch(Channel::BaseColor, 1))), "gray to RGB spreads a color source");
         for l in [Layout::Rgb, Layout::Rgba, Layout::Gray, Layout::GrayAlpha] {
-            let m = new_map(l);
+            let m = new_map(l, "t");
             assert_eq!(Layout::of(&m), l);
             ExportPreset { name: "t".into(), maps: vec![m] }.validate().unwrap();
         }
@@ -1375,7 +1560,7 @@ mod tests {
 
     #[test]
     fn inversion_follows_its_source_through_layouts_and_drops() {
-        let mut map = new_map(Layout::Rgb);
+        let mut map = new_map(Layout::Rgb, "t");
         map.inverted = vec![Dest::R];
         set_layout(&mut map, Layout::Gray);
         assert_eq!(map.inverted, vec![Dest::L], "the colour source keeps its inversion on L");
@@ -1386,7 +1571,7 @@ mod tests {
         map.inverted = vec![Dest::G];
         set_layout(&mut map, Layout::GrayAlpha);
         assert!(map.inverted.is_empty(), "channels that leave take their inversion with them");
-        let mut map = new_map(Layout::Rgb);
+        let mut map = new_map(Layout::Rgb, "t");
         map.inverted = vec![Dest::B];
         drop_input(&mut map, Dest::B, &ch(Channel::Metallic, 0));
         assert_eq!(map.inverted, vec![Dest::B], "a dropped map keeps the channel's toggle, like picking from the list");
@@ -1395,40 +1580,83 @@ mod tests {
 
     #[test]
     fn split_and_collapse_keep_r_g_b_on_one_or_three_swatches() {
-        let mut map = new_map(Layout::Rgb);
+        let mut map = new_map(Layout::Rgb, "t");
         let mut split = false;
         assert_eq!(swatch_targets(&map, split), vec![ChannelTarget::Rgb], "an empty RGB map shows one swatch");
 
         assert!(!split_or_collapse(&mut map, &mut split, false), "splitting changes only the view");
         assert_eq!(swatch_targets(&map, split).len(), 3);
 
-        map.channels = vec![(Dest::R, ch(Channel::BaseColor, 0)), (Dest::G, ch(Channel::Metallic, 0)), (Dest::B, SourceRef::Constant(0.0))];
+        map.channels = vec![(Dest::R, ch(Channel::BaseColor, 0)), (Dest::G, ch(Channel::BaseColor, 0)), (Dest::B, ch(Channel::BaseColor, 1))];
         assert!(split_or_collapse(&mut map, &mut split, true));
         assert_eq!(swatch_targets(&map, split), vec![ChannelTarget::Rgb]);
-        assert_eq!(map.channels.get(2), Some(&(Dest::B, ch(Channel::BaseColor, 2))), "collapsing spreads R's color map over R, G and B");
-
-        map.channels = vec![(Dest::R, ch(Channel::Roughness, 0)), (Dest::G, ch(Channel::Metallic, 0)), (Dest::B, SourceRef::Constant(0.5))];
-        assert_eq!(swatch_targets(&map, false).len(), 3, "different maps in R, G and B show split even when not asked to");
+        assert_eq!(map.channels.get(2), Some(&(Dest::B, ch(Channel::BaseColor, 2))), "collapsing reads the map's R, G and B");
     }
 
     #[test]
-    fn clear_channel_writes_black_or_opaque_alpha() {
-        let mut map = new_map(Layout::Rgba);
+    fn r_g_b_reading_different_maps_or_inverted_apart_stay_split() {
+        let differing = vec![(Dest::R, ch(Channel::Roughness, 0)), (Dest::G, ch(Channel::Metallic, 0)), (Dest::B, SourceRef::Constant(0.5))];
+        let mut map = new_map(Layout::Rgb, "t");
+        map.channels = differing.clone();
+        let mut split = true;
+
+        assert!(!split_or_collapse(&mut map, &mut split, true), "collapsing would drop maps");
+
+        assert_eq!(map.channels, differing);
+        assert_eq!(swatch_targets(&map, split).len(), 3);
+        let mut color = new_map(Layout::Rgb, "t");
+        drop_input(&mut color, Dest::R, &ch(Channel::BaseColor, 0));
+        color.inverted = vec![Dest::G];
+        assert_eq!(swatch_targets(&color, false).len(), 3, "one map inverted in G only shows R, G and B apart");
+    }
+
+    #[test]
+    fn clear_channel_empties_the_swatch_and_its_inversion() {
+        let mut map = new_map(Layout::Rgba, "t");
         drop_input(&mut map, Dest::R, &ch(Channel::BaseColor, 0));
         drop_input(&mut map, Dest::A, &ch(Channel::Opacity, 0));
+        map.inverted = vec![Dest::R, Dest::G, Dest::B, Dest::A];
 
         clear_channel(&mut map, ChannelTarget::Rgb);
         clear_channel(&mut map, ChannelTarget::One(Dest::A));
 
         let cleared = [(Dest::R, 0.0), (Dest::G, 0.0), (Dest::B, 0.0), (Dest::A, 1.0)].map(|(dest, value)| (dest, SourceRef::Constant(value)));
         assert_eq!(map.channels, cleared);
+        assert!(map.inverted.is_empty(), "a cleared channel writes its default, not its inverse");
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(0.0), ChannelTarget::Rgb), "Default black");
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(1.0), ChannelTarget::One(Dest::A)), "Default white");
     }
 
     #[test]
-    fn a_gray_map_offers_its_gray_channel_and_a_color_map_its_r_g_b() {
-        let offered = |source: &SourceRef| source_choices(source).into_iter().filter_map(|(label, component)| component.map(|_| label)).collect::<Vec<_>>();
+    fn the_from_popup_offers_the_reference_choices() {
+        let offered = |source: &SourceRef, target| source_choices(source, target).into_iter().map(|(label, pick)| (label, pick.is_some())).collect::<Vec<_>>();
 
-        assert_eq!(offered(&ch(Channel::Metallic, 0)), ["Gray Channel"]);
-        assert_eq!(offered(&ch(Channel::BaseColor, 0)), ["R Channel", "G Channel", "B Channel"]);
+        assert_eq!(offered(&ch(Channel::Metallic, 0), ChannelTarget::Rgb), [("Gray Channel", true), ("A Channel", false)]);
+        let color_on_gray = [("Gray Channel", false), ("R Channel", true), ("G Channel", true), ("B Channel", true), ("A Channel", false)];
+        assert_eq!(offered(&ch(Channel::BaseColor, 0), ChannelTarget::One(Dest::L)), color_on_gray);
+        let color_on_rgb = offered(&ch(Channel::BaseColor, 0), ChannelTarget::Rgb);
+        assert_eq!(color_on_rgb.first(), Some(&("RGB Channels", true)), "only the RGB swatch offers RGB Channels");
+        assert_eq!(color_on_rgb.get(1..), Some(color_on_gray.as_slice()));
+    }
+
+    #[test]
+    fn rgb_channels_fill_r_g_b_and_one_channel_fills_every_swatch_channel() {
+        let mut map = new_map(Layout::Rgb, "t");
+
+        apply_pick(&mut map, ChannelTarget::Rgb, &ch(Channel::BaseColor, 0), SourcePick::AllRgb);
+        assert!(rgb_spread(&map));
+        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color (RGB)");
+
+        apply_pick(&mut map, ChannelTarget::Rgb, &ch(Channel::BaseColor, 0), SourcePick::Component(0));
+        assert_eq!(swatch_targets(&map, false), vec![ChannelTarget::Rgb], "R of one map in R, G and B stays one swatch");
+        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color (Red)");
+    }
+
+    #[test]
+    fn new_rows_take_the_reference_names_with_a_number_when_taken() {
+        let maps = vec![new_map(Layout::Rgb, "RGB"), new_map(Layout::Rgb, "RGB_1")];
+
+        assert_eq!(unique_file(&maps, "Grayscale"), "Grayscale");
+        assert_eq!(unique_file(&maps, "RGB"), "RGB_2");
     }
 }

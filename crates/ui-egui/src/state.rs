@@ -391,9 +391,9 @@ pub struct ExportUi {
     /// channel swatches (R+G+B) instead of one RGB swatch.
     #[serde(skip)]
     pub draft_split: Vec<bool>,
-    /// Output templates tab: the output map edited last; the map lists mark its sources.
-    #[serde(skip)]
-    pub active_map: Option<usize>,
+    /// LIST OF EXPORTS: the console's width, set by dragging the strip at its left edge.
+    #[serde(skip, default = "default_console_width")]
+    pub console_width: f32,
     /// Output templates tab: a map dropped on an output channel, waiting for the source channel
     /// ("From <map>").
     #[serde(skip)]
@@ -444,7 +444,7 @@ impl Default for ExportUi {
             draft_maps: Vec::new(),
             draft_base: None,
             draft_split: Vec::new(),
-            active_map: None,
+            console_width: default_console_width(),
             pending_drop: None,
             renaming: None,
             rename_key: false,
@@ -455,6 +455,11 @@ impl Default for ExportUi {
             console_hidden: false,
         }
     }
+}
+
+/// The LIST OF EXPORTS console's width when the window opens, as in the reference
+fn default_console_width() -> f32 {
+    300.0
 }
 
 fn default_export_dir() -> String {
