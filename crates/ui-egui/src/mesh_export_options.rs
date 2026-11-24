@@ -41,8 +41,8 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             true,
             tr("Apply triangulation"),
             &[
-                tr("Triangulation converts all mesh polygons with more than 3 sides to triangles (but doesn't change the triangular ones)."),
-                tr("Choosing to apply triangulation for export avoids unexpected results when rendering the mesh in another application."),
+                tr("Splits every face with more than three corners into triangles; triangles stay as they are."),
+                tr("TextureCraft keeps meshes as triangles, so the exported mesh is always triangulated."),
             ],
         );
         ui.add_space(GROUP_GAP);
@@ -52,8 +52,8 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             true,
             tr("Recompute vertex normals"),
             &[
-                tr("Recomputing vertex normals is recommended if you don't plan on using the normal map in the target application."),
-                tr("Otherwise, keeping the original vertex normals is recommended if you plan on using the normal map in the target application."),
+                tr("Replaces the mesh's vertex normals with newly computed ones in the exported file."),
+                tr("TextureCraft cannot do this yet: it writes the vertex normals the mesh has in the project."),
             ],
         );
         ui.add_space(8.0);

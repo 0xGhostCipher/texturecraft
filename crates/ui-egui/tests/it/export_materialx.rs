@@ -52,7 +52,7 @@ fn export_materialx_sits_directly_below_the_usd_option() {
     let (app_harness, _dir) = harness("order");
     let usd = app_harness.get_by_label("Export USD asset").rect().min.y;
     let materialx = checkbox(&app_harness).rect().min.y;
-    let shaders = app_harness.get_by_label("Export shaders parameters").rect().min.y;
+    let shaders = app_harness.get_by_label("Export shader settings").rect().min.y;
 
     assert!(usd < materialx && materialx < shaders, "USD {usd}, MaterialX {materialx}, shaders {shaders}");
 }
@@ -171,7 +171,7 @@ fn restoring_the_default_parameters_unticks_export_materialx() {
     app_harness.run_steps(3);
     assert!(app_harness.state().ui.export.materialx);
 
-    app_harness.get_by_label("Resets all settings to default values").click();
+    app_harness.get_by_label("Restore the default export parameters").click();
     app_harness.run_steps(3);
     assert!(!app_harness.state().ui.export.materialx);
 }

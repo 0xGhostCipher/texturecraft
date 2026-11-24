@@ -1,5 +1,5 @@
-//! Export textures window (texturecraft #789): the reference's size, button tooltips and settings
-//! texts, word for word.
+//! Export textures window (texturecraft #789): the reference's size, and the tooltips of the bottom
+//! bar's buttons and of the settings' checkboxes.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
@@ -71,13 +71,13 @@ fn on_a_small_screen_the_window_fits_with_its_buttons_in_view() {
 }
 
 #[test]
-fn the_buttons_carry_the_reference_tooltips() {
+fn the_buttons_carry_tooltips_saying_what_they_do() {
     let mut h = harness(egui::vec2(1600.0, 960.0));
-    tooltip_is(&mut h, "Include all", "Includes all Texture Sets, UV Tiles and output maps.");
-    tooltip_is(&mut h, "Reset all", "Resets all settings to their default values, including all textures.");
-    tooltip_is(&mut h, "Cancel", "Closes the export window and undoes all recent changes");
-    tooltip_is(&mut h, "Save settings", "Closes the export window and saves changes");
-    tooltip_is(&mut h, "Export", "Exports all selected textures and additional files");
+    tooltip_is(&mut h, "Include all", "Select every texture set, UV tile and output map");
+    tooltip_is(&mut h, "Reset all", "Restore the export defaults and select every texture");
+    tooltip_is(&mut h, "Cancel", "Close the window and go back to the settings it opened with");
+    tooltip_is(&mut h, "Save settings", "Keep these settings for the next export and close the window");
+    tooltip_is(&mut h, "Export", "Write the selected textures, and the extra files ticked in the settings");
 }
 
 /// Hover the checkbox `label` and check that its tooltip says `tooltip`
@@ -90,14 +90,14 @@ fn checkbox_tooltip_is(h: &mut Harness<'_, TextureCraftApp>, label: &str, toolti
 }
 
 #[test]
-fn the_unavailable_checkboxes_carry_the_reference_texts() {
+fn the_extra_file_checkboxes_carry_tooltips_saying_what_they_write() {
     let mut h = harness(egui::vec2(1600.0, 960.0));
     checkbox_tooltip_is(
         &mut h,
         "Export USD asset",
-        "Export USD files hierarchy with material and textures. References the original mesh if possible, exports the mesh otherwise",
+        "Also write <mesh>.usd next to the textures: the whole mesh, with a material per texture set that reads the exported textures",
     );
-    checkbox_tooltip_is(&mut h, "Export shaders parameters", "Exports a JSON file with the settings for all shader instances");
+    checkbox_tooltip_is(&mut h, "Export shader settings", "Save the settings of each shader instance in a JSON file");
 }
 
 #[test]

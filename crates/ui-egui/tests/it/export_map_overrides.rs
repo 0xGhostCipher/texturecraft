@@ -104,10 +104,10 @@ fn a_map_override_sets_its_own_file_type_and_marks_the_set() {
     assert!(h.query_by_label("*").is_some(), "the set is marked");
 
     click(&mut h, egui_phosphor::regular::LIST_CHECKS);
-    click(&mut h, "Enable override for all items");
+    click(&mut h, "Override every item");
     assert_eq!(maps(&h).values().filter(|m| m.file_type.is_some()).count(), rows);
     click(&mut h, egui_phosphor::regular::LIST_CHECKS);
-    click(&mut h, "Disable override for all items");
+    click(&mut h, "Clear all overrides");
     assert!(maps(&h).is_empty());
 }
 

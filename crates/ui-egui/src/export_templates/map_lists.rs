@@ -1,6 +1,6 @@
-//! The maps the Output templates tab lists for dragging onto output channels, with the reference's
-//! names (naming pattern OpenPBR). An entry without a source names a map TextureCraft does not
-//! have yet; it is listed greyed.
+//! The maps the Output templates tab lists for dragging onto output channels. Maps TextureCraft
+//! has carry its own names; the input maps it does not have yet carry OpenPBR parameter names
+//! (OpenPBR Surface specification, Academy Software Foundation) and are listed greyed.
 
 use std::sync::LazyLock;
 
@@ -15,137 +15,63 @@ pub type MapEntry = (&'static str, Option<SourceRef>);
 /// A group of the Input maps pane: its name and entries.
 pub type MapGroup = (&'static str, Vec<MapEntry>);
 
-fn channel(channel: Channel) -> Option<SourceRef> {
-    Some(SourceRef::Channel { channel, component: 0 })
+/// A TextureCraft channel, under its own name
+fn channel(channel: Channel) -> MapEntry {
+    (channel.label(), Some(SourceRef::Channel { channel, component: 0 }))
 }
 
-fn converted(map: VirtualMap) -> Option<SourceRef> {
-    Some(SourceRef::Virtual { map, component: 0 })
+/// An OpenPBR input TextureCraft has no channel for yet
+fn missing(name: &'static str) -> MapEntry {
+    (name, None)
 }
 
-fn mesh(map: BakedMap) -> Option<SourceRef> {
-    Some(SourceRef::Baked { map, component: 0 })
-}
-
-/// The reference's user channels, listed greyed: TextureCraft has no user channels yet
-const USER_CHANNELS: [&str; 32] = [
-    "User0", "User1", "User2", "User3", "User4", "User5", "User6", "User7", "User8", "User9", "User10", "User11", "User12", "User13", "User14", "User15",
-    "User16", "User17", "User18", "User19", "User20", "User21", "User22", "User23", "User24", "User25", "User26", "User27", "User28", "User29", "User30",
-    "User31",
-];
-
-/// Input maps in the reference's groups and order (naming pattern OpenPBR); entries without a
-/// TextureCraft channel are listed greyed.
+/// Input maps in the OpenPBR parameter groups, then TextureCraft's channels outside OpenPBR
 pub static INPUT_MAPS: LazyLock<Vec<MapGroup>> = LazyLock::new(|| {
     vec![
-        (
-            n_("Base"),
-            vec![
-                (n_("Base weight"), None),
-                (n_("Base color"), channel(Channel::BaseColor)),
-                (n_("Metallic"), channel(Channel::Metallic)),
-                (n_("Base diffuse roughness"), None),
-            ],
-        ),
+        (n_("Base"), vec![missing(n_("Base weight")), channel(Channel::BaseColor), channel(Channel::Metallic), missing(n_("Base diffuse roughness"))]),
         (
             n_("Specular"),
             vec![
-                (n_("Specular weight"), None),
-                (n_("Specular edge color"), None),
-                (n_("Roughness"), channel(Channel::Roughness)),
-                (n_("Specular level"), channel(Channel::SpecularLevel)),
-                (n_("Anisotropy level"), channel(Channel::AnisotropyLevel)),
-                (n_("Anisotropy angle"), channel(Channel::AnisotropyAngle)),
+                missing(n_("Specular weight")),
+                missing(n_("Specular color")),
+                channel(Channel::Roughness),
+                channel(Channel::SpecularLevel),
+                channel(Channel::AnisotropyLevel),
+                channel(Channel::AnisotropyAngle),
             ],
         ),
-        (n_("Transmission"), vec![(n_("Transmission weight"), channel(Channel::Transmission)), (n_("Absorption color"), None)]),
-        (n_("Subsurface"), vec![(n_("Translucency"), None), (n_("Scattering color"), None), (n_("Scattering"), channel(Channel::ScatterWeight))]),
+        (n_("Transmission"), vec![channel(Channel::Transmission), missing(n_("Transmission color"))]),
+        (n_("Subsurface"), vec![channel(Channel::ScatterWeight), missing(n_("Subsurface color")), missing(n_("Subsurface radius"))]),
         (
             n_("Coat"),
             vec![
-                (n_("Coat opacity"), channel(Channel::CoatWeight)),
-                (n_("Coat color"), None),
-                (n_("Coat roughness"), channel(Channel::CoatRoughness)),
-                (n_("Coat anisotropy"), None),
-                (n_("Coat specular level"), None),
-                (n_("Coat normal"), channel(Channel::CoatNormal)),
-                (n_("Coat tangent"), None),
+                channel(Channel::CoatWeight),
+                missing(n_("Coat color")),
+                channel(Channel::CoatRoughness),
+                missing(n_("Coat roughness anisotropy")),
+                missing(n_("Coat IOR")),
+                channel(Channel::CoatNormal),
+                missing(n_("Coat tangent")),
             ],
         ),
-        (
-            n_("Fuzz/Sheen"),
-            vec![
-                (n_("Sheen opacity"), channel(Channel::SheenWeight)),
-                (n_("Sheen color"), channel(Channel::SheenColor)),
-                (n_("Sheen roughness"), channel(Channel::SheenRoughness)),
-            ],
-        ),
-        (n_("Emission"), vec![(n_("Emissive"), channel(Channel::Emissive))]),
-        (n_("Thin-film"), vec![(n_("Thin-film weight"), None)]),
+        (n_("Sheen"), vec![channel(Channel::SheenWeight), channel(Channel::SheenColor), channel(Channel::SheenRoughness)]),
+        (n_("Emission"), vec![channel(Channel::Emissive)]),
+        (n_("Thin film"), vec![missing(n_("Thin film weight")), missing(n_("Thin film thickness"))]),
         (
             n_("Geometry"),
-            vec![
-                (n_("Opacity"), channel(Channel::Opacity)),
-                (n_("Height"), channel(Channel::Height)),
-                (n_("Normal"), channel(Channel::Normal)),
-                (n_("Tangent"), None),
-                (n_("Ambient occlusion"), channel(Channel::AmbientOcclusion)),
-            ],
+            vec![channel(Channel::Opacity), channel(Channel::Height), channel(Channel::Normal), missing(n_("Tangent")), channel(Channel::AmbientOcclusion)],
         ),
-        (
-            n_("Miscellaneous"),
-            vec![
-                (n_("Blending mask"), None),
-                (n_("Diffuse"), None),
-                (n_("Displacement"), None),
-                (n_("Glossiness"), channel(Channel::Glossiness)),
-                ("Ior", None),
-                (n_("Reflection"), None),
-                (n_("Specular"), channel(Channel::Specular)),
-                (n_("Transmissive"), None),
-            ],
-        ),
-        (n_("User Channels"), USER_CHANNELS.iter().map(|name| (*name, None)).collect()),
+        (n_("Other"), vec![channel(Channel::Glossiness), channel(Channel::Specular)]),
     ]
 });
 
-/// Mesh maps, in the reference order and case.
-pub static MESH_MAPS: LazyLock<Vec<MapEntry>> = LazyLock::new(|| {
-    vec![
-        (n_("Normal"), mesh(BakedMap::Normal)),
-        (n_("World space normal"), mesh(BakedMap::WorldNormal)),
-        (n_("ID"), mesh(BakedMap::Id)),
-        (n_("Ambient occlusion"), mesh(BakedMap::AmbientOcclusion)),
-        (n_("Curvature"), mesh(BakedMap::Curvature)),
-        (n_("Position"), mesh(BakedMap::Position)),
-        (n_("Thickness"), mesh(BakedMap::Thickness)),
-        (n_("Height"), mesh(BakedMap::Height)),
-        (n_("Bent normals"), mesh(BakedMap::BentNormal)),
-        (n_("Opacity"), mesh(BakedMap::Opacity)),
-    ]
-});
+/// Mesh maps, under the names the bake panel gives them.
+pub static MESH_MAPS: LazyLock<Vec<MapEntry>> =
+    LazyLock::new(|| BakedMap::ALL.iter().map(|&map| (crate::i18n::baked_map_label(map), Some(SourceRef::Baked { map, component: 0 }))).collect());
 
-/// Converted maps in the reference order, then the ones only TextureCraft has (built-in templates use them).
-pub static CONVERTED_MAPS: LazyLock<Vec<MapEntry>> = LazyLock::new(|| {
-    vec![
-        ("1/ior", None),
-        (n_("Mixed AO"), converted(VirtualMap::AoMixed)),
-        (n_("Diffuse"), None),
-        ("f0", converted(VirtualMap::F0)),
-        (n_("Glossiness"), converted(VirtualMap::Glossiness)),
-        (n_("Glossiness²"), None),
-        (n_("Normal DirectX"), converted(VirtualMap::NormalDirectX)),
-        (n_("Normal OpenGL"), converted(VirtualMap::NormalOpenGl)),
-        (n_("Reflection"), None),
-        (n_("Specular"), None),
-        ("Unity4 Diffuse", None),
-        ("Unity4 Gloss", None),
-        (n_("2D View"), None),
-        (VirtualMap::HeightNormal.label(), converted(VirtualMap::HeightNormal)),
-        (VirtualMap::Roughness.label(), converted(VirtualMap::Roughness)),
-        (VirtualMap::SheenTint.label(), converted(VirtualMap::SheenTint)),
-    ]
-});
+/// Converted maps: the maps TextureCraft computes from others when it exports.
+pub static CONVERTED_MAPS: LazyLock<Vec<MapEntry>> =
+    LazyLock::new(|| VirtualMap::ALL.iter().map(|&map| (map.label(), Some(SourceRef::Virtual { map, component: 0 }))).collect());
 
 /// The listed name of `source` (any component), or None for a constant.
 pub fn name_of(source: &SourceRef) -> Option<&'static str> {

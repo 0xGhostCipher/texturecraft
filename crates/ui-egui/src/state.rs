@@ -399,7 +399,7 @@ pub struct ExportUi {
     #[serde(skip, default = "default_console_width")]
     pub console_width: f32,
     /// Output templates tab: a map dropped on an output channel, waiting for the source channel
-    /// ("From <map>").
+    /// ("Which part of <map>?").
     #[serde(skip)]
     pub pending_drop: Option<crate::export_templates::PendingDrop>,
     /// Output templates tab: the new name while renaming the selected preset.

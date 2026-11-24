@@ -158,17 +158,17 @@ impl Layout {
     }
 }
 
-/// The reference's Create buttons: (label, the layout the new output map gets, whether R, G and
+/// The Create buttons: (label, the layout the new output map gets, whether R, G and
 /// B show as separate swatches, the new map's file name)
 const CREATE: [(&str, Layout, bool, &str); 5] = [
-    (n_("Gray"), Layout::Gray, false, "Grayscale"),
+    (n_("Gray"), Layout::Gray, false, "Gray"),
     ("RGB", Layout::Rgb, false, "RGB"),
     ("R+G+B", Layout::Rgb, true, "RGB"),
-    ("RGB+A", Layout::Rgba, false, "RGB Alpha"),
-    ("R+G+B+A", Layout::Rgba, true, "RGB Alpha"),
+    ("RGB+A", Layout::Rgba, false, "RGBA"),
+    ("R+G+B+A", Layout::Rgba, true, "RGBA"),
 ];
 /// What a new output map's file name starts with, so each texture set (and mesh) writes a file
-/// of its own; the reference's row name follows it
+/// of its own; the layout's name follows it
 const NEW_MAP_PREFIX: &str = "$mesh_$textureSet_";
 
 /// The swatch right-click menu's constants: (label, value)
@@ -392,8 +392,8 @@ pub fn select(app: &mut TextureCraftApp, name: String) {
 pub(crate) fn naming_pattern(ui: &mut Ui) {
     let tk = Tokens::get(ui.ctx());
     ui.label(RichText::new(ic::INFO).color(tk.text_dim)).on_hover_ui(|ui| {
-        ui.label(tr("Select the naming pattern used to display the input maps on this page."));
-        ui.label(tr("Some input maps (channels) may be named differently depending on the shader used as a Texture Set."));
+        ui.label(tr("Choose how the input maps are named in this editor."));
+        ui.label(tr("The active texture set’s shader can affect the available map names."));
     });
     egui::ComboBox::from_id_salt("exp_naming").width(NAMING_PATTERN_WIDTH_POINTS).selected_text(NAMING_PATTERNS[0]).show_ui(ui, |ui| {
         for p in NAMING_PATTERNS {
@@ -810,7 +810,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
             }
         });
     });
-    ui.label(RichText::new(tr("Drag and drop maps on output's channels to setup your export.")).color(tokens.text_dim));
+    ui.label(RichText::new(tr("Drop an input map onto a channel to assign it to that output.")).color(tokens.text_dim));
 
     // Count only maps that have sources in the current set
     if let Ok(names) = &preview {
@@ -1015,7 +1015,7 @@ fn grip(ui: &mut Ui, index: usize, count: usize, edit: &mut RowEdit) {
     }
 }
 
-/// The "$" button: the reference's file name variables, then TextureCraft's own ($channel)
+/// The "$" button: the file name variables in the reference's order, then $channel
 fn token_menu(ui: &mut Ui, file: &mut String) -> bool {
     let mut changed = false;
     let menu = ui.menu_button("$", |ui| {
@@ -1037,7 +1037,7 @@ fn token_menu(ui: &mut Ui, file: &mut String) -> bool {
             add(ui, token);
         }
     });
-    menu.response.on_hover_text(tr("Add expressions in the path that will be replaced during export"));
+    menu.response.on_hover_text(tr("Insert a variable"));
     changed
 }
 
@@ -1130,7 +1130,7 @@ fn swatch_targets(map: &MapSpec, split: bool) -> Vec<ChannelTarget> {
     targets
 }
 
-/// The letters on a swatch, as in the reference
+/// The letters on a swatch
 fn target_label(target: ChannelTarget) -> &'static str {
     match target {
         ChannelTarget::Rgb => "RGB",
@@ -1148,23 +1148,23 @@ fn source_of(map: &MapSpec, target: ChannelTarget) -> Option<&SourceRef> {
     map.channels.iter().find(|(d, _)| d == dest).map(|(_, s)| s)
 }
 
-/// The choices of "From <map>" in the reference order: "RGB Channels" only for a colour map on
+/// The choices of the drop popup ("Which part of <map>?"): "Red, green and blue" only for a colour map on
 /// the RGB swatch; None marks a choice TextureCraft cannot read yet (a map's gray or alpha)
 fn source_choices(source: &SourceRef, target: ChannelTarget) -> Vec<(&'static str, Option<SourcePick>)> {
     if source.components() != 3 {
-        return vec![(n_("Gray Channel"), Some(SourcePick::Component(0))), (n_("A Channel"), None)];
+        return vec![(n_("Gray value"), Some(SourcePick::Component(0))), (n_("Alpha channel"), None)];
     }
 
     let mut choices = Vec::new();
     if target == ChannelTarget::Rgb {
-        choices.push((n_("RGB Channels"), Some(SourcePick::AllRgb)));
+        choices.push((n_("Red, green and blue"), Some(SourcePick::AllRgb)));
     }
     choices.extend([
-        (n_("Gray Channel"), None),
-        (n_("R Channel"), Some(SourcePick::Component(0))),
-        (n_("G Channel"), Some(SourcePick::Component(1))),
-        (n_("B Channel"), Some(SourcePick::Component(2))),
-        (n_("A Channel"), None),
+        (n_("Gray value"), None),
+        (n_("Red channel"), Some(SourcePick::Component(0))),
+        (n_("Green channel"), Some(SourcePick::Component(1))),
+        (n_("Blue channel"), Some(SourcePick::Component(2))),
+        (n_("Alpha channel"), None),
     ]);
     choices
 }
@@ -1184,10 +1184,10 @@ fn apply_pick(map: &mut MapSpec, target: ChannelTarget, source: &SourceRef, pick
     }
 }
 
-/// The channel of the source a swatch reads, as the reference's swatch tooltip names it
+/// The part of its source a swatch reads, as its tooltip names it
 fn read_channel_name(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -> &'static str {
     if source.components() != 3 {
-        return n_("Grayscale");
+        return n_("gray value");
     }
 
     if target == ChannelTarget::Rgb && rgb_spread(map) {
@@ -1195,23 +1195,23 @@ fn read_channel_name(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -
     }
 
     match component_of(source) {
-        0 => n_("Red"),
-        1 => n_("Green"),
-        _ => n_("Blue"),
+        0 => n_("red channel"),
+        1 => n_("green channel"),
+        _ => n_("blue channel"),
     }
 }
 
-/// A swatch's tooltip in the reference's words: "Default black" or "Default white" when empty,
-/// else "<map> (<channel>)"; another constant (TextureCraft's own) gives its value
+/// A swatch's tooltip: "Empty (writes black)" ("Empty (writes white)" for alpha) when empty,
+/// else "<map>, <part>"; another constant (TextureCraft's own) gives its value
 fn swatch_tooltip(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -> String {
     let alpha = target == ChannelTarget::One(Dest::A);
     match source {
-        SourceRef::Constant(value) if alpha && (*value - CLEARED_ALPHA).abs() < f32::EPSILON => tr("Default white").to_string(),
-        SourceRef::Constant(value) if !alpha && (*value - CLEARED_VALUE).abs() < f32::EPSILON => tr("Default black").to_string(),
+        SourceRef::Constant(value) if alpha && (*value - CLEARED_ALPHA).abs() < f32::EPSILON => tr("Empty (writes white)").to_string(),
+        SourceRef::Constant(value) if !alpha && (*value - CLEARED_VALUE).abs() < f32::EPSILON => tr("Empty (writes black)").to_string(),
         SourceRef::Constant(value) => trf("Constant {value}", &[("value", &format!("{value:.2}"))]),
         _ => {
             let name = map_lists::name_of(source).map_or_else(String::new, |name| tr(name).to_string());
-            trf("{map} ({channel})", &[("map", &name), ("channel", &tr(read_channel_name(map, source, target)))])
+            trf("{map}, {channel}", &[("map", &name), ("channel", &tr(read_channel_name(map, source, target)))])
         }
     }
 }
@@ -1243,7 +1243,7 @@ fn swatch_bars(map: &MapSpec, source: &SourceRef, target: ChannelTarget, tokens:
 }
 
 /// An output map's channel swatches: drop targets for the map lists. A click opens Clear channel
-/// (and Split/Collapse RGB on R, G, B), a right click TextureCraft's own tools.
+/// (and Separate R, G and B on R, G, B), a right click TextureCraft's own tools.
 fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bool, edit: &mut RowEdit) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let mut changed = false;
@@ -1286,8 +1286,8 @@ fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bo
                 // Collapsing would drop maps that R, G and B read differently
                 let mut checked = shows_split;
                 let can_toggle = !shows_split || rgb_one_map(map);
-                let item = ui.add_enabled(can_toggle, egui::Checkbox::new(&mut checked, tr("Split/Collapse RGB")));
-                let item = item.on_disabled_hover_text(tr("R, G and B read different maps: clear two of them to collapse"));
+                let item = ui.add_enabled(can_toggle, egui::Checkbox::new(&mut checked, tr("Separate R, G and B")));
+                let item = item.on_disabled_hover_text(tr("R, G and B read different maps: clear two of them to join them"));
                 if item.changed() {
                     changed |= split_or_collapse(map, split, shows_split);
                 }
@@ -1381,7 +1381,7 @@ fn swatch(ui: &mut Ui, label: &str, name: &str, look: &SwatchLook) -> egui::Resp
     response
 }
 
-/// Clear channel: the swatch is empty again ("Default black", "Default white" for alpha), not
+/// Clear channel: the swatch is empty again ("Empty (writes black)", white for alpha), not
 /// inverted
 fn clear_channel(map: &mut MapSpec, target: ChannelTarget) {
     for (dest, source) in &mut map.channels {
@@ -1392,7 +1392,7 @@ fn clear_channel(map: &mut MapSpec, target: ChannelTarget) {
     map.inverted.retain(|dest| !target.dests().contains(dest));
 }
 
-/// Split/Collapse RGB: the RGB swatch splits into R, G and B; split ones that read one map collapse
+/// Separate R, G and B: the RGB swatch splits into R, G and B; split ones that read one map collapse
 /// into one RGB swatch reading that map's R, G and B. R, G and B reading different maps stay split,
 /// so no map is dropped. True when the map changed.
 fn split_or_collapse(map: &mut MapSpec, split: &mut bool, shows_split: bool) -> bool {
@@ -1419,7 +1419,7 @@ fn split_or_collapse(map: &mut MapSpec, split: &mut bool, shows_split: bool) -> 
     true
 }
 
-/// "From <map>": which channel of the dropped map the swatch reads; Escape or a click elsewhere
+/// The drop popup ("Which part of <map>?"): which channel of the dropped map the swatch reads; Escape or a click elsewhere
 /// assigns nothing. True when the map changed.
 fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [MapSpec]) -> bool {
     let Some(waiting) = pending.clone() else { return false };
@@ -1437,7 +1437,7 @@ fn source_channel_popup(ui: &Ui, pending: &mut Option<PendingDrop>, maps: &mut [
         .open(true)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.label(RichText::new(trf("From {map}", &[("map", &name)])).strong());
+            ui.label(RichText::new(trf("Which part of {map}?", &[("map", &name)])).strong());
             for (label, pick) in source_choices(&waiting.source, waiting.target) {
                 match pick {
                     Some(pick) => {
@@ -1642,19 +1642,19 @@ mod tests {
         let cleared = [(Dest::R, 0.0), (Dest::G, 0.0), (Dest::B, 0.0), (Dest::A, 1.0)].map(|(dest, value)| (dest, SourceRef::Constant(value)));
         assert_eq!(map.channels, cleared);
         assert!(map.inverted.is_empty(), "a cleared channel writes its default, not its inverse");
-        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(0.0), ChannelTarget::Rgb), "Default black");
-        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(1.0), ChannelTarget::One(Dest::A)), "Default white");
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(0.0), ChannelTarget::Rgb), "Empty (writes black)");
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(1.0), ChannelTarget::One(Dest::A)), "Empty (writes white)");
     }
 
     #[test]
-    fn the_from_popup_offers_the_reference_choices() {
+    fn the_drop_popup_offers_the_parts_of_the_map_the_swatch_can_take() {
         let offered = |source: &SourceRef, target| source_choices(source, target).into_iter().map(|(label, pick)| (label, pick.is_some())).collect::<Vec<_>>();
 
-        assert_eq!(offered(&ch(Channel::Metallic, 0), ChannelTarget::Rgb), [("Gray Channel", true), ("A Channel", false)]);
-        let color_on_gray = [("Gray Channel", false), ("R Channel", true), ("G Channel", true), ("B Channel", true), ("A Channel", false)];
+        assert_eq!(offered(&ch(Channel::Metallic, 0), ChannelTarget::Rgb), [("Gray value", true), ("Alpha channel", false)]);
+        let color_on_gray = [("Gray value", false), ("Red channel", true), ("Green channel", true), ("Blue channel", true), ("Alpha channel", false)];
         assert_eq!(offered(&ch(Channel::BaseColor, 0), ChannelTarget::One(Dest::L)), color_on_gray);
         let color_on_rgb = offered(&ch(Channel::BaseColor, 0), ChannelTarget::Rgb);
-        assert_eq!(color_on_rgb.first(), Some(&("RGB Channels", true)), "only the RGB swatch offers RGB Channels");
+        assert_eq!(color_on_rgb.first(), Some(&("Red, green and blue", true)), "only the RGB swatch offers all three");
         assert_eq!(color_on_rgb.get(1..), Some(color_on_gray.as_slice()));
     }
 
@@ -1664,18 +1664,18 @@ mod tests {
 
         apply_pick(&mut map, ChannelTarget::Rgb, &ch(Channel::BaseColor, 0), SourcePick::AllRgb);
         assert!(rgb_spread(&map));
-        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color (RGB)");
+        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color, RGB");
 
         apply_pick(&mut map, ChannelTarget::Rgb, &ch(Channel::BaseColor, 0), SourcePick::Component(0));
         assert_eq!(swatch_targets(&map, false), vec![ChannelTarget::Rgb], "R of one map in R, G and B stays one swatch");
-        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color (Red)");
+        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color, red channel");
     }
 
     #[test]
-    fn new_rows_take_the_reference_names_with_a_number_when_taken() {
+    fn new_rows_take_their_layout_name_with_a_number_when_taken() {
         let maps = vec![new_map(Layout::Rgb, "RGB"), new_map(Layout::Rgb, "RGB_1")];
 
-        assert_eq!(unique_file(&maps, "Grayscale"), "Grayscale");
+        assert_eq!(unique_file(&maps, "Gray"), "Gray");
         assert_eq!(unique_file(&maps, "RGB"), "RGB_2");
     }
 }
