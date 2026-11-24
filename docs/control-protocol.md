@@ -201,10 +201,6 @@ Scripted runs (agents, recordings, tests) can set `TEXTURECRAFT_NO_PREFS` (any v
 neither reads nor overwrites the user's saved layout and settings: it starts from the defaults and
 keeps its state in a throwaway file.
 
-<!-- coderabbit-ai-generated:v1 -->
-
-<!-- coderabbit-ai-generated-section:v1:9eb9ba791add81ff71576a041de5fb3745a488eaacd9f0e35c61a2c030841e97 -->
-
 | Method | Params | Result |
 |---|---|---|
 | `ping` | | `"pong"` |
@@ -227,8 +223,6 @@ keeps its state in a throwaway file.
 | `ui.resize` | `{width, height}` | Sets the window's inner size in points (640–7680), leaving maximized state; for recordings and screenshots at a fixed size |
 | `debug.paintTest` | `{from: [x, y], to: [x, y], frames?: 120}` | Paints a straight stroke through the real frame loop (viewport pixels, one point per frame) for performance work |
 | `debug.frames` | | Frame timing since the last call (then cleared): `{frames, intervalMs, uiMs, syncMs, logicMs}` each `{avg, p95, max}`; `syncMs` is compositing plus display tile conversion, `logicMs` input, control requests and scripted strokes before the UI is built; `worst` breaks down the slowest frame; `strokeEnd` lists the frame that committed a `debug.paintTest` stroke and the one after it (null without one) |
-
-<!-- /coderabbit-ai-generated:v1 -->
 
 The empty-project menus keep Recent Projects openable with Clear disabled when the list is empty.
 `ui.recent.clear` clears that list. More Save Options is disabled until a project is open.
