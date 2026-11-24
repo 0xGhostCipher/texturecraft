@@ -171,6 +171,19 @@ pub(crate) fn read_saved_brush(_: &std::path::Path) -> Option<BrushSettings> {
     None
 }
 
+/// What a generator preview depends on: its settings and which images it reads
+fn settings_hash(generator: &Generator, images: &[(String, Arc<ImageRes>)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(generator).unwrap_or_default().hash(&mut hasher);
+    for (name, image) in images {
+        name.hash(&mut hasher);
+        Arc::as_ptr(image).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use texturecraft_engine::filter_lib::FILTERS;
@@ -246,17 +259,4 @@ mod tests {
         let missing = ShelfPreview::SavedBrush { path: PathBuf::from("brush.tcbrush"), settings: Some(settings), image: None };
         assert!(missing.image(64).is_none());
     }
-}
-
-/// What a generator preview depends on: its settings and which images it reads
-fn settings_hash(generator: &Generator, images: &[(String, Arc<ImageRes>)]) -> u64 {
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    serde_json::to_string(generator).unwrap_or_default().hash(&mut hasher);
-    for (name, image) in images {
-        name.hash(&mut hasher);
-        Arc::as_ptr(image).hash(&mut hasher);
-    }
-    hasher.finish()
 }
