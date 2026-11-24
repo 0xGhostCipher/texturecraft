@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 craft-usd.workspace = true
 # ICC v2 serialization prerequisite: craft-libs#1735; app colour policy stays local.
-craft-cms-icc-v2 = { package = "craft-cms", version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "272a095b61257917693da3d09f2f8ecccd7f0295" }
+craft-cms-icc-v2 = { package = "craft-cms", version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
 craft-materialx = { workspace = true }
 craft-mesh = { workspace = true }
 craft-mcmat = { workspace = true }
@@ -26,7 +26,7 @@ image = { workspace = true }
 png = "0.18"
 bytemuck = { workspace = true, features = ["extern_crate_alloc"] }
 craft-image-codecs = { workspace = true }
-craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "b130ac1fa44f923c3024884ab8ceb5ccdb88f15f" }
+craft-psd = { git = "https://github.com/aiongg/craft-libs", rev = "cd87dc61f77d8470b2e9e6a1236f9a84ee0a64de" }
 flate2 = { workspace = true }
 half = { workspace = true }
 quick-xml = { workspace = true }
