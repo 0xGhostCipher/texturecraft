@@ -52,6 +52,8 @@ const LIST_ROW_HEIGHT: f32 = 24.0;
 const LIST_ROW_INDENT: f32 = 16.0;
 /// Width of the bottom bar's buttons, the same for all as in the reference
 const FOOTER_BUTTON_WIDTH: f32 = 126.0;
+/// Width of the keyboard focus outline on the window's drawn controls
+const FOCUS_OUTLINE_WIDTH: f32 = 2.0;
 
 /// The output sizes the Size list offers, in texels per side
 pub(crate) const SIZES: [u32; 7] = [128, 256, 512, 1024, 2048, 4096, 8192];
@@ -623,6 +625,15 @@ fn selected_texture_count(app: &mut TextureCraftApp) -> usize {
     count
 }
 
+/// The keyboard focus outline of a drawn control: inside `response`'s rect, in the strong text
+/// colour, so it differs from the accent of the selected one and the fill of the hovered one
+fn paint_focus(ui: &Ui, response: &egui::Response) {
+    if response.has_focus() {
+        let stroke = egui::Stroke::new(FOCUS_OUTLINE_WIDTH, Tokens::get(ui.ctx()).text_strong);
+        ui.painter().rect_stroke(response.rect, 0.0, stroke, egui::StrokeKind::Inside);
+    }
+}
+
 /// A window tab: a box, lighter and with an accent line on top when open
 fn tab_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     let tokens = Tokens::get(ui.ctx());
@@ -642,6 +653,7 @@ fn tab_button(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
         painter.rect_filled(egui::Rect::from_min_size(rect.min, vec2(rect.width(), TAB_ACCENT_HEIGHT)), 0.0, tokens.accent);
     }
     painter.galley(rect.min + TAB_PADDING, galley, color);
+    paint_focus(ui, &response);
     response
 }
 
@@ -889,6 +901,7 @@ fn list_row(ui: &mut Ui, text: &str, selected: bool) -> egui::Response {
     }
     let font = semibold(egui::TextStyle::Body.resolve(ui.style()).size);
     painter.text(rect.left_center() + vec2(LIST_ROW_INDENT, 0.0), egui::Align2::LEFT_CENTER, text, font, tokens.text_strong);
+    paint_focus(ui, &response);
     response
 }
 
@@ -1108,6 +1121,7 @@ fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui) {
     let glyph_color = if response.hovered() { tk.text_strong } else { tk.text };
     ui.painter().rect_filled(strip, 0.0, tk.chrome);
     ui.painter().text(strip.center(), egui::Align2::CENTER_CENTER, glyph, egui::TextStyle::Body.resolve(ui.style()), glyph_color);
+    paint_focus(ui, &response);
     let response = response.on_hover_text(tooltip);
     if !hidden && (response.hovered() || response.dragged()) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);

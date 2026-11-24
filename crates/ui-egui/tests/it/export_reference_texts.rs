@@ -108,3 +108,32 @@ fn the_bottom_bar_buttons_share_one_width() {
 
     assert!(widths.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 1.0), "{widths:?}");
 }
+
+/// The Size list of the Global settings page
+fn size_list<'a>(h: &'a Harness<'_, TextureCraftApp>) -> egui_kittest::Node<'a> {
+    h.get_all_by_role(egui::Role::ComboBox)
+        .find(|list| list.accesskit_node().value().as_deref() == Some("Based on each Texture Set's size"))
+        .expect("the Size list")
+}
+
+#[test]
+fn on_a_short_narrow_screen_the_settings_scroll_and_the_footer_stays_in_view() {
+    let screen = egui::vec2(800.0, 480.0);
+    let mut h = harness(screen);
+    for label in ["Cancel", "Export"] {
+        let rect = window_button_rect(&h, label, screen.x);
+        assert!(rect.max.x <= screen.x && rect.max.y <= screen.y, "{label} {rect:?}");
+    }
+    let export = window_button_rect(&h, "Export", screen.x);
+
+    // The last setting and the right end of the value lists scroll into the window, above the footer
+    h.get_by_label("Color space").scroll_to_me();
+    h.run_steps(4);
+    let color_space = h.get_by_label("Color space").rect();
+    assert!(color_space.max.y < export.min.y, "Color space {color_space:?}, footer {export:?}");
+
+    size_list(&h).scroll_to_me();
+    h.run_steps(4);
+    let size = size_list(&h).rect();
+    assert!(size.max.x <= export.max.x, "Size {size:?}, window right end {}", export.max.x);
+}
