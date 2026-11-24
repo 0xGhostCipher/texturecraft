@@ -87,9 +87,13 @@ impl TextureCraftApp {
             }
         }
 
-        // A close that the save could not finish asks about the changes it left
+        // A close that the save could not finish asks about the changes it left, once an open stroke ends
         if job.quit_after_save && !quitting {
-            crate::windows::ask_to_save(self, Unsaved::Quit);
+            if self.session.stroke_active() {
+                self.quit_after_stroke = true;
+            } else {
+                crate::windows::ask_to_save(self, Unsaved::Quit);
+            }
         }
         if let Some(toast) = self.toasts.last_mut() {
             toast.announce = true;
@@ -143,6 +147,11 @@ mod tests {
     /// Hands the worker's result over and reports whether the app asked to close in the next frames
     fn finish(h: &mut Harness<'_, TextureCraftApp>, task: SaveTask, sender: &mpsc::Sender<Result<SaveOutput>>) -> bool {
         sender.send(task.run(None)).unwrap();
+        sends_close(h)
+    }
+
+    /// Whether the app asks to close in the next frames
+    fn sends_close(h: &mut Harness<'_, TextureCraftApp>) -> bool {
         (0..3).any(|_| {
             h.step();
             h.output().viewport_output.get(&ViewportId::ROOT).is_some_and(|v| v.commands.contains(&ViewportCommand::Close))
@@ -243,5 +252,66 @@ mod tests {
         assert!(h.state().session.modified);
         assert_eq!(h.state().ui.windows.unsaved, Some(Unsaved::Quit), "the close asks about the edit instead of being dropped");
         assert!(prompt_is_usable(&h));
+    }
+
+    /// A clean project closed during its save, with paint still held down when the save returns
+    fn stroke_open_when_the_save_returns(test: &str) -> Harness<'static, TextureCraftApp> {
+        let file = temp_file(test);
+        let mut h = harness();
+        h.state_mut().session.modified = false;
+        h.state_mut().session.path = Some(file.display().to_string());
+        let (task, sender) = start_held_save(&mut h, &file, true);
+        request_close(&mut h);
+        h.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
+
+        let closed = finish(&mut h, task, &sender);
+
+        assert!(!closed, "the open stroke may still change the project");
+        assert!(h.state().session.stroke_active());
+        assert!(h.state().ui.windows.unsaved.is_none());
+        h
+    }
+
+    #[test]
+    fn a_stroke_open_when_the_save_returns_asks_once_it_is_painted() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut h = stroke_open_when_the_save_returns("stroke-painted");
+
+        h.state_mut().session.end_stroke().unwrap();
+        let closed = sends_close(&mut h);
+
+        assert!(!closed);
+        assert!(h.state().session.modified);
+        assert_eq!(h.state().ui.windows.unsaved, Some(Unsaved::Quit), "the close asks about the painted stroke");
+    }
+
+    #[test]
+    fn a_stroke_open_when_the_save_returns_quits_once_it_is_canceled() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut h = stroke_open_when_the_save_returns("stroke-canceled");
+
+        h.state_mut().session.cancel_stroke();
+        let closed = sends_close(&mut h);
+
+        assert!(closed, "nothing is left to save, so the close goes on");
+        assert!(h.state().ui.windows.unsaved.is_none());
+    }
+
+    #[test]
+    fn dismissing_the_prompt_during_a_save_cancels_the_quit() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file = temp_file("close-then-dismissed");
+        let mut h = harness();
+        h.state_mut().session.path = Some(file.display().to_string());
+        let (task, sender) = start_held_save(&mut h, &file, true);
+        request_close(&mut h);
+        h.get_by_label("Close window").click();
+        h.run_steps(2);
+        assert!(h.state().ui.windows.unsaved.is_none(), "the prompt is dismissed while the save runs");
+
+        let closed = finish(&mut h, task, &sender);
+
+        assert!(!closed, "a dismissed prompt keeps the app open");
+        assert!(!h.state().session.modified);
     }
 }
