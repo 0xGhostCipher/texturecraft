@@ -391,9 +391,16 @@ impl Dock {
 pub(crate) struct LiveDock {
     shown: Option<Arc<Workspace>>,
     specs: Tracked<DockSpecs>,
+    /// The panel whose floating window takes over the held press in the next pass, with the grab point inside the window.
+    continue_move: Option<(Panel, egui::Vec2)>,
 }
 
 impl LiveDock {
+    /// Asks the next pass's dock to let the window holding `panel` follow the held pointer from `grab`.
+    pub(crate) fn hand_over(&mut self, panel: Panel, grab: egui::Vec2) {
+        self.continue_move = Some((panel, grab));
+    }
+
     /// The `Arc` the dock shows for `workspace`: the last one while the arrangement is the same,
     /// so an idle pass keeps the workspace's revision and the dock reads no spec.
     fn shown(&mut self, workspace: &Workspace) -> Arc<Workspace> {
@@ -485,13 +492,18 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     let shown = app.docks.shown(&app.ui.dock.workspace);
     // The specs leave the app while its panels borrow it, and come back with their revision.
     let specs = std::mem::take(&mut app.docks.specs);
+    let hand_over = app.docks.continue_move.take();
     // Panels arrange in a split tree around the viewport; floating title bars only move windows.
     // Each closable tab has its close button, as each group header had one for its shown panel.
     let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false).tab_close_buttons(true);
     let output = {
         let tokens = Tokens::get(&context);
         let mut panels = Panels { app: &mut *app, tokens, layout: shown.layout().clone() };
-        DockArea::new("Panels", Bind::given(Arc::clone(&shown)), &specs, &mut panels, config).show(ui)
+        let mut area = DockArea::new("Panels", Bind::given(Arc::clone(&shown)), &specs, &mut panels, config);
+        if let Some(hand_over) = hand_over {
+            area = area.continue_move(hand_over);
+        }
+        area.show(ui)
     };
     app.docks.specs = specs;
 

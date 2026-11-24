@@ -56,9 +56,9 @@ impl Dispatcher {
             match &event {
                 Event::Key { pressed: true, repeat, .. } => {
                     let key = key_input(&event, platform, input);
-                    if let Some(meant) = self.layout.resolve(&key) {
+                    if self.layout.resolve(&key).is_some() {
                         let press = Press { input: &key, repeat: *repeat, now, active: &Active::NONE, outer: &[] };
-                        let hit = self.matcher.press(&self.layout, keymap, &press).filter(|hit| !delete_stand_in(hit, meant)).filter(&mut accept);
+                        let hit = self.matcher.press(&self.layout, keymap, &press).filter(&mut accept);
                         if let Some((j, _)) = causes[i] {
                             caused_taken[j] = Some(hit.is_some());
                         }
@@ -109,13 +109,6 @@ impl Dispatcher {
             }
         }
     }
-}
-
-/// Whether `hit` ran a Delete binding for a Backspace press or the other way round: `Matcher` lets the two keys stand
-/// for each other, while TextureCraft binds them apart (Delete removes the selected layer, Backspace a Path tool point).
-fn delete_stand_in(hit: &Hit, meant: craft_keymap::Chord) -> bool {
-    let twins = |a: Key, b: Key| matches!((a, b), (Key::Delete, Key::Backspace) | (Key::Backspace, Key::Delete));
-    twins(meant.key, hit.trigger.chord.key)
 }
 
 /// A press as [`KeyInput::from_egui`] reads it, with the Latin layout's character `input` reports
@@ -244,21 +237,6 @@ mod tests {
         let hits = Dispatcher::default().dispatch_filtered(&mut input, &keymap(), |_| true);
         assert_eq!(hits.iter().map(|hit| hit.command.id.as_str()).collect::<Vec<_>>(), ["tool.marquee"]);
         assert_eq!(input.events, [press(EguiKey::Q, egui::Modifiers::NONE), Event::Text("q".into())]);
-    }
-
-    /// Backspace runs no Delete binding: TextureCraft binds the two keys apart.
-    #[test]
-    fn backspace_does_not_run_a_delete_binding() {
-        let def = CommandDef::new("layer.remove", "layer.remove", Scope::app()).with_default(Binding::parse("Delete").unwrap());
-        let keymap = Keymap::new(vec![def], Scopes::new(), Platform::Windows);
-        let mut input = InputState::default();
-        input.events = vec![press(EguiKey::Backspace, egui::Modifiers::NONE)];
-        assert!(Dispatcher::default().dispatch_filtered(&mut input, &keymap, |_| true).is_empty());
-        assert_eq!(input.events, [press(EguiKey::Backspace, egui::Modifiers::NONE)], "the press stays for the Path tool");
-
-        input.events = vec![press(EguiKey::Delete, egui::Modifiers::NONE)];
-        let hits = Dispatcher::default().dispatch_filtered(&mut input, &keymap, |_| true);
-        assert_eq!(hits.iter().map(|hit| hit.command.id.as_str()).collect::<Vec<_>>(), ["layer.remove"]);
     }
 
     /// The desktop's Copy event runs the copy command; declined, it stays for egui.

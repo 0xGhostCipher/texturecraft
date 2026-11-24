@@ -161,6 +161,7 @@ impl TextureCraftApp {
 
             let paths = match answer {
                 Answer::Paths(paths) => paths,
+                Answer::Saved { path, .. } => vec![path],
                 Answer::Unavailable(why) => {
                     self.toast(trf("The file dialog couldn't be shown: {error}", &[("error", &why)]), true);
                     Vec::new()

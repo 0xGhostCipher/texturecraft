@@ -214,7 +214,7 @@ fn overrides(keymap: &Keymap) -> Overrides {
 
 /// The keymap with `keymap`'s shortcuts for `platform`.
 fn resolved(keymap: &Keymap, platform: Platform) -> craft_keymap::Keymap {
-    craft_keymap::Keymap::new(catalog(), Scopes::new(), platform).with_overrides(overrides(keymap))
+    craft_keymap::Keymap::new(catalog(), Scopes::new(), platform).with_overrides(overrides(keymap)).with_delete_keys(craft_keymap::DeleteKeys::Apart)
 }
 
 /// The resolved keymap and the dispatcher that runs it against each frame's keys.

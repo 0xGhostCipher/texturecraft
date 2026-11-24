@@ -186,7 +186,12 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     } else if let Some(title) = dragged_from {
         // The floating window opens where the popup was
         app.ui.rail_panel = None;
-        app.ui.dock.float_at(panel, shown.unwrap_or(title));
+        let window = shown.unwrap_or(title);
+        app.ui.dock.float_at(panel, window);
+        // The window takes over the held press in the next pass, so the drag carries on and docks where it is released
+        if let Some(pointer) = ctx.input(|input| input.pointer.latest_pos()) {
+            app.docks.hand_over(panel, pointer - window.min);
+        }
     }
 }
 
