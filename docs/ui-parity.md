@@ -353,20 +353,22 @@ that numbers hide once a tile is under 40 points on screen.
   ("Bit depth"; "8 bits + dithering" greyed, templates do not keep it) lists, duplicate and "×".
   Create names new rows "Gray", "RGB" and "RGBA" after "$mesh_$textureSet_", so the
   texture sets of one export do not write the same file, with "_1", "_2" when taken. An
-  empty swatch's tooltip reads "Empty (writes black)" ("Empty (writes white)" for A), a filled one
+  empty swatch's tooltip reads "Empty (writes black)" ("Empty (writes white)" for A, the other
+  way round when the swatch is inverted), a filled one
   "<map>, <part>", e.g. "Base color, red channel" or "Metallic, gray value". Dropping a map on a
   swatch asks "Which part of <map>?": a gray map offers *Gray value* and *Alpha channel*, a colour map
   *Gray value*, *Red channel*, *Green channel*, *Blue channel* and *Alpha channel*, on the RGB swatch first *Red, green and blue*; Escape assigns
   nothing. TextureCraft cannot read a map's gray or alpha yet, so those choices are greyed. A
   click on a swatch offers *Clear channel*, on RGB, R, G and B also *Separate R, G and B*; R, G
-  and B that read different maps cannot be joined (the item is greyed). The right side has the
+  and B that read different maps or are inverted differently cannot be joined (the item is greyed). The right side has the
   *Input maps* pane in the OpenPBR parameter groups (Base ... Geometry, then Other for
   TextureCraft's channels outside OpenPBR), each map TextureCraft has under its own name,
   and a pane with *Mesh maps* above *Converted maps* (highlighted). Maps the selected template
   uses get a square in their swatch's colour. OpenPBR inputs TextureCraft has no channel for
   are greyed and cannot be dragged; *Converted maps* lists the maps TextureCraft computes. TextureCraft keeps
   some things the reference does not have, out of the way: Import and Export of template files
-  at the end of a preset's right-click menu; a swatch's right-click menu with Invert (an inverted
+  at the end of a preset's right-click menu and in a *Template actions* button (three dots, left of
+  copy on the *Presets* row) that the keyboard reaches, with Import focused when it opens; a swatch's right-click menu with Invert (an inverted
   swatch has a corner mark), Black, Gray 50%, White, the constant's value and the map's layout
   (RGB, RGBA, Gray, Gray + A); *Move up* and *Move down* in the grip's right-click menu and the
   arrow keys on a focused grip; the planned file name in the file name's tooltip; and

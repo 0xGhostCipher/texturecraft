@@ -8,6 +8,7 @@ use serde_json::json;
 use texturecraft_engine::core::Channel;
 use texturecraft_engine::formats::{Dest, SourceRef};
 use texturecraft_ui_egui::TextureCraftApp;
+use texturecraft_ui_egui::file_dialogs::Answer;
 use texturecraft_ui_egui::state::{MapExport, SetExport};
 
 #[path = "output_template/template_library.rs"]
@@ -375,6 +376,44 @@ fn the_presets_row_holds_copy_minus_and_plus_without_tooltips() {
     assert!(h.query_by_label("Export the selected template (.json)").is_some());
 }
 
+/// Press `key` with no pointer event
+fn press(h: &mut Harness<'_, TextureCraftApp>, key: egui::Key) {
+    h.key_press(key);
+    h.run_steps(4);
+}
+
+#[test]
+fn import_and_export_are_reachable_from_the_keyboard_alone() {
+    let library = TemplateLibrary::new("keyboard-actions");
+    let mut h = harness(&library);
+    let file = library.0.join("exported_template.json");
+    let answer = file.clone();
+    h.state_mut().file_dialogs.set_override(Some(Box::new(move |_| Answer::Paths(vec![answer.clone()]))));
+    let templates_before = h.state().session.export_presets.list.len();
+
+    // The actions menu is a named button the keyboard focus reaches
+    h.get_by_role_and_label(egui::Role::Button, "Template actions").focus();
+    h.run_steps(2);
+    press(&mut h, egui::Key::Enter);
+    let import = h.get_by_label("Import a template (.json)");
+    assert!(import.accesskit_node().is_focused(), "the menu opens with Import focused");
+
+    press(&mut h, egui::Key::Tab);
+    assert!(h.get_by_label("Export the selected template (.json)").accesskit_node().is_focused(), "Tab moves on to Export");
+    press(&mut h, egui::Key::Enter);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("\"Mine\""), "Export wrote the selected template");
+
+    assert!(h.query_by_label("Import a template (.json)").is_none(), "the menu closes after the action");
+
+    h.get_by_role_and_label(egui::Role::Button, "Template actions").focus();
+    h.run_steps(2);
+    press(&mut h, egui::Key::Enter);
+    press(&mut h, egui::Key::Enter);
+    h.run_steps(4);
+    assert_eq!(h.state().session.export_presets.list.len(), templates_before + 1, "Import added the exported template");
+    assert!(h.state().toasts.iter().any(|toast| toast.text.starts_with("Imported template")));
+}
+
 #[test]
 fn the_map_lists_stand_in_three_panes_with_their_groups_and_names() {
     let library = TemplateLibrary::new("panes");
@@ -523,7 +562,7 @@ fn a_click_on_a_channel_offers_clear_and_split_or_collapse_and_a_right_click_inv
     invert.click();
     h.run_steps(4);
     assert_eq!(h.state().session.export_preset("Mine").unwrap().maps[last].inverted, vec![Dest::G]);
-    assert!(h.query_all_by_label("G: Empty (writes black), inverted").next().is_some(), "the swatch says it is inverted");
+    assert!(h.query_all_by_label("G: Empty (writes white), inverted").next().is_some(), "the swatch says it is inverted");
 }
 
 #[test]

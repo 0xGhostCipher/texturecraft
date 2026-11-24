@@ -424,6 +424,11 @@ fn preset_list(app: &mut TextureCraftApp, ui: &mut Ui, names: &[String]) -> Opti
             if icon_button_without_tooltip(ui, ic::COPY, tr("Duplicate the selected template"), false, ICON_POINTS).clicked() {
                 act = Some(ListAction::Duplicate(sel.clone()));
             }
+
+            // TextureCraft's template files: a focusable menu, as the row's right click is pointer only
+            let actions = icon_button_without_tooltip(ui, ic::DOTS_THREE, tr("Template actions"), false, ICON_POINTS);
+            let opened_now = actions.clicked();
+            egui::Popup::menu(&actions).id(ui.make_persistent_id("exp_template_actions")).show(|ui| template_file_items(ui, &mut act, true, opened_now));
         });
     });
     ui.add_space(2.0);
@@ -465,18 +470,31 @@ fn preset_list(app: &mut TextureCraftApp, ui: &mut Ui, names: &[String]) -> Opti
 
                         // TextureCraft's template files, after the reference's entries
                         ui.separator();
-                        if ui.button(tr("Import a template (.json)")).clicked() {
-                            act = Some(ListAction::Import);
-                        }
-                        if *name == sel && ui.button(tr("Export the selected template (.json)")).clicked() {
-                            act = Some(ListAction::Export);
-                        }
+                        template_file_items(ui, &mut act, *name == sel, false);
                     });
                 }
             }
         }
     });
     act
+}
+
+/// Import, and Export of the selected template when `with_export`; `focus_first` moves the keyboard
+/// focus to Import so a menu opened from the keyboard can be used without the pointer. A key press
+/// does not close a menu like a click does, so the menu closes itself
+fn template_file_items(ui: &mut Ui, act: &mut Option<ListAction>, with_export: bool, focus_first: bool) {
+    let import = ui.button(tr("Import a template (.json)"));
+    if focus_first {
+        import.request_focus();
+    }
+    if import.clicked() {
+        *act = Some(ListAction::Import);
+        ui.close();
+    }
+    if with_export && ui.button(tr("Export the selected template (.json)")).clicked() {
+        *act = Some(ListAction::Export);
+        ui.close();
+    }
 }
 
 /// A Presets list row: a document icon and the name (cut with "…" when long), the selected one in
@@ -1198,13 +1216,21 @@ fn read_channel_name(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -
     }
 }
 
-/// A swatch's tooltip: "Empty (writes black)" ("Empty (writes white)" for alpha) when empty,
-/// else "<map>, <part>"; another constant (TextureCraft's own) gives its value
-fn swatch_tooltip(map: &MapSpec, source: &SourceRef, target: ChannelTarget) -> String {
+/// A swatch's tooltip: "Empty (writes black)" ("Empty (writes white)" for alpha) when empty, the
+/// other way round when the swatch is inverted, else "<map>, <part>"; another constant
+/// (TextureCraft's own) gives its value
+fn swatch_tooltip(map: &MapSpec, source: &SourceRef, target: ChannelTarget, inverted: bool) -> String {
     let alpha = target == ChannelTarget::One(Dest::A);
+    let cleared = if alpha { CLEARED_ALPHA } else { CLEARED_VALUE };
+    let written = if inverted { 1.0 - cleared } else { cleared };
     match source {
-        SourceRef::Constant(value) if alpha && (*value - CLEARED_ALPHA).abs() < f32::EPSILON => tr("Empty (writes white)").to_string(),
-        SourceRef::Constant(value) if !alpha && (*value - CLEARED_VALUE).abs() < f32::EPSILON => tr("Empty (writes black)").to_string(),
+        SourceRef::Constant(value) if (*value - cleared).abs() < f32::EPSILON => {
+            if written > 0.5 {
+                tr("Empty (writes white)").to_string()
+            } else {
+                tr("Empty (writes black)").to_string()
+            }
+        }
         SourceRef::Constant(value) => trf("Constant {value}", &[("value", &format!("{value:.2}"))]),
         _ => {
             let name = map_lists::name_of(source).map_or_else(String::new, |name| tr(name).to_string());
@@ -1250,7 +1276,7 @@ fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bo
 
         let label = target_label(target);
         let inverted = target.dests().iter().all(|dest| map.inverted.contains(dest));
-        let tooltip = swatch_tooltip(map, &source, target);
+        let tooltip = swatch_tooltip(map, &source, target, inverted);
         let mut name = trf("{channel}: {tooltip}", &[("channel", &label), ("tooltip", &tooltip)]);
         if inverted {
             name = trf("{swatch}, inverted", &[("swatch", &name)]);
@@ -1284,7 +1310,7 @@ fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bo
                 let mut checked = shows_split;
                 let can_toggle = !shows_split || rgb_one_map(map);
                 let item = ui.add_enabled(can_toggle, egui::Checkbox::new(&mut checked, tr("Separate R, G and B")));
-                let item = item.on_disabled_hover_text(tr("R, G and B read different maps: clear two of them to join them"));
+                let item = item.on_disabled_hover_text(tr("R, G and B can only be joined when they read the same map and are inverted alike"));
                 if item.changed() {
                     changed |= split_or_collapse(map, split, shows_split);
                 }
@@ -1639,8 +1665,14 @@ mod tests {
         let cleared = [(Dest::R, 0.0), (Dest::G, 0.0), (Dest::B, 0.0), (Dest::A, 1.0)].map(|(dest, value)| (dest, SourceRef::Constant(value)));
         assert_eq!(map.channels, cleared);
         assert!(map.inverted.is_empty(), "a cleared channel writes its default, not its inverse");
-        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(0.0), ChannelTarget::Rgb), "Empty (writes black)");
-        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(1.0), ChannelTarget::One(Dest::A)), "Empty (writes white)");
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(0.0), ChannelTarget::Rgb, false), "Empty (writes black)");
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(1.0), ChannelTarget::One(Dest::A), false), "Empty (writes white)");
+        assert_eq!(
+            swatch_tooltip(&map, &SourceRef::Constant(0.0), ChannelTarget::Rgb, true),
+            "Empty (writes white)",
+            "inverted, the empty colour writes its inverse"
+        );
+        assert_eq!(swatch_tooltip(&map, &SourceRef::Constant(1.0), ChannelTarget::One(Dest::A), true), "Empty (writes black)");
     }
 
     #[test]
@@ -1661,11 +1693,11 @@ mod tests {
 
         apply_pick(&mut map, ChannelTarget::Rgb, &ch(Channel::BaseColor, 0), SourcePick::AllRgb);
         assert!(rgb_spread(&map));
-        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color, RGB");
+        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb, false), "Base color, RGB");
 
         apply_pick(&mut map, ChannelTarget::Rgb, &ch(Channel::BaseColor, 0), SourcePick::Component(0));
         assert_eq!(swatch_targets(&map, false), vec![ChannelTarget::Rgb], "R of one map in R, G and B stays one swatch");
-        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb), "Base color, red channel");
+        assert_eq!(swatch_tooltip(&map, &ch(Channel::BaseColor, 0), ChannelTarget::Rgb, false), "Base color, red channel");
     }
 
     #[test]
