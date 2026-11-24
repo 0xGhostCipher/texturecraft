@@ -357,6 +357,10 @@ pub struct ExportUi {
     /// "" (by file format: sRGB, or linear for float files), or a colour space name.
     #[serde(default)]
     pub color_space: String,
+    /// Also write `<mesh>.usd`: the mesh and a material per texture set that reads the exported
+    /// textures (`usdAsset` of `file.exportTextures`).
+    #[serde(default)]
+    pub usd_asset: bool,
     /// Also write an OpenPBR MaterialX (`.mtlx`) file per texture set (`materialX` of
     /// `file.exportTextures`).
     #[serde(default)]
@@ -422,6 +426,7 @@ impl Default for ExportUi {
             size: 0,
             normal_format: String::new(),
             color_space: String::new(),
+            usd_asset: false,
             materialx: false,
             skip: Vec::new(),
             sets: Default::default(),

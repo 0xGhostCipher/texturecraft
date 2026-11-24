@@ -248,7 +248,7 @@ fn start_export(app: &mut TextureCraftApp) {
         return;
     }
 
-    e.job = Some(crate::state::ExportJob { total: pending.len(), pending, preview, directory: dir, ..Default::default() });
+    e.job = Some(crate::state::ExportJob { total: pending.len(), pending, preview, directory: dir, usd_asset: e.usd_asset, ..Default::default() });
 }
 
 /// Two texture sets that would write a file of the same name (ignoring case, as Windows and macOS
@@ -339,16 +339,31 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         params["reservedNames"] = job.written.iter().chain(&job.material_udim_patterns).map(|name| json!(name)).collect();
     }
 
+    // The last command writes the USD asset from the params of every command, so a canceled or failed export writes none
+    if let Some(job) = app.ui.export.job.as_mut().filter(|job| job.usd_asset) {
+        job.sent.push(params.clone());
+        if job.pending.is_empty() {
+            params["usdAsset"] = json!(job.sent);
+        }
+    }
+
     let Some(response) = app.run("file.exportTextures", params) else {
         app.ui.export.job = None;
         return;
     };
 
+    // A USD asset that could not be written also shows as an error toast
+    let usd_failure = response_strings(&response, "warnings").find(|warning| warning.starts_with(texturecraft_engine::file_cmds::USD_ASSET_FAILED));
+    if let Some(warning) = usd_failure {
+        app.toast(warning.to_string(), true);
+    }
+
     let files: Vec<String> = response_strings(&response, "files")
         .map(|file| std::path::Path::new(file).file_name().map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned()))
         .collect();
     let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
-    for file in &files {
+    // The USD asset is no texture: it stays in the list of written files only
+    for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd")) {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
         lines.push(set());
         lines.push(ConsoleLine::Step(trf("Saved texture {file}", &[("file", &stem)])));
@@ -676,6 +691,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
             settings.dilation,
             settings.normal_format,
             settings.color_space,
+            settings.usd_asset,
             settings.materialx,
         ) = (
             defaults.dir,
@@ -687,6 +703,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
             defaults.dilation,
             defaults.normal_format,
             defaults.color_space,
+            defaults.usd_asset,
             defaults.materialx,
         );
         crate::export_templates::select(app, defaults.preset);
@@ -731,15 +748,20 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
         ui.end_row();
     });
 
-    // Unavailable export controls stay disabled
+    // The browser downloads the textures only, so it has no USD asset to add
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.checkbox(&mut app.ui.export.usd_asset, tr("Export USD asset")).on_hover_text(tr("Package the mesh, materials and textures together as USD"));
+    #[cfg(target_arch = "wasm32")]
     unavailable_checkbox(ui, tr("Export USD asset"), tr("Package the mesh, materials and textures together as USD"));
-    unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
 
     // The browser downloads the textures only
     #[cfg(not(target_arch = "wasm32"))]
     ui.checkbox(&mut app.ui.export.materialx, tr("Export MaterialX"));
     #[cfg(target_arch = "wasm32")]
     crate::unavailable::checkbox(ui, false, tr("Export MaterialX"));
+
+    // Unavailable export controls stay disabled
+    unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
     ui.add_space(8.0);
     egui::Grid::new("exp_grid_more").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
         let settings = &mut app.ui.export;
@@ -1145,6 +1167,17 @@ fn follow_texture_sets(app: &mut TextureCraftApp) {
             for set in &mut job.preview {
                 set.index = set.index.and_then(moved);
             }
+
+            // The sets already written follow too (the USD asset reads their params); a removed one leaves
+            job.sent = std::mem::take(&mut job.sent)
+                .into_iter()
+                .filter_map(|mut params| {
+                    let Some(index) = params.get("ts").and_then(serde_json::Value::as_u64) else { return Some(params) };
+                    let index = moved(usize::try_from(index).ok()?)?;
+                    params["ts"] = json!(index);
+                    Some(params)
+                })
+                .collect();
 
             // Removed sets leave the count too, so the bar keeps its pace
             job.total -= queued - job.pending.len();
