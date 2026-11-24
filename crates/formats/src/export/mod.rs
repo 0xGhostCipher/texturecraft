@@ -546,7 +546,8 @@ fn layout<'m>(set: &TextureSet, map: &'m MapSpec) -> Vec<(Dest, &'m SourceRef)> 
     out
 }
 
-fn channel_label(map: &MapSpec) -> &'static str {
+/// What `$channel` becomes in `map`'s file names: the id of its first non-constant source.
+pub fn channel_label(map: &MapSpec) -> &'static str {
     map.channels
         .iter()
         .find_map(|(_, s)| match s {
