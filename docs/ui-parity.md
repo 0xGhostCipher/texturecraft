@@ -70,7 +70,8 @@ that closes it back onto the bar; the float is saved with the UI state.
   and *Export shaders parameters* greyed, *Include all*, *Save settings* and "N textures selected
   for export"). *Export MaterialX* below *Export USD asset* is a TextureCraft addition: it adds `materialX: true`
   to the export. The prompt's *With displacement/tessellation* choice and both option checkboxes are
-  greyed; TextureCraft exports the mesh as it is.
+  greyed; TextureCraft exports the mesh as it is. The two (i) icons carry the reference's
+  tooltips.
 - **Window menu:** Views lists *Renderer Settings* (a panel of its own: the tracer in use, the
   samples so far and a note; it floats when first opened and is not opened by itself in Rendering
   mode), *Properties - Paint* while a project is open (other tools read "Properties - <tool>",
@@ -345,22 +346,26 @@ that numbers hide once a tile is under 40 points on screen.
   middle reads "Current preset: <name>", *Output maps* with *Create:* Gray, RGB, R+G+B, RGB+A,
   R+G+B+A on the same row, and a footer with drag-and-drop guidance and the number of output
   maps. Each output map is one row: a drag grip (drag it onto another row to move the map), the
-  file name, "$" with the file name variables ($project, $mesh, $textureSet, $udim, $uvTileName
-  greyed, $colorSpace, then TextureCraft's $channel), the channel swatches (Gray, RGB or R, G, B,
-  then A), the file type and bit depth lists ("8 bits + dithering" greyed: templates do not keep
-  it), duplicate and "×". Dropping a map on a swatch opens "From <map>": a gray map offers *Gray
-  Channel* and *A Channel*, a colour map *Gray Channel*, *R Channel*, *G Channel*, *B Channel*
-  and *A Channel* (TextureCraft has no alpha or gray of a map yet: those are greyed). A colour
-  map dropped on the RGB swatch fills R, G and B at once. The swatch then takes the map's
-  colour, and the map lists mark the maps of the output map edited last with that colour. A
-  click on a swatch offers *Clear channel* and *Split/Collapse RGB*. The right side has the
-  *Input maps* pane, grouped as in the reference (Base, Specular, Transmission, Subsurface,
-  Coat, Fuzz/Sheen; then Emission, Geometry and Other for the channels the reference screenshot
-  cuts off), and a pane with *Mesh maps* above *Converted maps* (highlighted); maps TextureCraft
-  does not have yet are greyed and cannot be dragged. TextureCraft keeps a few things the
-  reference does not show, out of the way: Import and Export of template files at the end of a
-  preset's right-click menu, Invert in a swatch's right-click menu, *Move up* and *Move down*
-  in the grip's right-click menu (and the arrow keys on a focused grip), the planned file name
-  in the file name's tooltip, and three converted maps of its own (Normal from height, Roughness
-  from glossiness, Sheen color × weight) after the reference's. Built-in templates stay
-  read-only and deleting asks first.
+  file name, "$" ("Add expressions in the path that will be replaced during export": $project,
+  $mesh, $textureSet, $udim, $uvTileName greyed, $colorSpace, then TextureCraft's $channel), the
+  channel swatches (Gr, RGB or R, G, B, then A), the file format ("File format") and bit depth
+  ("Bit depth"; "8 bits + dithering" greyed, templates do not keep it) lists, duplicate and "×".
+  Create names new rows "Grayscale", "RGB" and "RGB Alpha", with "_1", "_2" when taken. An
+  empty swatch reads "Default black" ("Default white" for A), a filled one "<map> (<channel>)",
+  e.g. "Base color (Red)" or "Metallic (Grayscale)". Dropping a map on a swatch opens "From <map>":
+  a gray map offers *Gray Channel* and *A Channel*, a colour map *Gray Channel*, *R Channel*, *G
+  Channel*, *B Channel* and *A Channel*, on the RGB swatch first *RGB Channels*; Escape assigns
+  nothing. TextureCraft cannot read a map's gray or alpha yet, so those choices are greyed. A
+  click on a swatch offers *Clear channel*, on RGB, R, G and B also *Split/Collapse RGB*; R, G
+  and B that read different maps cannot collapse (the item is greyed). The right side has the
+  *Input maps* pane in the reference's groups and names (Base ... Miscellaneous, User Channels),
+  and a pane with *Mesh maps* above *Converted maps* (highlighted). Maps the selected template
+  uses get a square in their swatch's colour. Input and converted maps TextureCraft does not have
+  are greyed and cannot be dragged (the reference lists them all alike). TextureCraft keeps
+  some things the reference does not have, out of the way: Import and Export of template files
+  at the end of a preset's right-click menu; a swatch's right-click menu with Invert (an inverted
+  swatch has a corner mark), Black, Gray 50%, White, the constant's value and the map's layout
+  (RGB, RGBA, Gray, Gray + A); *Move up* and *Move down* in the grip's right-click menu and the
+  arrow keys on a focused grip; the planned file name in the file name's tooltip; and three
+  converted maps of its own (Normal from height, Roughness from glossiness, Sheen color × weight)
+  after the reference's. Built-in templates stay read-only and deleting asks first.

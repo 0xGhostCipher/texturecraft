@@ -4,6 +4,7 @@ use egui::Ui;
 
 use crate::TextureCraftApp;
 use crate::i18n::tr;
+use crate::theme::Tokens;
 use crate::unavailable;
 
 /// Indent of an option's checkbox under its choice
@@ -13,7 +14,10 @@ const OPTION_INDENT: f32 = 20.0;
 const BUTTON_WIDTH: f32 = 110.0;
 
 /// The reference dialog's content width
-const DIALOG_WIDTH: f32 = 510.0;
+const DIALOG_WIDTH: f32 = 500.0;
+
+/// Width of an info icon's tooltip, as in the reference
+const INFO_TOOLTIP_WIDTH: f32 = 250.0;
 
 /// Gap between the two option groups, as in the reference
 const GROUP_GAP: f32 = 25.0;
@@ -32,10 +36,26 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
 
         // TextureCraft exports the mesh as it is: triangulated, without displacement
         ui.add(egui::RadioButton::new(true, tr("Without displacement/tessellation")));
-        option(ui, true, tr("Apply triangulation"));
+        option(
+            ui,
+            true,
+            tr("Apply triangulation"),
+            &[
+                tr("Triangulation converts all mesh polygons with more than 3 sides to triangles (but doesn't change the triangular ones)."),
+                tr("Choosing to apply triangulation for export avoids unexpected results when rendering the mesh in another application."),
+            ],
+        );
         ui.add_space(GROUP_GAP);
         unavailable::greyed(ui, |ui| ui.add(egui::RadioButton::new(false, tr("With displacement/tessellation"))));
-        option(ui, true, tr("Recompute vertex normals"));
+        option(
+            ui,
+            true,
+            tr("Recompute vertex normals"),
+            &[
+                tr("Recomputing vertex normals is recommended if you don't plan on using the normal map in the target application."),
+                tr("Otherwise, keeping the original vertex normals is recommended if you plan on using the normal map in the target application."),
+            ],
+        );
         ui.add_space(8.0);
 
         // One row keeps the window to its contents; a bare right-to-left layout fills the screen height
@@ -56,10 +76,23 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     }
 }
 
-/// A greyed option under a choice, ticked as the reference shows it
-fn option(ui: &mut Ui, checked: bool, label: &str) {
+/// A greyed option under a choice, ticked as the reference shows it, with an info icon at the
+/// row's right end whose tooltip has the paragraphs `info`
+fn option(ui: &mut Ui, checked: bool, label: &str, info: &[&str]) {
     ui.horizontal(|ui| {
         ui.add_space(OPTION_INDENT);
         unavailable::checkbox(ui, checked, label);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let icon = ui.label(egui::RichText::new(egui_phosphor::regular::INFO).color(Tokens::get(ui.ctx()).text_dim));
+            icon.on_hover_ui(|ui| {
+                ui.set_max_width(INFO_TOOLTIP_WIDTH);
+                for (k, paragraph) in info.iter().enumerate() {
+                    if k > 0 {
+                        ui.add_space(ui.text_style_height(&egui::TextStyle::Body));
+                    }
+                    ui.label(*paragraph);
+                }
+            });
+        });
     });
 }
