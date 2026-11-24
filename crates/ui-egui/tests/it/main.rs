@@ -28,6 +28,7 @@ mod export_progress;
 mod export_reference_texts;
 mod export_settings;
 mod export_template_guards;
+mod export_usd_asset;
 mod file_dialogs;
 mod fill_channel_image;
 mod fill_material_rows;
