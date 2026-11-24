@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Bake preview",
         [],
         None,
-        "{show?: \"follow\" (the newest finished map) | \"material\" | \"map:<id>\" (pin a map)} → {active, show, shown, newest, stage, sets}. While the app bakes, the 3D view shows the maps as they finish; `show` picks what it shows. With no bake running {active: false} (setting `show` is then an error)",
+        "{show?: \"follow\" (the newest finished map) | \"material\" | \"map:<id>\" (pin a map)} → {active, show, shown, newest, stage, sets}. While the app bakes, the 3D view shows the maps as they finish; `show` picks what it shows. In Bake mode the app's map preview also shows here while Mesh Map Settings is in front. With neither {active: false} (setting `show` is then an error)",
         always,
         preview
     )]

@@ -7,6 +7,12 @@ mod bake_visualization_toggles;
 mod breadcrumb;
 mod common_settings;
 mod glyph_look;
+mod live_preview;
+mod live_preview_target;
+mod map_preview_fold;
+mod preview_input;
+mod running_preview;
+pub(crate) use live_preview::LivePreview;
 mod section_opening;
 pub(crate) use bake_checks::bake_warnings;
 pub use bake_paint_brush::BakePaintBrush;
@@ -178,9 +184,19 @@ pub fn mesh_map_settings_panel(app: &mut TextureCraftApp, ui: &mut Ui) {
         .inner
     });
     let texture_sets = json!(app.session.doc.project.bake_synced_sets(app.session.ts(), BakeSyncGroup::Map(selected)));
-    edit_settings(app, ui, "mesh_map_settings", texture_sets, |_, ui, settings| {
+    let changed = edit_settings(app, ui, "mesh_map_settings", texture_sets, |_, ui, settings| {
         PropertySheet::show(ui, ("mesh_map_settings_sheet", selected), |sheet| map_settings::show(sheet, selected, &mut settings.maps, restore.inner))
     });
+    // Other changes reach the preview through its check of what its picture was made from
+    if changed && ui.ctx().dragged_id().is_some() {
+        let ctx = ui.ctx().clone();
+        live_preview::slider_dragged(app, &ctx);
+    }
+}
+
+/// Once a frame: the map preview follows the selected map and takes its finished bakes
+pub(crate) fn poll_live_preview(app: &mut TextureCraftApp, ctx: &egui::Context) {
+    live_preview::poll(app, ctx);
 }
 
 /// The Common Settings panel: output, high poly, cage and skew settings
@@ -203,14 +219,14 @@ fn edit_settings(
     scroll_id: &str,
     texture_sets: Value,
     contents: impl FnOnce(&mut TextureCraftApp, &mut Ui, &mut BakeSettings) -> Option<Value>,
-) {
+) -> bool {
     let set_index = app.session.ts();
-    let Some(before) = app.session.doc.project.texture_sets.get(set_index).map(|texture_set| texture_set.bake.clone()) else { return };
+    let Some(before) = app.session.doc.project.texture_sets.get(set_index).map(|texture_set| texture_set.bake.clone()) else { return false };
 
     let mut settings = before.clone();
     let reset = egui::ScrollArea::vertical().id_salt(scroll_id).auto_shrink([false; 2]).show(ui, |ui| contents(app, ui, &mut settings)).inner;
     if settings == before && reset.is_none() {
-        return;
+        return false;
     }
 
     let mut patch = settings_patch(&before, &settings);
@@ -218,6 +234,7 @@ fn edit_settings(
         fields.extend(reset);
     }
     app.run("bake.settings", json!({ "ts": texture_sets, "patch": patch }));
+    true
 }
 
 /// What the 3D view shows while a bake runs: the newest finished map, one finished map or the material

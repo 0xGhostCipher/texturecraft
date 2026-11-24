@@ -276,6 +276,8 @@ pub struct TextureCraftApp {
     pub layer_panel: layer_panel::LayerPanel,
     /// The Mesh Map Bakers rows' thumbnails
     pub(crate) bake_map_thumbnails: bake_mode::MapThumbnails,
+    /// The map preview: the selected map on the model while Mesh Map Settings shows it
+    pub(crate) live_preview: bake_mode::LivePreview,
     /// Last frame's viewport rect (logical points), for scripted input.
     pub viewport_rect: egui::Rect,
     pub fps: f32,
@@ -418,6 +420,7 @@ impl TextureCraftApp {
             thumbs: thumbs::Thumbs::default(),
             layer_panel: layer_panel::LayerPanel::default(),
             bake_map_thumbnails: bake_mode::MapThumbnails::default(),
+            live_preview: bake_mode::LivePreview::default(),
             viewport_rect: egui::Rect::NOTHING,
             fps: 0.0,
             ui_ms: 0.0,
@@ -618,6 +621,9 @@ impl TextureCraftApp {
             return;
         }
 
+        // The bake takes the 3D view over from the map preview
+        self.live_preview.release(&mut self.session);
+
         // Restore the picker's view before the preview starts following baked maps
         id_color_pick::IdColorPick::end(self);
 
@@ -738,8 +744,10 @@ impl TextureCraftApp {
         }
 
         let Some(job) = self.bake.as_mut() else {
-            // A preview whose bake is gone must not keep the view
-            self.session.bake_preview_end();
+            // A preview whose bake is gone must not keep the view; the map preview keeps its own
+            if self.live_preview.shown().is_none() {
+                self.session.bake_preview_end();
+            }
             return;
         };
 
@@ -1131,6 +1139,7 @@ impl eframe::App for TextureCraftApp {
             }
         }
         self.poll_bake(ctx);
+        bake_mode::poll_live_preview(self, ctx);
         self.poll_resize(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_high_poly_job(ctx);
