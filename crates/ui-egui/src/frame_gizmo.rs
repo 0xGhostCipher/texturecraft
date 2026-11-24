@@ -418,7 +418,7 @@ pub(crate) mod tests {
         let session = Session::new_project("Gizmo", texturecraft_engine::geom::primitives::sphere(1.0, 48, 24), "builtin:sphere", None, 128).unwrap();
         let builder = egui_kittest::Harness::builder().with_size(TEST_WINDOW);
         let builder = if render { builder.wgpu() } else { builder };
-        let mut harness = builder.build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = builder.with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(4);
         harness
     }

@@ -12,7 +12,7 @@ fn harness(map: Option<BakedMap>) -> Harness<'static, TextureCraftApp> {
     session.doc.project.texture_sets[0].bake = Default::default();
     session.doc.project.texture_sets[0].bake.common.resolution = BakeResolution::R64;
     session.doc.project.texture_sets[0].bake.maps.select(map);
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
     harness.state_mut().ui.mode = Mode::Baking;
     harness.run_steps(4);
     harness.state_mut().ui.dock.focus(Panel::MeshMapSettings);
@@ -221,7 +221,7 @@ fn tile_resolution_overrides_can_be_changed_and_removed_in_bake_mode() {
         256,
     )
     .unwrap();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
     harness.state_mut().ui.mode = Mode::Baking;
     harness.run_steps(4);
     let before = harness.state().session.doc.project.clone();
@@ -272,7 +272,7 @@ fn bake_texture_sets_list_uv_tiles_and_their_resolutions() {
             .unwrap();
     texturecraft_engine::execute(&mut session, "textureSet.tile.resolution", &serde_json::json!({"tile": 1002, "resolution": 128})).unwrap();
     let before = session.doc.project.clone();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
     harness.state_mut().ui.mode = Mode::Baking;
     harness.run_steps(4);
 

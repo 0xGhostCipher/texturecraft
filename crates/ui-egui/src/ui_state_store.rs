@@ -321,10 +321,10 @@ pub(crate) mod tests {
     fn moved_panels() -> Dock {
         let mut workspace = default_workspace();
         let actions = [
-            Action::Move { panel: Panel::Layers, anchor: Panel::Assets, placement: DockPlacement::Tab { before: None } },
-            Action::Float { panel: Panel::Properties, rect: [900.0, 120.0, 320.0, 400.0] },
+            Action::move_beside(Panel::Layers, Panel::Assets, DockPlacement::tab(None)),
+            Action::float(Panel::Properties, egui::Rect::from_min_size(egui::pos2(900.0, 120.0), egui::vec2(320.0, 400.0))),
         ];
-        workspace.apply_all(actions, permissions).unwrap();
+        workspace.apply_all(actions, false, permissions).unwrap();
 
         let dock = Dock::from_value(serde_json::to_value(&workspace).unwrap());
         assert!(!dock.replaced_unreadable(), "the moved layout is valid");

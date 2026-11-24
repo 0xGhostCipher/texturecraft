@@ -458,6 +458,14 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
         return;
     }
 
+    // A plain Escape no widget of TextureCraft's took is the window's cancel: it runs the Escape handlers and shortcuts below
+    if crate::framework::take_window_cancel(ctx) {
+        ctx.input_mut(|i| {
+            let modifiers = i.modifiers;
+            i.events.insert(0, egui::Event::Key { key: Key::Escape, physical_key: Some(Key::Escape), pressed: true, repeat: false, modifiers });
+        });
+    }
+
     // The dispatcher reads clipboard events as shortcuts; a pasted image also means Ctrl+V
     // Unless bound, Shift+Delete and Shift+Insert become Ctrl+X and Ctrl+V
     ctx.input_mut(|input| {

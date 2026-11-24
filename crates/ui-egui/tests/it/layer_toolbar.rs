@@ -26,7 +26,7 @@ fn app() -> (Harness<'static, TextureCraftApp>, LayerId) {
     let mut session = texturecraft_engine::sample_session(TEXTURE_RESOLUTION, BAKE_RESOLUTION).unwrap();
     let layer = LayerId(execute(&mut session, "layer.add.fill", &Value::Null).unwrap()["layer"].as_u64().unwrap());
     execute(&mut session, "layer.select", &json!({"layer": layer.0})).unwrap();
-    let mut harness = Harness::builder().with_size(WINDOW_SIZE).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder().with_size(WINDOW_SIZE).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.state_mut().ui.prefs.language = "en".into();
     harness.run_steps(STARTUP_FRAMES);
     (harness, layer)
@@ -130,6 +130,12 @@ fn the_bitmap_picker_closes_when_the_selection_moves_and_masks_no_other_layer() 
 /// A floating Layers panel this narrow cannot hold the toolbar on one row
 const NARROW_LAYERS: [f32; 4] = [600.0, 200.0, 200.0, 400.0];
 
+/// [`NARROW_LAYERS`] as a rect
+fn narrow_layers() -> egui::Rect {
+    let [left, top, width, height] = NARROW_LAYERS;
+    egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, height))
+}
+
 /// In a narrow floating Layers panel the add-layer buttons and Remove wrap inside it, where a click still reaches them
 #[test]
 fn a_narrow_layers_panel_keeps_every_toolbar_button_inside_and_clickable() {
@@ -138,7 +144,7 @@ fn a_narrow_layers_panel_keeps_every_toolbar_button_inside_and_clickable() {
 
     let (mut harness, _) = app();
     let mut workspace = harness.state().ui.dock.workspace().clone();
-    workspace.apply_all([Action::Float { panel: Panel::Layers, rect: NARROW_LAYERS }], permissions).unwrap();
+    workspace.apply_all([Action::float(Panel::Layers, narrow_layers())], false, permissions).unwrap();
     harness.state_mut().ui.dock = Dock::from_value(serde_json::to_value(workspace).unwrap());
     harness.run_steps(SETTLE_FRAMES);
     let [left, _, width, _] = NARROW_LAYERS;

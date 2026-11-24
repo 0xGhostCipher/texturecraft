@@ -22,7 +22,7 @@ fn resource_settings_follow_hardware_persist_and_apply_before_control_requests()
     let session = Session::new_project("Limits", geom::primitives::plane(2.0, 1), "builtin:plane", None, 128).unwrap();
     let available_cores = u32::try_from(std::thread::available_parallelism().unwrap().get()).unwrap();
     let mut harness =
-        Harness::builder().with_size(egui::vec2(1200.0, 900.0)).with_step_dt(1.0 / 60.0).with_accessibility_check(false).build_eframe(|context| {
+        Harness::builder().with_size(egui::vec2(1200.0, 900.0)).with_step_dt(1.0 / 60.0).with_accessibility_check(false).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|context| {
             context.egui_ctx.data_mut(|data| data.insert_temp(egui::Id::unique("settings_resources"), (0.0_f64, available_cores, 16_u64 << 30)));
             let mut creation = eframe::CreationContext::_new_kittest(context.egui_ctx.clone());
             creation.storage = Some(&storage);

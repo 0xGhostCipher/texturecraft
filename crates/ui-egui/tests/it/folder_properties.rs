@@ -28,7 +28,7 @@ fn folder_harness(with_fill: bool) -> (Harness<'static, TextureCraftApp>, LayerI
         LayerId(execute(&mut session, "layer.add.group", &json!({})).unwrap()["layer"].as_u64().unwrap())
     };
     execute(&mut session, "layer.select", &json!({"layer": folder.0, "target": "content"})).unwrap();
-    let mut harness = Harness::builder().with_size(PROPERTIES_WINDOW).with_step_dt(FRAME_SECONDS).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder().with_size(PROPERTIES_WINDOW).with_step_dt(FRAME_SECONDS).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.state_mut().ui.prefs.language = "en".into();
     harness.run_steps(STARTUP_FRAMES);
     (harness, folder, fill)

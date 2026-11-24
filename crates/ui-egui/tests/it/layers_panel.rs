@@ -24,7 +24,7 @@ fn harness() -> (Harness<'static, TextureCraftApp>, LayerId) {
     execute(&mut session, "mask.add.black", &Value::Null).unwrap();
     execute(&mut session, "effect.add.generator", &json!({"generator": "position", "level": 0.5, "name": "Effect M"})).unwrap();
     execute(&mut session, "layer.select", &json!({"layer": layer.0})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.run_steps(4);
     (h, layer)
 }
@@ -108,8 +108,9 @@ fn deeply_nested_effect_visibility_is_reachable_in_a_narrow_panel() {
         execute(&mut harness.state_mut().session, "layer.group", &Value::Null).unwrap();
     }
 
-    let mut workspace = harness.state().ui.dock.workspace().clone();
-    let Some(Node::Split { second, .. }) = workspace.layout.root.as_mut() else { panic!("default columns") };
+    let workspace = harness.state().ui.dock.workspace().clone();
+    let mut layout = workspace.layout().clone();
+    let Some(Node::Split { second, .. }) = layout.root.as_mut() else { panic!("default columns") };
     let Node::Split { size, second: column, .. } = second.as_mut() else { panic!("viewport and right column") };
     *size = SplitSize::Ratio(0.99);
 
@@ -117,6 +118,7 @@ fn deeply_nested_effect_visibility_is_reachable_in_a_narrow_panel() {
     let Node::Split { second: below_sets, .. } = column.as_mut() else { panic!("texture sets and the rest") };
     let Node::Split { size: layers_share, .. } = below_sets.as_mut() else { panic!("layers and properties") };
     *layers_share = SplitSize::Ratio(0.9);
+    let workspace = texturecraft_ui_egui::docking::Workspace::from_parts(layout, workspace.hidden().to_vec(), workspace.floated().to_vec());
     harness.state_mut().ui.dock = Dock::from_value(serde_json::to_value(workspace).unwrap());
 
     // Closing Properties lets the column shrink to the Layers minimum
@@ -151,7 +153,7 @@ fn hidpi_harness() -> (Harness<'static, TextureCraftApp>, LayerId) {
     let layer = LayerId(id(execute(&mut session, "layer.add.fill", &json!({"color": "#336699"})).unwrap(), "layer"));
     execute(&mut session, "layer.rename", &json!({"layer": layer.0, "name": "Active one"})).unwrap();
     execute(&mut session, "layer.select", &json!({"layer": layer.0})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_pixels_per_point(2.0).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_pixels_per_point(2.0).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.run_steps(4);
     (h, layer)
 }
@@ -257,7 +259,7 @@ fn narrow_harness() -> Harness<'static, TextureCraftApp> {
     let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
     let layer = id(execute(&mut session, "layer.add.fill", &json!({"color": "#336699"})).unwrap(), "layer");
     execute(&mut session, "layer.rename", &json!({"layer": layer, "name": LONG_NAME})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
     h
@@ -295,7 +297,7 @@ fn an_effect_name_cut_short_shows_in_full_on_hover() {
     let layer = id(execute(&mut session, "layer.add.fill", &json!({"color": "#336699"})).unwrap(), "layer");
     execute(&mut session, "layer.select", &json!({"layer": layer})).unwrap();
     execute(&mut session, "effect.add.filter", &json!({"target": "content", "filter": "invert", "name": LONG_EFFECT_NAME})).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 800.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
 

@@ -26,7 +26,7 @@ const WINDOW_RIGHT_INSET: f32 = 4.0;
 
 fn app() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(TEXTURE_RESOLUTION, BAKE_RESOLUTION).unwrap();
-    let mut harness = Harness::builder().with_size(WINDOW_SIZE).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder().with_size(WINDOW_SIZE).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
 
     // The header names below are English; a first run would speak the system's language
     harness.state_mut().ui.prefs.language = "en".into();
@@ -36,11 +36,13 @@ fn app() -> Harness<'static, TextureCraftApp> {
 
 /// Gives the right column (Layers over Properties) `width` points, as a layout saved at that width would
 fn set_column_width(harness: &mut Harness<'_, TextureCraftApp>, width: f32) {
-    let mut workspace = harness.state().ui.dock.workspace().clone();
-    let Some(Node::Split { second, .. }) = workspace.layout.root.as_mut() else { panic!("the assets column and the rest") };
+    let workspace = harness.state().ui.dock.workspace().clone();
+    let mut layout = workspace.layout().clone();
+    let Some(Node::Split { second, .. }) = layout.root.as_mut() else { panic!("the assets column and the rest") };
     let Node::Split { size, .. } = second.as_mut() else { panic!("the 3D view and the right column") };
 
     *size = SplitSize::FixedSecond(width);
+    let workspace = texturecraft_ui_egui::docking::Workspace::from_parts(layout, workspace.hidden().to_vec(), workspace.floated().to_vec());
     harness.state_mut().ui.dock = Dock::from_value(serde_json::to_value(workspace).unwrap());
     harness.run_steps(SETTLE_FRAMES);
 }

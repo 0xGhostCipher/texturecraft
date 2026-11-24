@@ -27,7 +27,7 @@ fn app(storage: &MemoryStorage) -> Harness<'static, TextureCraftApp> {
 
     // The view has no accessible name of its own; these tests drive it by position
     let builder = Harness::builder().with_size(PROPERTIES_WINDOW).with_accessibility_check(false);
-    let mut harness = builder.build_eframe(|context| {
+    let mut harness = builder.with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|context| {
         let mut creation = eframe::CreationContext::_new_kittest(context.egui_ctx.clone());
         creation.storage = Some(storage);
         TextureCraftApp::new(&creation, session)

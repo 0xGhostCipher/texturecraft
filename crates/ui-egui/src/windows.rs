@@ -82,26 +82,18 @@ pub(crate) fn ask_to_save(app: &mut TextureCraftApp, then: crate::state::Unsaved
     app.session.modified
 }
 
-/// The close decision, once per frame in `logic` (which also runs while the window is minimized):
-/// a close with unsaved changes waits on the dialog, in a window brought back so it can be
-/// answered. A close nothing holds open quits through the platform's own path (craft-quit).
-pub(crate) fn close_request(app: &mut TextureCraftApp, ctx: &egui::Context) {
-    let closing = ctx.input(|i| i.viewport().close_requested());
+/// The close decision, which the runtime asks for when the root window was asked to close (it runs in `logic`,
+/// also while the window is minimized): a close with unsaved changes waits on the dialog (`true`), and the runtime
+/// brings the window back so it can be answered. A close nothing holds open goes ahead through the platform's own
+/// quit.
+pub(crate) fn close_requested(app: &mut TextureCraftApp) -> bool {
     // A stroke still open at the close, or released in this frame, is a change to ask about.
-    if closing
-        && app.session.stroke_active()
+    if app.session.stroke_active()
         && let Err(error) = app.session.end_stroke()
     {
         app.toast(error.to_string(), true);
     }
-    if closing && ask_to_save(app, crate::state::Unsaved::Quit) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        if ctx.input(|i| i.viewport().minimized == Some(true)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-    }
-    craft_quit::on_close_request(ctx);
+    ask_to_save(app, crate::state::Unsaved::Quit)
 }
 
 /// Quitting, opening or closing a project with unsaved changes asks whether to save them first
@@ -711,7 +703,7 @@ mod tests {
 
     fn harness() -> Harness<'static, TextureCraftApp> {
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut h = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut h = Harness::builder().with_size(vec2(1600.0, 960.0)).with_context_setup(crate::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
 
         // Match English labels independently of the system locale
         h.state_mut().ui.prefs.language = "en".into();

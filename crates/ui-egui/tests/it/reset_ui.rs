@@ -10,7 +10,7 @@ use texturecraft_ui_egui::state::{Mode, ViewLayout};
 /// An app with the Assets panel closed, a changed view split, zoom, wireframe and mode.
 fn changed_app() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
     let ui = &mut h.state_mut().ui;

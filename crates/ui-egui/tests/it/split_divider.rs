@@ -38,7 +38,7 @@ impl eframe::Storage for MemoryStorage {
 /// The sample project in the default split layout at 1600 x 960
 fn split_app() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
 
     // The Layers tab is found by its English name, whatever the OS language is
     harness.state_mut().ui.prefs.language = "en".into();

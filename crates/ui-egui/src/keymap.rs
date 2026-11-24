@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use craft_keymap::egui::Dispatcher;
+use crate::shortcut_dispatch::Dispatcher;
 use craft_keymap::{Active, Chord, CommandDef, CommandRef, ConflictKind, KeyInput, Layout, Lookup, Mods, Overrides, Platform, Scope, Scopes};
 use egui::{Event, Id, Key, KeyboardShortcut, Modifiers, RichText, vec2};
 use egui_phosphor::regular as ic;
@@ -229,7 +229,7 @@ impl Default for Bindings {
         let stored = Keymap::new();
         let map = resolved(&stored, Platform::current());
         // Held keys repeat their command. Copy, Cut and Paste events count as Ctrl+C, X and V.
-        Bindings { stored, map, dispatcher: Dispatcher::new().with_repeat(true).with_clipboard_events(true) }
+        Bindings { stored, map, dispatcher: Dispatcher::default() }
     }
 }
 
@@ -245,7 +245,7 @@ impl Bindings {
     /// The ids of the commands this frame's key presses run, in press order. The presses are
     /// removed from the input.
     pub(crate) fn dispatch(&mut self, input: &mut egui::InputState) -> Vec<String> {
-        self.dispatcher.dispatch(input, &self.map, &Active::NONE).into_iter().map(|hit| hit.command.id).collect()
+        self.dispatcher.dispatch_filtered(input, &self.map, |_| true).into_iter().map(|hit| hit.command.id).collect()
     }
 
     /// The id of the command a key press outside the main window runs. The press is matched as
@@ -391,7 +391,9 @@ pub(crate) fn actions_page(ui: &mut egui::Ui, keymap: &mut Keymap, recorder: &Bi
     let tk = Tokens::get(&ctx);
     let capture_id = Id::unique(SETTINGS_CAPTURE);
     let mut capture: Option<usize> = ctx.data(|d| d.get_temp(capture_id));
-    if let (Some(i), Some(sc)) = (capture, pressed(&ctx, recorder)) {
+    if let Some(i) = capture
+        && let Some(sc) = pressed(&ctx, recorder)
+    {
         if let Some(b) = bindings().get(i) {
             if sc.logical_key == Key::Delete && sc.modifiers.is_none() {
                 rebind(keymap, b, "");
@@ -487,15 +489,17 @@ pub(crate) fn actions_page(ui: &mut egui::Ui, keymap: &mut Keymap, recorder: &Bi
     });
 }
 
-/// The first key press this frame as a shortcut.
+/// The first key press this frame as a shortcut. A plain Escape while none of TextureCraft's widgets has the keyboard
+/// is the window's cancel, which the recorder takes as the Escape that cancels it.
 fn pressed(ctx: &egui::Context, bindings: &Bindings) -> Option<KeyboardShortcut> {
     let platform = craft_keymap::egui::platform(ctx);
-    ctx.input(|i| {
+    let press = ctx.input(|i| {
         i.events.iter().find_map(|e| match e {
             Event::Key { key, pressed: true, modifiers, .. } => Some(bindings.recorded(e, *key, *modifiers, platform)),
             _ => None,
         })
-    })
+    });
+    press.or_else(|| crate::framework::take_window_cancel(ctx).then(|| KeyboardShortcut::new(Modifiers::NONE, Key::Escape)))
 }
 
 /// The shortcut editor window.
@@ -509,7 +513,9 @@ pub fn window(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let capture_id = Id::unique(CAPTURE);
     let filter_id = Id::unique("keymap_filter");
     let mut capture: Option<usize> = ctx.data(|d| d.get_temp(capture_id));
-    if let (Some(i), Some(sc)) = (capture, pressed(ctx, &app.bindings)) {
+    if let Some(i) = capture
+        && let Some(sc) = pressed(ctx, &app.bindings)
+    {
         if (sc.logical_key != Key::Escape || !sc.modifiers.is_none())
             && let Some(b) = bindings().get(i)
         {

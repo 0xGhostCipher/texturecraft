@@ -33,7 +33,7 @@ fn app() -> Harness<'static, TextureCraftApp> {
 
 fn app_of_size(size: egui::Vec2) -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(TEXTURE_RESOLUTION, BAKE_RESOLUTION).unwrap();
-    let mut harness = Harness::builder().with_size(size).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder().with_size(size).with_context_setup(texturecraft_ui_egui::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
 
     // The labels below are English; a first run would speak the system's language
     harness.state_mut().ui.prefs.language = "en".into();
@@ -189,7 +189,7 @@ fn dragging_the_title_onto_a_tab_strip_docks_the_panel_there() {
 
     drag(&mut harness, title.center(), texture_sets_tab.center());
 
-    let layout = &harness.state().ui.dock.workspace().layout;
+    let layout = harness.state().ui.dock.workspace().layout();
     assert!(layout.contains(&Panel::Log) && !layout.floating.iter().any(|window| window.contains(&Panel::Log)), "the Log is docked");
 }
 
