@@ -73,6 +73,8 @@ const ROW_GAP_POINTS: f32 = 4.0;
 const GRIP_WIDTH_POINTS: f32 = 5.0;
 const NAME_FIELD_WIDTH_POINTS: f32 = 150.0;
 const ROW_ICON_POINTS: f32 = 16.0;
+/// Width the "Output maps" title and the Create buttons need on one row
+const OUTPUT_MAPS_ROW_WIDTH_POINTS: f32 = 420.0;
 /// The narrowest file name field, the "$" button and the format, bit depth and icon columns at a
 /// row's right end, and the gaps between a row's controls (besides the swatches')
 const MIN_NAME_FIELD_WIDTH_POINTS: f32 = 60.0;
@@ -759,9 +761,9 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
         });
     });
 
-    // "Output maps", with the Create buttons at the right end of the same row
-    ui.horizontal(|ui| {
-        ui.label(caption(tr("Output maps")));
+    // "Output maps", with the Create buttons at the right end of the same row, or of the next one
+    // when the column is too narrow for both
+    let create_buttons = |ui: &mut Ui, edit: &mut RowEdit| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(editable, |ui| {
                 for (label, layout, split, file) in CREATE.iter().rev() {
@@ -772,7 +774,16 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
                 ui.label(RichText::new(tr("Create:")).color(tokens.text_dim));
             });
         });
-    });
+    };
+    if ui.available_width() >= OUTPUT_MAPS_ROW_WIDTH_POINTS {
+        ui.horizontal(|ui| {
+            ui.label(caption(tr("Output maps")));
+            create_buttons(ui, &mut edit);
+        });
+    } else {
+        ui.label(caption(tr("Output maps")));
+        ui.horizontal(|ui| create_buttons(ui, &mut edit));
+    }
     if let Err(e) = &preview {
         ui.label(RichText::new(trf("Not saved: {error}", &[("error", e)])).color(tokens.danger).size(11.0));
     }
@@ -916,6 +927,8 @@ fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split:
     let frame = egui::Frame::new().fill(tokens.row).corner_radius(tokens.radius).inner_margin(ROW_MARGIN_POINTS).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
             // The name field gives way in a narrow window, so the swatches and lists stay in the row
             let swatches = swatch_targets(map, *split).len() as f32;
             let spacing = ui.spacing().item_spacing.x;
@@ -930,18 +943,21 @@ fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split:
             changed |= name.changed();
             changed |= token_menu(ui, &mut map.file);
             changed |= channel_swatches(ui, index, map, split, edit);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.vertical(|ui| {
+
+            // The lists and icons at the row's right end: file format and duplicate, bit depth and remove
+            ui.add_space((ui.available_width() - ROW_LISTS_WIDTH_POINTS).max(0.0));
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= format_menu(ui, map);
                     if icon_button_without_tooltip(ui, ic::COPY, tr("Duplicate this output"), false, ROW_ICON_POINTS).clicked() {
                         edit.action = Some(MapAction::Duplicate(index));
                     }
+                });
+                ui.horizontal(|ui| {
+                    changed |= depth_menu(ui, map);
                     if icon_button_without_tooltip(ui, ic::X, tr("Remove this output"), false, ROW_ICON_POINTS).clicked() {
                         edit.action = Some(MapAction::Remove(index));
                     }
-                });
-                ui.vertical(|ui| {
-                    changed |= format_menu(ui, map);
-                    changed |= depth_menu(ui, map);
                 });
             });
         });

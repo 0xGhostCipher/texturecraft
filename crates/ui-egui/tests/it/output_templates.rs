@@ -549,6 +549,22 @@ fn on_a_small_screen_an_rgba_row_keeps_its_controls_in_the_window() {
         assert!(remove.right() < input_maps.left(), "a row's × stays left of the Input maps pane: {remove:?} {input_maps:?}");
     }
     assert!(alpha.right() < input_maps.left(), "the last swatch too: {alpha:?}");
+
+    // Each row stays one line: its controls do not wrap into a tall row
+    let grips: Vec<egui::Rect> = h.get_all_by_label("Reorder").map(|grip| grip.rect()).collect();
+    for pair in grips.windows(2) {
+        assert!(pair[1].top() - pair[0].top() < 2.5 * pair[0].height(), "row height {pair:?}");
+    }
+
+    // The row's file format list starts right of its last swatch instead of covering it
+    let format =
+        h.get_all_by_role(egui::Role::Button).rfind(|button| button.accesskit_node().label().is_some_and(|label| label.starts_with("png"))).unwrap().rect();
+    assert!(alpha.right() <= format.left(), "the swatches and the lists do not overlap: {alpha:?} {format:?}");
+
+    // The panes stay inside the window: the side pane ends where the bottom bar's buttons end
     let cancel = h.get_all_by_label("Cancel").last().unwrap().rect();
+    let export = last_window_button(&h, "Export").rect();
+    let converted = h.get_by_label("Converted maps").rect();
     assert!(cancel.max.x <= 1000.0 && cancel.max.y <= 700.0, "{cancel:?}");
+    assert!(converted.left() < export.right() && converted.right() <= export.right() + 1.0, "{converted:?} {export:?}");
 }
