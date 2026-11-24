@@ -565,7 +565,7 @@ fn validation_rejects_bad_presets() {
         p.validate().is_err()
     };
     let long = "x".repeat(300);
-    for file in ["a/b", r"a\b", "..", "x..y", "$meshes_$foo", "$", "", " ", "a\u{7}b", long.as_str()] {
+    for file in ["/a", "a/", "a//b", r"a\b", "..", "x..y", "a/../b", "$meshes_$foo", "$", "", " ", "a\u{7}b", long.as_str()] {
         assert!(refused(&|p| p.maps[0].file = file.into()), "file template {file:?} must be refused");
     }
     assert!(refused(&|p| p.name = "  ".into()));
@@ -726,6 +726,9 @@ fn the_udim_name_is_the_file_name_with_its_tile_number_as_placeholder() {
 
     // The length limit cuts the longer placeholder where it doesn't cut the tile number: none then
     assert_eq!(udim_names(format!("{}_$udim_$textureSet", "a".repeat(MAX_STEM - 10))), [None, None]);
+
+    // A folder stays in the placeholder name
+    assert_eq!(udim_names("Base/$textureSet_$udim".into()), [Some("Base/Body_<UDIM>.png".to_string()), Some("Base/Body_<UDIM>.png".to_string())]);
 }
 
 #[test]
@@ -1328,4 +1331,160 @@ fn diffusion_padding_fills_beyond_the_dilation_smoothly() {
             assert!((0.19..=0.81).contains(&v(x, y)), "({x},{y}) {}", v(x, y));
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn folder_templates_write_their_folders_inside_the_output_directory() {
+    let fx = Fx::new(&default_channels());
+    let dir = std::env::temp_dir().join(format!("tc-formats-export-folders-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let rough = |file: &str| gray_map(file, SourceRef::Channel { channel: Channel::Roughness, component: 0 });
+    let preset = ExportPreset { name: "t".into(), maps: vec![rough("$project.ts/$textureSet/roughness"), rough("Roughness/$textureSet_Roughness")] };
+    let files = fx.render(&ExportOptions::new(preset));
+
+    write_files(&files, &dir).unwrap();
+
+    assert!(dir.join("My_Project.ts/Body_Set/roughness.png").is_file(), "{:?}", files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>());
+    assert!(dir.join("Roughness/Body_Set_Roughness.png").is_file());
+    for name in ["../evil.png", "/evil.png", "a//evil.png", r"a\evil.png"] {
+        let evil = ExportedFile { name: name.into(), ..files[0].clone() };
+        assert!(write_files(&[evil], &dir).is_err(), "{name}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn file_names_in_different_folders_do_not_collide_and_the_same_path_does() {
+    let fx = Fx::new(&default_channels());
+    let rough = |file: &str| gray_map(file, SourceRef::Channel { channel: Channel::Roughness, component: 0 });
+    let preset = ExportPreset { name: "t".into(), maps: vec![rough("a/x"), rough("b/x"), rough("A/x")] };
+
+    let names: Vec<String> = list_outputs(&fx.project, 0, "sphere", &ExportOptions::new(preset)).unwrap().into_iter().map(|p| p.name).collect();
+
+    assert_eq!(names, ["a/x.png", "b/x.png", "A/x_2.png"]);
+}
+
+/// A set whose channels hold distinct constants, to see where a template writes each of them
+fn packing_fixture() -> Fx {
+    let mut channels = default_channels();
+    channels.extend([Channel::AmbientOcclusion, Channel::Opacity, Channel::Emissive]);
+    let mut fx = Fx::new(&channels);
+    fx.set_all(Channel::AmbientOcclusion, |_, _| [0.6; 3]);
+    fx.set_all(Channel::Roughness, |_, _| [0.4; 3]);
+    fx.set_all(Channel::Metallic, |_, _| [0.8; 3]);
+    fx.set_all(Channel::Opacity, |_, _| [0.9; 3]);
+    fx.set_all(Channel::Emissive, |_, _| [0.3; 3]);
+    fx
+}
+
+/// The 8-bit value of an image position as RGBA
+fn pixel(file: &ExportedFile) -> [i32; 4] {
+    decode(file).to_rgba8().get_pixel(3, 3).0.map(i32::from)
+}
+
+fn byte(value: f32) -> i32 {
+    (value * 255.0).round() as i32
+}
+
+fn assert_close(actual: [i32; 4], expected: [i32; 4], what: &str) {
+    assert!(actual.iter().zip(expected).all(|(a, e)| (a - e).abs() <= 1), "{what}: {actual:?} instead of {expected:?}");
+}
+
+#[test]
+fn packed_templates_write_occlusion_roughness_and_metallic_where_the_spec_says() {
+    let fx = packing_fixture();
+    let expected = [byte(0.6), byte(0.4), byte(0.8)];
+
+    for (template, file) in
+        [("glTF PBR Metal Roughness", "OcclusionRoughnessMetallic"), ("Unreal Engine (Packed)", "OcclusionRoughnessMetallic"), ("Godot 4 (ORM)", "orm")]
+    {
+        let files = fx.render_preset(template);
+
+        let [r, g, b, _] = pixel(find(&files, file));
+        assert_close([r, g, b, 0], [expected[0], expected[1], expected[2], 0], &format!("{template}: R occlusion, G roughness, B metallic"));
+    }
+}
+
+#[test]
+fn unity_templates_write_smoothness_in_the_alpha_of_the_metallic_map() {
+    let fx = packing_fixture();
+    let smoothness = byte(1.0 - 0.4);
+
+    let hdrp = pixel(find(&fx.render_preset("Unity HDRP (Mask Map)"), "MaskMap"));
+    let urp = pixel(find(&fx.render_preset("Unity URP Lit (Metallic Smoothness)"), "MetallicMap"));
+
+    assert_close(hdrp, [byte(0.8), byte(0.6), 0, smoothness], "HDRP mask map: R metallic, G occlusion, B detail mask, A smoothness");
+    assert_close(urp, [byte(0.8), 0, 0, smoothness], "URP metallic map: R metallic, A smoothness");
+}
+
+#[test]
+fn the_usd_preview_surface_template_writes_one_map_per_input_named_like_it() {
+    let fx = packing_fixture();
+
+    let files = fx.render_preset("USD Preview Surface (separate maps)");
+
+    let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+    for (input, expected) in [("roughness", byte(0.4)), ("metallic", byte(0.8)), ("occlusion", byte(0.6)), ("opacity", byte(0.9))] {
+        let file = find(&files, &format!("_{input}.png"));
+        assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is one 8-bit channel: {names:?}");
+        assert_close(pixel(file), [expected, expected, expected, 255], input);
+    }
+    for input in ["diffuseColor", "emissiveColor", "normal"] {
+        assert_eq!(decode(find(&files, &format!("_{input}.png"))).color(), image::ColorType::Rgb8, "{input} is a colour map: {names:?}");
+    }
+    assert!(!names.iter().any(|name| name.contains("clearcoat")), "sets without the coat write no coat maps: {names:?}");
+}
+
+#[test]
+fn only_the_unreal_template_writes_a_directx_normal_map() {
+    let mut fx = packing_fixture();
+    let tilt = Vec3::new(0.3, 0.4, 0.0);
+    let tilt = Vec3::new(tilt.x, tilt.y, (1.0 - tilt.length_squared()).sqrt());
+    fx.set_all(Channel::Normal, |_, _| (tilt * 0.5 + Vec3::splat(0.5)).to_array());
+    let open_gl_green = byte(tilt.y * 0.5 + 0.5);
+
+    for (template, file, flipped) in [
+        ("glTF PBR Metal Roughness", "_Normal.png", false),
+        ("Unreal Engine (Packed)", "_Normal.png", true),
+        ("Unity HDRP (Mask Map)", "_Normal.png", false),
+        ("Unity URP Lit (Metallic Smoothness)", "NormalMap", false),
+        ("Godot 4 (ORM)", "normal", false),
+        ("USD Preview Surface (separate maps)", "_normal.png", false),
+    ] {
+        let green = pixel(find(&fx.render_preset(template), file))[1];
+
+        let want = if flipped { 255 - open_gl_green } else { open_gl_green };
+        assert!((green - want).abs() <= 1, "{template}: green {green} instead of {want}");
+    }
+}
+
+#[test]
+fn spec_templates_write_8_bit_png_files_with_the_expected_colour_encoding() {
+    let fx = packing_fixture();
+    let base = fx.comp.value(Channel::BaseColor, 3, 3).map(|v| byte(linear_to_srgb(v)));
+
+    for template in ["glTF PBR Metal Roughness", "Unreal Engine (Packed)", "Unity HDRP (Mask Map)", "Unity URP Lit (Metallic Smoothness)", "Godot 4 (ORM)"] {
+        let files = fx.render_preset(template);
+
+        let color = files.iter().find(|f| ["BaseColor", "BaseMap", "albedo"].iter().any(|stem| f.name.contains(stem))).unwrap();
+
+        assert!(files.iter().all(|f| f.name.ends_with(".png")), "{template}: {:?}", files.iter().map(|f| &f.name).collect::<Vec<_>>());
+        let [r, g, b, a] = pixel(color);
+        assert_close([r, g, b, 0], [base[0], base[1], base[2], 0], &format!("{template}: sRGB-encoded base color"));
+        assert!((a - byte(0.9)).abs() <= 1, "{template}: opacity in alpha");
+    }
+}
+
+#[test]
+fn a_slash_in_a_project_or_texture_set_name_does_not_make_a_folder() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.name = "Wood/Oak".into();
+    fx.project.texture_sets[0].name = "Body/Hull".into();
+    let preset =
+        ExportPreset { name: "t".into(), maps: vec![gray_map("$project_$textureSet", SourceRef::Channel { channel: Channel::Roughness, component: 0 })] };
+
+    let names: Vec<String> = list_outputs(&fx.project, 0, "sphere", &ExportOptions::new(preset)).unwrap().into_iter().map(|p| p.name).collect();
+
+    assert_eq!(names, ["Wood_Oak_Body_Hull.png"]);
 }

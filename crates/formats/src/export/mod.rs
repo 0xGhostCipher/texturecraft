@@ -53,14 +53,18 @@ pub const FILE_TOKENS: [(&str, &str); 6] = [
     ("$udim", "UV tile number (1001 for sets without UV tiles)"),
 ];
 
-/// Why `template` is not a valid file name template: path separators, `..`, control characters
-/// and unknown `$` variables are refused.
+/// Why `template` is not a valid file name template. `/` separates folders inside the output
+/// directory; a backslash, `..`, a leading `/`, an empty folder name, control characters and
+/// unknown `$` variables are refused.
 pub fn template_error(template: &str) -> Option<String> {
     if template.trim().is_empty() || template.len() > MAX_TEMPLATE {
         return Some(format!("file name \"{template}\" is empty or longer than {MAX_TEMPLATE} bytes"));
     }
-    if template.contains(['/', '\\']) || template.contains("..") || template.chars().any(char::is_control) {
-        return Some(format!("file name \"{template}\" contains a path separator, \"..\" or a control character"));
+    if template.contains('\\') || template.contains("..") || template.chars().any(char::is_control) {
+        return Some(format!("file name \"{template}\" contains a backslash, \"..\" or a control character"));
+    }
+    if template.split('/').any(|segment| segment.trim().is_empty()) {
+        return Some(format!("file name \"{template}\" starts or ends with \"/\" or has an empty folder name"));
     }
     let mut rest = template;
     while let Some(i) = rest.find('$') {
@@ -574,6 +578,11 @@ pub fn sanitize_file_stem(s: &str) -> String {
     out
 }
 
+/// [`sanitize_file_stem`] for each `/`-separated folder name and the file stem.
+pub fn sanitize_file_path(s: &str) -> String {
+    s.split('/').map(sanitize_file_stem).collect::<Vec<_>>().join("/")
+}
+
 /// The files `opts` produces for texture set `ts`, without rendering (for the export dialog).
 /// Template variables: [`FILE_TOKENS`].
 pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOptions) -> Result<Vec<PlannedFile>> {
@@ -635,11 +644,13 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
                 check_psd_size(size, channels, bit_depth)?;
             }
 
+            // A name of the project, mesh or texture set never adds a folder
+            let no_folder = |name: &str| name.replace('/', "_");
             let stem = template
                 .replace("$udim", &tile.unwrap_or(1001).to_string())
-                .replace("$project", &project.name)
-                .replace("$mesh", mesh_name)
-                .replace("$textureSet", &set.name)
+                .replace("$project", &no_folder(&project.name))
+                .replace("$mesh", &no_folder(mesh_name))
+                .replace("$textureSet", &no_folder(&set.name))
                 .replace("$channel", channel_label(map))
                 .replace("$colorSpace", color_space);
 
@@ -647,14 +658,14 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
             let token_stem = tile.map(|_| {
                 let t = template
                     .replace("$udim", "UDIMTOKEN")
-                    .replace("$project", &project.name)
-                    .replace("$mesh", mesh_name)
-                    .replace("$textureSet", &set.name)
+                    .replace("$project", &no_folder(&project.name))
+                    .replace("$mesh", &no_folder(mesh_name))
+                    .replace("$textureSet", &no_folder(&set.name))
                     .replace("$channel", channel_label(map))
                     .replace("$colorSpace", color_space);
-                sanitize_file_stem(&t)
+                sanitize_file_path(&t)
             });
-            let stem = sanitize_file_stem(&stem);
+            let stem = sanitize_file_path(&stem);
             let ext = format.extension();
             let mut name = format!("{stem}.{ext}");
             let mut warnings = Vec::new();
@@ -1544,18 +1555,29 @@ fn keep_first_names<T>(files: Vec<T>, name: impl Fn(&T) -> &str, warnings: impl 
 /// Write exported files into `dir` (created if missing) via [`crate::write_batch_atomic`]:
 /// all filenames are validated and staged before any rename, and a later rename failure rolls
 /// back earlier publications (concurrent readers may briefly observe a mixed generation during
-/// the rename loop). Names must be plain file names.
+/// the rename loop). Names are file names, or relative paths with `/` between sanitized folder
+/// names; the folders are created inside `dir`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_files(files: &[ExportedFile], dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
     std::fs::create_dir_all(dir)?;
+    let root = dir.canonicalize()?;
     let mut targets = Vec::with_capacity(files.len());
     for f in files {
         // Cap the sanitized stem before adding the extension
         let (stem, ext) = f.name.rsplit_once('.').unwrap_or((&f.name, ""));
-        if f.name.is_empty() || stem != sanitize_file_stem(stem) || !ext.chars().all(|c| c.is_ascii_alphanumeric()) || f.name.trim_matches('.').is_empty() {
-            return Err(FormatError::Invalid(format!("\"{}\" is not a plain file name", f.name)));
+        if f.name.is_empty() || stem != sanitize_file_path(stem) || !ext.chars().all(|c| c.is_ascii_alphanumeric()) || f.name.trim_matches('.').is_empty() {
+            return Err(FormatError::Invalid(format!("\"{}\" is not a file name or a relative path", f.name)));
         }
-        targets.push((dir.join(&f.name), f.bytes.as_slice()));
+
+        // A folder that links elsewhere must not take the file out of `dir`
+        let target = dir.join(&f.name);
+        if let Some(parent) = target.parent().filter(|parent| *parent != dir) {
+            std::fs::create_dir_all(parent)?;
+            if !parent.canonicalize()?.starts_with(&root) {
+                return Err(FormatError::Invalid(format!("\"{}\" leads out of the output folder", f.name)));
+            }
+        }
+        targets.push((target, f.bytes.as_slice()));
     }
     crate::write_batch_atomic(targets.iter().map(|(path, bytes)| (path.as_path(), *bytes)))?;
     Ok(targets.into_iter().map(|(path, _)| path).collect())
