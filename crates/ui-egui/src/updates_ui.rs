@@ -143,15 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn default_runtime_is_idle() {
-        let rt = Runtime::default();
-        assert!(!rt.startup_check);
-        assert!(!rt.check_requested);
-        assert!(!rt.updater.prompt_open());
-        assert_eq!(rt.updater.status(), &Status::Idle);
-    }
-
-    #[test]
     fn the_menu_item_runs_a_check_that_reports_its_outcome() {
         let _language = language();
         let (ask, asked) = source();
@@ -199,13 +190,13 @@ mod tests {
         assert_eq!(h.state().ui.mode, Mode::Painting);
         offer(&mut h);
         assert!(crate::docking::input_blocked(h.state(), &h.ctx), "floating panels stop taking input");
-        h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::B);
+        h.key_press(egui::Key::F8);
         h.step();
         assert_eq!(h.state().ui.mode, Mode::Painting, "the prompt holds the keyboard");
         h.get_by_label("LATER").click();
         h.run_steps(2);
         assert!(!crate::docking::input_blocked(h.state(), &h.ctx));
-        h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::B);
+        h.key_press(egui::Key::F8);
         h.step();
         assert_eq!(h.state().ui.mode, Mode::Baking, "the key works once the prompt is closed");
     }

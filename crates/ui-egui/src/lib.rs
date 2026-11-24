@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod anchor_properties;
 mod angle_dial;
 mod ask;
 mod bake_job;
@@ -16,44 +17,67 @@ pub mod bake_presets;
 mod bake_report;
 mod bake_scene;
 mod color_management;
+mod color_picker;
 mod color_selection_editor;
+mod compare_properties;
+mod compare_settings;
 pub mod control;
 mod decal_drop;
 mod display_settings;
 pub mod dock;
 pub mod docking;
+mod drawn_icon;
 mod environment_picker;
+mod exact_entry_open;
 mod export_panel;
 pub mod export_templates;
 mod export_window;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod file_dialogs;
-mod fill_source_slot;
-mod fill_source_target;
+mod fill_material_panel;
+mod fill_panel;
+mod fill_pictures;
+mod fill_symmetry_panel;
+mod filter_properties;
 mod filter_slot;
+mod filter_transform_rows;
+mod folder_properties;
 pub mod fonts;
+mod frame_gizmo;
 mod generator_panel;
 pub mod gpu;
 mod gray_slider;
 mod grid_tile;
+mod histogram_cache;
 pub mod i18n;
 pub mod id_color_pick;
 #[cfg(not(target_arch = "wasm32"))]
 mod import_resources;
 mod inactive_set_hint;
+mod instance_properties;
 pub mod keymap;
 pub mod layer_panel;
+mod layer_toolbar;
 mod layout_dialog;
+mod levels_display;
 mod levels_editor;
 mod levels_handle;
 mod levels_properties;
 mod line_snap;
 mod list_action;
 pub mod log_panel;
+mod mask_fill_panel;
+mod mask_paint_panel;
 mod mask_preview_image;
+mod mask_source_choice;
+mod material_orb;
 mod material_preview_image;
 pub mod menus;
 mod mesh_export_options;
+#[cfg(not(target_arch = "wasm32"))]
+mod mode_layout;
+mod move_hold;
+pub mod move_on_model;
 mod name_error;
 mod named_layout;
 pub mod named_layouts;
@@ -61,13 +85,24 @@ mod nav_button;
 pub mod nav_buttons;
 mod nav_view;
 pub mod new_project_advanced;
+mod orb_environment;
+mod orb_material;
+pub mod orb_previews;
 mod orb_shape;
 pub mod parity;
+mod past_end;
 mod path_hit;
 mod path_surface_cache;
 mod pattern_panel;
 mod pattern_target;
 pub mod pbr_import;
+mod picker_group;
+mod picker_tab;
+mod placed_fill_slot;
+mod placement;
+mod pointer_lock;
+mod popup_drag;
+mod preview_dots;
 mod preview_image;
 mod preview_request;
 mod preview_worker;
@@ -75,21 +110,28 @@ pub mod profile;
 #[cfg(not(target_arch = "wasm32"))]
 mod project_config;
 pub mod project_form;
+mod projection_gizmo;
+mod projection_kind;
+mod projection_preview;
+mod projector_outline;
 pub mod properties_popup;
+mod property_sheet;
 mod query_field;
 mod rail_popup;
+mod reference;
 pub mod render_mode;
+mod resolution_band;
 mod resource_panel;
 mod resource_picker;
-mod resource_picker_anchor;
-mod resource_picker_choice;
 mod resource_picker_item;
-mod resource_picker_tab;
-mod resource_picker_tile;
+mod round_gizmo;
 mod running_bake;
 pub mod saved_search;
 mod screen_color_pick;
+pub mod screen_pick;
 mod section_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod session_log_file;
 pub mod settings_window;
 pub mod shader_settings;
 pub mod shelf;
@@ -100,15 +142,19 @@ pub mod shelf_preview;
 mod shelf_tabs;
 mod shelf_toolbar;
 pub mod shelf_view;
+mod slot_thumbnail;
 #[cfg(not(target_arch = "wasm32"))]
 mod smart_mask_menu;
 mod soft_box;
+mod source_choice;
+mod source_slot;
 pub mod state;
 mod surface_paint_point;
 pub mod symmetry;
 pub mod theme;
 pub mod thumbs;
 mod tile_edits;
+mod tile_picture;
 pub mod titlebar;
 pub mod toolbar;
 pub mod ui_state_store;
@@ -120,6 +166,8 @@ mod uv_tile_grid;
 mod uv_view_map;
 mod view_mode_picker;
 pub mod viewport;
+mod viewport_mesh_bounds;
+mod warp_checker;
 pub mod web_files;
 pub mod widgets;
 pub mod windows;
@@ -191,6 +239,9 @@ pub struct Toast {
 
 pub struct TextureCraftApp {
     pub session: Session,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) session_log_file: Option<session_log_file::SessionLogFile>,
+    viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
     /// Yaw and pitch an Alt+Shift drag has reached before snapping to 90° steps (see `viewport`).
@@ -234,14 +285,22 @@ pub struct TextureCraftApp {
     pub last_paint_point: Option<uv_paint_point::SurfacePaintPoint>,
     /// The last finished 2D stroke's endpoint, scoped to its mesh and texture set for Shift+click lines
     pub last_paint_uv: Option<uv_paint_point::UvPaintPoint>,
-    /// The decal layer the next click in the 3D view places.
-    pub placing_decal: Option<texturecraft_engine::core::LayerId>,
+    /// The fill whose Move on model button is held down: dragging slides its projection, Shift or the right button turns it, the wheel scales it
+    pub moving_on_model: Option<move_on_model::MoveOnModel>,
     /// The Properties popup a right click in a view opens.
     pub properties_popup: Option<properties_popup::PropertiesPopup>,
+    properties_scroll: property_sheet::PropertiesScroll,
     /// The color selection the next click in the 3D or 2D view picks an ID color for
     pub picking_id_color: Option<id_color_pick::IdColorPick>,
     /// Whether the next click on the model places the symmetry planes (Pick point in the symmetry settings)
     pub picking_symmetry_plane: bool,
+    /// The colour bar whose eyedropper waits for a click on the model or, outside the app, on the screen
+    pub picking_color: Option<egui::Id>,
+    /// That eyedropper pick's wait for a click outside the app
+    pub screen_pick: Option<screen_pick::ScreenPick>,
+    eyedropper_project_id: u64,
+    /// Whether an eyedropper pick also takes a click outside the app (only with a real window: never in tests)
+    pub screen_picking: bool,
     /// The wgpu state (screenshots read the renderer's targets).
     pub render_state: Option<eframe::egui_wgpu::RenderState>,
     /// CJK fallback fonts for the UI language.
@@ -291,10 +350,22 @@ pub(crate) fn start_ui(saved: Option<UiState>, session: &mut Session) -> UiState
     }
 }
 
+fn uses_wayland(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("wayland_window")).unwrap_or(false))
+}
+
 impl TextureCraftApp {
     /// The app around `session`, with the saved UI state (or defaults in the OS language) and the GPU viewport.
     pub fn new(cc: &eframe::CreationContext<'_>, mut session: Session) -> TextureCraftApp {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let uses_wayland = raw_window_handle::HasWindowHandle::window_handle(cc)
+                .is_ok_and(|window| matches!(window.as_raw(), raw_window_handle::RawWindowHandle::Wayland(_)));
+            cc.egui_ctx.data_mut(|data| data.insert_temp(egui::Id::unique("wayland_window"), uses_wayland));
+        }
+
         theme::install(&cc.egui_ctx);
+        popup_drag::install(&cc.egui_ctx);
 
         // Bakes cast their rays on a GPU device of their own (created on the first bake)
         #[cfg(not(target_arch = "wasm32"))]
@@ -304,6 +375,7 @@ impl TextureCraftApp {
         // The first run speaks the OS (or browser) language
         let mut ui_store = ui_state_store::UiStateStore::new(ui_state_store::FILE.get().cloned());
         let mut ui = start_ui(ui_store.load(cc.storage), &mut session);
+        ui.trim_recent();
 
         // No window opens by itself with no project (a saved layout may have left Export open)
         if !session.project_open {
@@ -313,12 +385,16 @@ impl TextureCraftApp {
         let next_autosave = autosave_period_seconds(ui.prefs.autosave_minutes);
         ui.prefs.apply_resource_limits();
 
+        let project_id = session.project_id;
         let mut app = TextureCraftApp {
             camera_glide: None,
             orbit_snap: None,
             uv_rotation_snap: None,
             uv_view_reset: false,
             session,
+            #[cfg(not(target_arch = "wasm32"))]
+            session_log_file: None,
+            viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds::default(),
             ui,
             ui_store,
             gpu,
@@ -342,10 +418,18 @@ impl TextureCraftApp {
             render: render_mode::RenderView::default(),
             last_paint_point: None,
             last_paint_uv: None,
-            placing_decal: None,
+            moving_on_model: None,
             properties_popup: None,
+            properties_scroll: property_sheet::PropertiesScroll::default(),
             picking_id_color: None,
             picking_symmetry_plane: false,
+            picking_color: None,
+            screen_pick: None,
+            eyedropper_project_id: project_id,
+            #[cfg(not(target_arch = "wasm32"))]
+            screen_picking: raw_window_handle::HasWindowHandle::window_handle(cc).is_ok(),
+            #[cfg(target_arch = "wasm32")]
+            screen_picking: false,
             render_state: cc.wgpu_render_state.clone(),
             fonts: fonts::UiFonts::default(),
             banner: None,
@@ -381,6 +465,13 @@ impl TextureCraftApp {
         {
             // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
+
+            if cc.winit_window().is_some() {
+                match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
+                    Ok(file) => app.session_log_file = Some(file),
+                    Err(error) => app.toast(format!("{}: {error}", i18n::tr("Could not create the session log")), true),
+                }
+            }
 
             // An export folder still at the default follows the data folder
             if app.ui.export.dir == data_folder("").join("export").display().to_string() {
@@ -591,7 +682,8 @@ impl TextureCraftApp {
                     return false;
                 };
 
-                let resized = self.session.doc.project.texture_set(set).is_ok_and(|set| set.resolution != c.size);
+                // A cook for another size than the layer's picked or texture set resolution is redone
+                let resized = self.session.link_size(c.layer).is_ok_and(|now| now != c.size);
                 let baked = self.session.baked(set);
                 let stale = resized || c.baked_inputs.iter().any(|input| !input.is_current(baked));
                 done.push((c.layer, c.values.clone(), stale, result));
@@ -923,6 +1015,13 @@ struct CameraGlide {
 
 const GLIDE_SECONDS: f64 = 0.35;
 
+/// The share of the running frame rate and frame time averages each frame keeps (an average over about ten frames)
+const FRAME_AVERAGE_KEEP: f32 = 0.9;
+/// The interface scale applied: wider than the Settings slider, so a scale set elsewhere still applies within reason
+const UI_SCALE_APPLIED: std::ops::RangeInclusive<f32> = 0.5..=3.0;
+/// Zoom factors closer than this are the same zoom (float noise), so the zoom is not set again each frame
+const SAME_ZOOM_TOLERANCE: f32 = 1e-3;
+
 impl TextureCraftApp {
     /// Advance the camera glide by one frame.
     fn step_camera_glide(&mut self, ctx: &egui::Context) {
@@ -951,6 +1050,11 @@ impl TextureCraftApp {
 }
 
 impl eframe::App for TextureCraftApp {
+    /// A drag that holds the pointer reads the pointer's moves as moves of a pointer no screen edge stops
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        pointer_lock::rewrite(ctx, raw_input);
+    }
+
     /// The browser never tells eframe the page is closing, so save often there.
     fn auto_save_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(if cfg!(target_arch = "wasm32") { 5 } else { 30 })
@@ -964,13 +1068,14 @@ impl eframe::App for TextureCraftApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let t0 = now_ms();
-        let now = ctx.input(|i| i.time);
-        let dt = (now - self.last_time) as f32;
-        if dt > 0.0 {
-            self.fps = self.fps * 0.9 + (1.0 / dt) * 0.1;
+        let logic_start_ms = now_ms();
+        let now = ctx.input(|input| input.time);
+        let frame_seconds = (now - self.last_time) as f32;
+        if frame_seconds > 0.0 {
+            self.fps = self.fps * FRAME_AVERAGE_KEEP + (1.0 / frame_seconds) * (1.0 - FRAME_AVERAGE_KEEP);
         }
         self.last_time = now;
+
         let style = (self.ui.prefs.brightness, self.ui.prefs.accent);
         if self.styled != Some(style) {
             theme::apply(ctx, style.0, style.1);
@@ -978,16 +1083,17 @@ impl eframe::App for TextureCraftApp {
         }
         self.step_camera_glide(ctx);
         self.ui.prefs.apply_resource_limits();
+
         control::poll(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.run_file_dialog_answers();
         web_files::poll(self);
-        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        let dropped = ctx.input(|input| input.raw.dropped_files.clone());
 
         // A folder, a zip or several PBR maps dropped together open the PBR import dialog
         #[cfg(not(target_arch = "wasm32"))]
         let consumed = if !dropped.is_empty() {
-            let paths: Vec<std::path::PathBuf> = dropped.iter().map(|f| f.path().to_path_buf()).collect();
+            let paths: Vec<std::path::PathBuf> = dropped.iter().map(|file| file.path().to_path_buf()).collect();
             pbr_import::dropped(self, &paths)
         } else {
             Vec::new()
@@ -1004,16 +1110,18 @@ impl eframe::App for TextureCraftApp {
         self.poll_link_cooks(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_link_imports(ctx);
-        self.thumbs.sync_images(&self.session.images, self.session.revision);
+        self.thumbs.sync_project_previews(&self.session);
+        self.properties_scroll.sync(&self.session);
 
         // The library shelf rescans when the window comes back (MaterialCraft may have sent a material)
-        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        let focused = ctx.input(|input| input.viewport().focused).unwrap_or(true);
         if focused && !self.focused {
             self.library = None;
         }
         self.focused = focused;
-        let scale = self.ui.prefs.ui_scale.clamp(0.5, 3.0);
-        if (ctx.zoom_factor() - scale).abs() > 1e-3 {
+
+        let scale = self.ui.prefs.ui_scale.clamp(*UI_SCALE_APPLIED.start(), *UI_SCALE_APPLIED.end());
+        if (ctx.zoom_factor() - scale).abs() > SAME_ZOOM_TOLERANCE {
             ctx.set_zoom_factor(scale);
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1027,17 +1135,27 @@ impl eframe::App for TextureCraftApp {
         self.fonts.update(ctx, i18n::current().code, self.ui.windows.settings);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::tick(self, ctx);
+
         self.bindings.sync(&self.ui.keymap, craft_keymap::egui::platform(ctx));
         menus::shortcuts(self, ctx);
+        screen_pick::sync(self, ctx);
+        move_on_model::end_when_gone(self, ctx);
 
         // The Path tool's curve repaints (a preview while placed) as its points, brush or material change
-        if let Err(e) = self.session.path_live() {
+        if let Err(error) = self.session.path_live() {
             self.session.cancel_path();
-            self.toast(e.to_string(), true);
+            self.toast(error.to_string(), true);
         }
         profile::drive(self, ctx);
-        self.toasts.retain(|t| t.until > now);
-        self.profiler.logic_ms = (now_ms() - t0) as f32;
+        self.toasts.retain(|toast| toast.until > now);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file) = &mut self.session_log_file
+            && let Err(error) = file.sync(self.session.log_id, &self.session.log)
+        {
+            self.session_log_file = None;
+            self.toast(format!("{}: {error}", i18n::tr("Could not update the session log")), true);
+        }
+        self.profiler.logic_ms = (now_ms() - logic_start_ms) as f32;
 
         // Last, so it sees every close request this frame's work made
         windows::close_request(self, ctx);
@@ -1046,7 +1164,7 @@ impl eframe::App for TextureCraftApp {
     #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        let started_ms = now_ms();
+        let ui_start_ms = now_ms();
 
         // Baking and rendering need a project (a saved layout may start in one of them)
         if !self.session.project_open {
@@ -1057,9 +1175,7 @@ impl eframe::App for TextureCraftApp {
             titlebar::show(self, ui);
             banner(self, ui);
             toolbar::status_bar(self, ui);
-            if self.ui.toolbar_tools {
-                toolbar::tool_shelf(self, ui);
-            }
+            toolbar::tool_shelf(self, ui);
             self.ui.sync_mode_dock();
             if self.ui.mode != state::Mode::Baking && self.ui.toolbar_docks {
                 toolbar::rail(self, ui);
@@ -1083,10 +1199,16 @@ impl eframe::App for TextureCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.file_dialogs.show_pending(frame);
 
-        let ended_ms = now_ms();
-        let elapsed_ms = (ended_ms - started_ms) as f32;
-        self.ui_ms = if self.ui_ms == 0.0 { elapsed_ms } else { self.ui_ms * 0.9 + elapsed_ms * 0.1 };
-        self.profiler.end_frame(ended_ms, elapsed_ms);
+        // Last, so no widget's pointer replaces it: an armed eyedropper is the pointer over the whole window
+        if self.picking_color.is_some() {
+            screen_pick::paint_cursor(&ctx, None, screen_pick::SwatchColor::shown(&ctx));
+        }
+        pointer_lock::settle(&ctx);
+
+        let end_ms = now_ms();
+        let ui_frame_ms = (end_ms - ui_start_ms) as f32;
+        self.ui_ms = if self.ui_ms == 0.0 { ui_frame_ms } else { self.ui_ms * FRAME_AVERAGE_KEEP + ui_frame_ms * (1.0 - FRAME_AVERAGE_KEEP) };
+        self.profiler.end_frame(end_ms, ui_frame_ms);
     }
 }
 

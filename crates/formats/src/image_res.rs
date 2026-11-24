@@ -25,21 +25,21 @@ pub fn decode_image(bytes: &[u8]) -> Result<DecodedImage> {
 pub fn decode_image_within(bytes: &[u8], max_texels: u64) -> Result<DecodedImage> {
     let limits = image::Limits::default();
     if craft_image_codecs::detect(bytes) == Some(Format::Png) {
-        return decode_imported_png(bytes, max_texels, limits.max_alloc.unwrap_or(u64::MAX));
+        return decode_png(bytes, Limits::new(MAX_IMAGE_SIZE, MAX_IMAGE_SIZE, max_texels, limits.max_alloc.unwrap_or(u64::MAX)));
     }
     decode_image_with_limits(bytes, max_texels, limits)
 }
 
-fn decode_imported_png(bytes: &[u8], max_texels: u64, max_alloc: u64) -> Result<DecodedImage> {
+fn decode_png(bytes: &[u8], limits: Limits) -> Result<DecodedImage> {
     if let Ok((width, height, _)) = craft_image_codecs::png_probe::header(bytes) {
         if width == 0 || height == 0 || width > MAX_IMAGE_SIZE || height > MAX_IMAGE_SIZE {
             return Err(FormatError::TooLarge(format!("image is {width}x{height} (limit {MAX_IMAGE_SIZE})")));
         }
-        if u64::from(width) * u64::from(height) > max_texels {
-            return Err(FormatError::TooLarge(format!("image is {width}x{height}, more than {max_texels} texels")));
+        if u64::from(width) * u64::from(height) > limits.max_pixels {
+            return Err(FormatError::TooLarge(format!("image is {width}x{height}, more than {} texels", limits.max_pixels)));
         }
     }
-    let options = DecodeOptions { limits: Limits::new(MAX_IMAGE_SIZE, MAX_IMAGE_SIZE, max_texels, max_alloc), keep_orientation: true };
+    let options = DecodeOptions { limits, keep_orientation: true };
     let png = crate::guard("image", || {
         craft_image_codecs::decode_as_with(Format::Png, bytes, &options).map_err(|error| match error {
             CodecError::LimitExceeded(message) => FormatError::TooLarge(message),
@@ -78,11 +78,16 @@ fn decode_imported_png(bytes: &[u8], max_texels: u64, max_alloc: u64) -> Result<
 
 /// Decode a cook output under both its declared dimensions and decoder allocation budget.
 pub fn decode_cooked_image(bytes: &[u8], size: [u32; 2], max_decoder_bytes: u64) -> Result<DecodedImage> {
+    let [width, height] = size;
+    let texels = (u64::from(width) * u64::from(height)).min(MAX_RESOURCE_TEXELS);
+    if craft_image_codecs::detect(bytes) == Some(Format::Png) {
+        let limits = Limits::new(width.min(MAX_IMAGE_SIZE), height.min(MAX_IMAGE_SIZE), texels, max_decoder_bytes);
+        return decode_png(bytes, limits);
+    }
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(max_decoder_bytes);
-    limits.max_image_width = Some(size[0]);
-    limits.max_image_height = Some(size[1]);
-    let texels = (u64::from(size[0]) * u64::from(size[1])).min(MAX_RESOURCE_TEXELS);
+    limits.max_image_width = Some(width);
+    limits.max_image_height = Some(height);
     decode_image_with_limits(bytes, texels, limits)
 }
 
@@ -337,20 +342,46 @@ mod tests {
     }
 
     #[test]
-    fn imported_png_keeps_color_under_alpha_and_gray16_precision() {
+    fn imported_and_cooked_png_keeps_color_under_alpha_and_integer_precision() {
+        use image::ImageEncoder;
+
         let rgba = image::DynamicImage::ImageRgba8(
             image::RgbaImage::from_raw(2, 2, vec![61, 113, 173, 0, 37, 103, 237, 81, 34, 99, 5, 193, 89, 211, 239, 255]).unwrap(),
         );
         let gray_alpha = image::DynamicImage::ImageLumaA16(image::ImageBuffer::from_raw(2, 2, vec![1234, 0, 1, 27, 0xabcd, 60211, 0xffff, 0xffff]).unwrap());
-        for pixels in [rgba, gray_alpha] {
+        let rgb =
+            image::DynamicImage::ImageRgb16(image::ImageBuffer::from_raw(2, 2, vec![0, 19, 256, 17, 1_235, 89, 0xabcd, 1_024, 65_534, 0, 1, 65_535]).unwrap());
+        for pixels in [rgba, gray_alpha, rgb] {
             let mut png = Vec::new();
-            pixels.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+            let mut encoder = image::codecs::png::PngEncoder::new(&mut png);
+            // A generated TIFF Orientation=6 tag. Cooked data maps stay in stored row order.
+            let exif = b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
+            encoder.set_exif_metadata(exif.to_vec()).unwrap();
+            encoder.write_image(pixels.as_bytes(), 2, 2, pixels.color().into()).unwrap();
             let expected = pixels.into_rgba32f();
             let imported = decode_image_within(&png, 4).unwrap();
             assert_eq!((imported.width, imported.height), (2, 2));
             assert!(imported.srgb);
             assert_eq!(imported.rgba, expected.into_raw().as_chunks::<4>().0);
+            assert_eq!(decode_cooked_image(&png, [2, 2], 1 << 20).unwrap(), imported);
         }
+    }
+
+    #[test]
+    fn cooked_png_checks_reported_sides_and_decoder_allowance() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(8, 2, image::Rgba([3, 47, 187, 0])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let header = &png[..33];
+        // Each report allows 16 texels but falls short on an individual axis.
+        for size in [[4, 4], [16, 1]] {
+            for data in [png.as_slice(), header] {
+                assert!(matches!(decode_cooked_image(data, size, 1 << 20), Err(FormatError::TooLarge(_))));
+            }
+        }
+        assert!(matches!(decode_cooked_image(header, [8, 2], 1 << 20), Err(FormatError::Malformed { .. })));
+        assert!(matches!(decode_cooked_image(&png, [8, 2], 8 * 2 * 4 - 1), Err(FormatError::TooLarge(_))));
+        let valid = decode_cooked_image(&png, [8, 2], 1 << 20).unwrap();
+        assert_eq!([valid.width, valid.height], [8, 2]);
     }
 
     #[test]
