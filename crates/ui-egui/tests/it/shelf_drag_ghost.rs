@@ -1,5 +1,4 @@
-//! Dragging an asset from the Assets panel shows it at the pointer with a badge on its corner that says
-//! whether the place under the pointer takes it
+//! A dragged asset or layer shows at the pointer with a badge saying whether the place under it takes it
 
 use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
@@ -7,7 +6,7 @@ use egui_kittest::kittest::Queryable;
 use texturecraft_engine::geom::glam::Vec2;
 use texturecraft_engine::materials::MATERIALS;
 use texturecraft_ui_egui::TextureCraftApp;
-use texturecraft_ui_egui::shelf_drag_ghost::{Verdict, shown};
+use texturecraft_ui_egui::shelf_drag_ghost::{ShelfDragVerdict, shown};
 
 /// Distance between the view points searched for a set or the background
 const SEARCH_STEP: f32 = 8.0;
@@ -58,7 +57,36 @@ fn the_badge_says_whether_the_place_under_the_pointer_takes_the_asset_without_co
         assert!(ghost.badge.min.x > target.x && ghost.badge.min.y > target.y, "the badge leaves the pointer's tip clear");
         seen.push(ghost.verdict);
     }
-    assert_eq!(seen, [Verdict::Valid, Verdict::NotValid], "a texture set takes a material, the background doesn't");
+    assert_eq!(seen, [ShelfDragVerdict::Valid, ShelfDragVerdict::NotValid], "a texture set takes a material, the background doesn't");
+
+    harness.event(Event::PointerButton { pos: background, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    harness.run_steps(2);
+    assert!(shown(&harness.ctx).is_none(), "the ghost goes when the drag ends");
+}
+
+#[test]
+fn a_layer_dragged_in_the_layer_stack_gets_the_same_ghost_and_badge() {
+    let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
+    for name in ["Ghost low", "Ghost high"] {
+        texturecraft_engine::execute(&mut session, "layer.add.paint", &serde_json::json!({ "name": name })).unwrap();
+    }
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    harness.run_steps(4);
+    let background = point_over(&harness, None);
+    let (high, low) = (harness.get_by_label("Ghost high").rect().center(), harness.get_by_label("Ghost low").rect().center());
+
+    harness.event(Event::PointerButton { pos: high, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    harness.run_steps(2);
+    harness.hover_at(high + vec2(DRAG_START, DRAG_START));
+    harness.run_steps(2);
+
+    let mut seen = Vec::new();
+    for target in [low, background] {
+        harness.hover_at(target);
+        harness.run_steps(2);
+        seen.push(shown(&harness.ctx).expect("the dragged layer follows the pointer").verdict);
+    }
+    assert_eq!(seen, [ShelfDragVerdict::Valid, ShelfDragVerdict::NotValid], "another row takes the layer, the 3D view doesn't");
 
     harness.event(Event::PointerButton { pos: background, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
     harness.run_steps(2);

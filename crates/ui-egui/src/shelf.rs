@@ -211,7 +211,6 @@ pub fn drop_target(app: &mut TextureCraftApp, ui: &Ui, response: &egui::Response
         DecalDrop::show_menu(app, ui, response);
     }
 
-    let tokens = Tokens::get(ui.ctx());
     let accepts = |drag: &ShelfDrag| match drag.asset {
         Asset::Alpha(_) => true,
         Asset::Material(_) | Asset::Library(_) => zone != DropZone::Brush,
@@ -222,8 +221,7 @@ pub fn drop_target(app: &mut TextureCraftApp, ui: &Ui, response: &egui::Response
     if let Some(drag) = response.dnd_hover_payload::<ShelfDrag>().filter(|drag| accepts(drag)) {
         // The 3D view outlines the set under the pointer itself; its background takes nothing
         if !onto_set(&drag.asset) {
-            ui.painter().rect_stroke(response.rect.shrink(1.0), 3.0, Stroke::new(2.0, tokens.accent), egui::StrokeKind::Inside);
-            crate::shelf_drag_ghost::accept(ui.ctx());
+            crate::shelf_drag_ghost::outline_target(ui, response.rect);
         } else if set_under_pointer(app, ui, response).is_some() {
             crate::shelf_drag_ghost::accept(ui.ctx());
         }

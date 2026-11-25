@@ -139,6 +139,7 @@ pub mod shader_settings;
 pub mod shelf;
 pub mod shelf_custom_preview;
 pub mod shelf_drag_ghost;
+pub mod shelf_drag_ghost_shown;
 pub mod shelf_drag_verdict;
 mod shelf_entry;
 pub mod shelf_favorite;

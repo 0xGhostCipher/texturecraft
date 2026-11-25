@@ -174,11 +174,9 @@ pub(crate) fn layers(app: &mut TextureCraftApp, ui: &mut Ui) {
             _ => {}
         }
         let material = response.dnd_hover_payload::<ShelfDrag>().is_some_and(|drag| drag.asset.is_material());
-        if material {
-            crate::shelf_drag_ghost::accept(ui.ctx());
-        }
         if response.dnd_hover_payload::<u64>().is_some() || material {
             ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(DROP_STROKE, tokens.accent));
+            crate::shelf_drag_ghost::accept(ui.ctx());
         }
     });
     select_all_layers(app, ui);
@@ -729,6 +727,7 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
     }
     if row.drag_started() && !renaming {
         row.dnd_set_drag_payload(layer.id.0);
+        crate::shelf_drag_ghost::start_layer(ui.ctx(), &layer.name);
     }
 
     // A folder midpoint accepts child drops; a smart mask replaces the current mask
@@ -745,7 +744,7 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
     let shelf_material = shelf.as_ref().is_some_and(Asset::is_material);
     let shelf_mask = matches!(shelf, Some(Asset::SmartMask(_) | Asset::SavedMask(_)));
     let shelf_filter = matches!(shelf, Some(Asset::Filter(_))) && !layer.is_group();
-    if shelf_material || shelf_mask || shelf_filter {
+    if moving || shelf_material || shelf_mask || shelf_filter {
         crate::shelf_drag_ghost::accept(&row.ctx);
     }
     if moving || shelf_material {
@@ -1797,8 +1796,7 @@ pub(crate) fn image_drop(ui: &Ui, resp: &egui::Response) -> Option<String> {
         return None;
     }
 
-    ui.painter().rect_stroke(resp.rect.shrink(1.0), 3.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), egui::StrokeKind::Inside);
-    crate::shelf_drag_ghost::accept(ui.ctx());
+    crate::shelf_drag_ghost::outline_target(ui, resp.rect);
     match dnd_release::<ShelfDrag>(resp).map(|d| d.asset.clone()) {
         Some(Asset::Texture(name)) => Some(name),
         _ => None,
