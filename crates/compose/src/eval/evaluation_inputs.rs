@@ -23,6 +23,8 @@ pub(super) struct EvaluationInputs<'a> {
     depth_maps: Mutex<Vec<ViewDepth>>,
     gradients: Mutex<HashMap<usize, Arc<PreparedGradient>>>,
     coverage: OnceLock<u64>,
+    /// The project is the session's stack as drawn, not one cut below an effect (a histogram's)
+    whole_stack: bool,
 }
 
 impl<'a> EvaluationInputs<'a> {
@@ -35,7 +37,18 @@ impl<'a> EvaluationInputs<'a> {
             depth_maps: Mutex::new(Vec::new()),
             gradients: Mutex::default(),
             coverage: OnceLock::new(),
+            whole_stack: true,
         }
+    }
+
+    /// These inputs evaluating a project cut below an effect: it reads the anchor heights the whole stack prepared
+    pub(super) fn below_a_cut(self) -> Self {
+        Self { whole_stack: false, ..self }
+    }
+
+    /// Whether the project evaluated is the session's whole stack
+    pub(super) fn whole_stack(&self) -> bool {
+        self.whole_stack
     }
 
     /// The working layout's coverage identity, hashed on first use only: the whole-map generator fields' cache reads it ([`crate::field_cache::coverage_identity`])

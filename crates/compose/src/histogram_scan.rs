@@ -11,8 +11,9 @@ pub(crate) fn histogram_scan(value: f32, position: f32, contrast: f32) -> f32 {
     }
 
     let width = 1.0 - contrast.clamp(0.0, 1.0);
-    // The ramp's low end runs from 1 at position 0 to −width at position 1, so the ends are wholly black or white
-    let low = (1.0 - position.clamp(0.0, 1.0)) * (1.0 + width) - width;
+
+    // The ramp's low end runs from 1 towards position 0 to −width towards position 1
+    let low = (1.0 - position) * (1.0 + width) - width;
     if width <= f32::EPSILON {
         return if value >= low { 1.0 } else { 0.0 };
     }

@@ -28,7 +28,7 @@ pub(crate) struct GeneratorMaps {
 
 impl GeneratorMaps {
     /// The maps `generator` reads, with the detail sizes `needed` marks (one flag per blurred size); `coverage` gives the working layout's coverage identity for whole-map fields
-    pub fn of(inp: &Inputs, generator: &Generator, needed: &[bool], coverage: impl Fn() -> u64) -> GeneratorMaps {
+    pub fn of(inp: &Inputs, generator: &Generator, needed: &[bool], coverage: impl FnOnce() -> u64) -> GeneratorMaps {
         let micro = generator.micro_in_use().map(|micro| micro.clone().clamped(generator.kind));
         let micro_curvature =
             micro.as_ref().filter(|_| MicroDetails::has_curvature(generator.kind)).and_then(|micro| MicroCurvature::of(inp, generator.kind, micro));

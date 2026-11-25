@@ -9,7 +9,7 @@ use crate::field_cache_key::FieldCacheKey;
 use crate::working_field::working_block;
 
 /// Most fields cached, and the bytes they may hold (the newest is kept whatever its size)
-const CACHE_ENTRIES: usize = 8;
+pub(crate) const CACHE_ENTRIES: usize = 8;
 const CACHE_BYTES: usize = 256 << 20;
 
 /// Texels hashed together before their hashes are combined, so the coverage hashes in parallel

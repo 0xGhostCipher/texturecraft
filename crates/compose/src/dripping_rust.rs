@@ -118,6 +118,7 @@ fn drips(inp: &Inputs, rust: &DrippingRustParameters, field: &[f32], (width, hei
         }
         field.get((y * i64::from(width) + x) as usize).copied()
     };
+
     // Central differences, one-sided at an island's border
     let slope = |before: Option<f32>, here: f32, after: Option<f32>| match (before, after) {
         (Some(before), Some(after)) => (after - before) * 0.5,

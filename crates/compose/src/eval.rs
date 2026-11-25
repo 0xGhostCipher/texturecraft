@@ -2445,7 +2445,9 @@ fn prepare_micro_anchors(inp: &EvaluationInputs) {
             }
         }
     }
-    crate::micro_details::keep_anchor_heights(inp, &readers.iter().map(|(_, anchor)| *anchor).collect::<Vec<_>>());
+    if inp.whole_stack() {
+        crate::micro_details::keep_anchor_heights(inp, &readers.iter().map(|(_, anchor)| *anchor).collect::<Vec<_>>());
+    }
     if readers.is_empty() {
         return;
     }
@@ -2457,6 +2459,10 @@ fn prepare_micro_anchors(inp: &EvaluationInputs) {
     };
     readers.sort_by_key(|(_, anchor)| drawn_at(*anchor));
     for (reader, anchor) in readers {
+        // A stack cut below an effect (a histogram's) reads the heights the whole stack prepared, building only those missing
+        if !inp.whole_stack() && crate::micro_details::has_anchor_heights(inp, anchor) {
+            continue;
+        }
         let Some(stack) = StackKey::new(inp.project, inp.pixels, inp.baked, inp.images, inp.ts, &set.stack) else { return };
         crate::micro_details::prepare_anchor_heights(inp, anchor, stack, || anchor_heights(inp, reader, anchor));
     }
@@ -3446,6 +3452,7 @@ impl<'a, 'b> Texel<'a, 'b> {
         if let Some(section) = generator.section_controls() {
             return self.section_signal(generator, &section, maps);
         }
+
         // The kinds with only their own controls: resolved once per plan, not per texel
         let resolved;
         let controls = match maps.controls.as_deref() {
@@ -5111,7 +5118,7 @@ pub fn effect_histogram(inp: &Inputs, effect: LayerId, channel: Channel, bins: u
     let (cut, in_mask) = cut_below(inp.project, owner, effect)?;
     let cut_inp = Inputs { project: &cut, preview: None, block_scales: inp.block_scales.clone(), ..*inp };
     let projectors = ProjectorDepthCache::default();
-    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors);
+    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors).below_a_cut();
     let channels = evaluation_channels(&cut_inp, cut.texture_set(inp.ts).map(|set| set.channel_list()).unwrap_or_default());
     let tiles = histogram_tiles(inp.gbuf.width, inp.gbuf.height);
     let shared = shared_histogram_fields(&cut_inp, &channels, &tiles);
@@ -5235,7 +5242,7 @@ pub fn compare_histograms(inp: &Inputs, effect: LayerId, bins: usize) -> Option<
 
     let cut_inp = Inputs { project: &cut, preview: None, block_scales: inp.block_scales.clone(), ..*inp };
     let projectors = ProjectorDepthCache::default();
-    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors);
+    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors).below_a_cut();
     let mut channels = evaluation_channels(&cut_inp, set.channel_list());
     if !channels.contains(&channel) {
         channels.push(channel);
@@ -7344,6 +7351,31 @@ soft {soft:?}"
     }
 
     #[test]
+    fn a_histogram_below_a_reader_leaves_the_anchor_heights_it_reads() {
+        let (mut fixture, images) = micro_height_fixture();
+        let id = fixture.project.alloc_id();
+        let (low, anchor) = anchored_height(&mut fixture, id, Source::image("disc"));
+        let levels = content_fx(&mut fixture, low, EffectKind::Levels(Default::default()));
+        let top = fill_layer(&mut fixture.project, [1.0; 3], 0.5);
+        let mut mask = Mask::new(MaskBackground::Black);
+        mask.effects.push(Effect::new(LayerId(900), EffectKind::Generator(reading_micro_height(anchor))));
+        fixture.project.layer_mut(top).unwrap().mask = Some(mask);
+        run_with_images(&fixture, None, &images);
+
+        // The histogram evaluates the stack cut below the levels
+        effect_histogram(&inputs(&fixture, &images, None), levels, Channel::Height, 16);
+
+        let stack = StackKey::new(&fixture.project, &fixture.pixels, &fixture.baked, &images, 0, &fixture.project.texture_sets[0].stack)
+            .expect("the plane's stack has a key");
+        let builds = std::cell::Cell::new(0);
+        crate::micro_details::prepare_anchor_heights(&inputs(&fixture, &images, None), anchor, stack, || {
+            builds.set(builds.get() + 1);
+            AnchorHeights::new(vec![0.0; 64 * 64], (64, 64), fixture.project.texture_sets[0].block_scales())
+        });
+        assert_eq!(builds.get(), 0, "the render's heights are still prepared");
+    }
+
+    #[test]
     fn anchor_heights_are_built_again_at_another_working_size() {
         let (mut fixture, images) = micro_height_fixture();
         let id = fixture.project.alloc_id();
@@ -7368,7 +7400,7 @@ soft {soft:?}"
         assert_eq!(builds.get(), 2, "a smaller working atlas builds them again");
     }
 
-    /// Builds a field cache made: the counter goes up with each build
+    /// A field build that counts each call in `builds`
     fn counted_build(builds: &std::cell::Cell<usize>) -> impl FnOnce((u32, u32)) -> Vec<f32> + '_ {
         move |_| {
             builds.set(builds.get() + 1);
@@ -7420,7 +7452,7 @@ soft {soft:?}"
 
     #[test]
     fn a_whole_map_field_read_again_outlives_fields_built_before_it() {
-        const FIELDS_KEPT: u32 = 8;
+        let fields_kept = crate::field_cache::CACHE_ENTRIES as u32;
         let cache = crate::field_cache::FieldCache::new();
         let builds = std::cell::Cell::new(0);
         let fixture = fixture();
@@ -7430,9 +7462,9 @@ soft {soft:?}"
         let field = |settings: u32| {
             cache.get_or_build(&inputs, coverage, &[], vec![settings], counted_build(&builds));
         };
-        (0..FIELDS_KEPT).for_each(field);
+        (0..fields_kept).for_each(field);
         field(0);
-        field(FIELDS_KEPT);
+        field(fields_kept);
         let built = builds.get();
         field(0);
 
@@ -7457,8 +7489,7 @@ soft {soft:?}"
             let mut mask = Mask::new(MaskBackground::Black);
             mask.effects.push(Effect::new(LayerId(900), EffectKind::Generator(Generator { micro, ..earlier })));
             fixture.project.layer_mut(top).unwrap().mask = Some(mask);
-            let composite = run(&fixture, None);
-            (0..64 * 64).map(|index| composite.value(Channel::BaseColor, index % 64, index / 64)[0]).collect()
+            base_color_reds(&run(&fixture, None))
         };
 
         // The saved micro detail added the anchor's height times its amount to the curvature signal, even where the height is flat

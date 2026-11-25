@@ -111,6 +111,11 @@ pub(crate) fn prepare_anchor_heights(inp: &Inputs, anchor: LayerId, stack: Stack
     entries.push(AnchorEntry { baked, texture_set: inp.ts, anchor, stack, heights });
 }
 
+/// Whether heights are prepared for anchor `anchor`, for any stack
+pub(crate) fn has_anchor_heights(inp: &Inputs, anchor: LayerId) -> bool {
+    anchor_heights(inp, anchor).is_some()
+}
+
 /// The heights prepared for anchor `anchor` (None before they are)
 fn anchor_heights(inp: &Inputs, anchor: LayerId) -> Option<Arc<AnchorHeights>> {
     let baked = baked_identity(inp)?;
