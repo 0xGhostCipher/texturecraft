@@ -38,7 +38,7 @@ const ROW_MARGIN: egui::Margin = egui::Margin::same(4);
 const OUTDATED_TINT: f32 = 0.18;
 /// How long the "changed on disk" notice stays, in seconds: long enough to reach its button
 const NOTICE_SECONDS: f64 = 12.0;
-/// Shortest time between two checks after document changes, in seconds (each check looks at every file)
+/// Time between two checks while the window is open, in seconds (each check looks at every file; an unchanged one is not read)
 const RECHECK_SECONDS: f64 = 0.5;
 
 /// Opens the window, or closes it when it is open (the shelf button)
@@ -51,13 +51,8 @@ pub(crate) fn toggle(app: &mut TextureCraftApp) {
 /// Opens the window with the resources checked now (an open window is checked again)
 pub(crate) fn open(app: &mut TextureCraftApp) {
     let window = app.ui.windows.resources_updater.take().unwrap_or_default();
-    app.ui.windows.resources_updater = Some(ResourcesUpdater {
-        rows: app.session.resource_states(),
-        project: app.session.project_id,
-        checked_revision: app.session.revision,
-        checked_at: app.last_time,
-        ..window
-    });
+    app.ui.windows.resources_updater =
+        Some(ResourcesUpdater { rows: app.session.resource_states(), project: app.session.project_id, checked_at: app.last_time, ..window });
 }
 
 /// Check once when another project is open (files may have changed while it was closed), and
@@ -83,7 +78,6 @@ pub(crate) fn check_files(app: &mut TextureCraftApp) {
     let outdated: BTreeSet<String> = rows.iter().filter(|row| row.status == ResourceStatus::Outdated).map(|row| row.name.clone()).collect();
     if let Some(window) = app.ui.windows.resources_updater.as_mut() {
         window.rows = rows;
-        window.checked_revision = app.session.revision;
         window.checked_at = app.last_time;
     }
 
@@ -172,16 +166,14 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         return;
     }
 
-    // Every change (an update, undo, redo, a removed resource) is checked again, at most twice a second
-    if window.checked_revision != app.session.revision {
-        let wait = window.checked_at + RECHECK_SECONDS - app.last_time;
-        if wait <= 0.0 {
-            window.rows = app.session.resource_states();
-            window.checked_revision = app.session.revision;
-            window.checked_at = app.last_time;
-        } else {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
-        }
+    // Files changed on disk and document changes (undo, a removed resource) show while the window stays open
+    let wait = window.checked_at + RECHECK_SECONDS - app.last_time;
+    if wait <= 0.0 {
+        window.rows = app.session.resource_states();
+        window.checked_at = app.last_time;
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(RECHECK_SECONDS));
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
     }
 
     // Escape closes the window only while one of its controls had the keyboard (egui takes the focus away on it); otherwise it cancels a stroke as usual

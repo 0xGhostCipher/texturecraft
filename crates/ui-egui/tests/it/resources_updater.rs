@@ -168,3 +168,21 @@ fn escape_cancels_a_stroke_while_the_window_is_open_without_the_keyboard() {
     h.drop_at(center + vec2(30.0, 0.0));
     h.run_steps(3);
 }
+
+#[test]
+fn a_file_changed_while_the_window_stays_open_shows_without_refresh() {
+    /// Steps of the harness's quarter second: over the window's half-second check
+    const FRAMES: usize = 4;
+
+    let dir = TempDir::new("resources-updater-idle");
+    let file = png(&dir, "bricks.png", 4);
+    let mut h = app();
+    import(&mut h, &file);
+    activate(&mut h, "Resources Updater");
+    assert!(shows(&h, "(1 resources, 0 outdated)"));
+
+    png(&dir, "bricks.png", 8);
+    h.run_steps(FRAMES);
+
+    assert!(shows(&h, "(1 resources, 1 outdated)"), "no document change, no focus change and no Refresh");
+}

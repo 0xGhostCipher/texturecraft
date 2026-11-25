@@ -85,12 +85,18 @@ fn import_with_budget(s: &mut Session, p: &Value, max_bytes: u64) -> Result<Valu
 
             let mut images = BTreeMap::new();
             for (tile, path) in tiles {
-                let source = ResourceSource { mesh_map: Some(MeshMapSlot { texture_set: *ts, map: *map, tile: *tile }), ..file_source(path) };
+                let slot = MeshMapSlot { texture_set: *ts, map: *map, tile: *tile };
+                let source = ResourceSource { mesh_map: Some(slot), ..file_source(path) };
                 let bytes = read_image_file(CMD, path, remaining_bytes)?;
                 reserve_bytes(&mut remaining_bytes, bytes.len() as u64)?;
 
                 let bytes_per_texel = size_of::<[f32; 4]>() as u64;
                 let name = s.add_image_resource(path, bytes, remaining_bytes / bytes_per_texel)?;
+
+                // The slot follows only its latest file: an earlier import into it no longer feeds it
+                for earlier in s.doc.project.resource_sources.values_mut().filter(|earlier| earlier.mesh_map == Some(slot)) {
+                    earlier.mesh_map = None;
+                }
                 s.doc.project.resource_sources.insert(name.clone(), source);
                 let image = s.images.get(&name).ok_or_else(|| bad(CMD, format!("no decoded image `{name}`")))?;
                 reserve_bytes(&mut remaining_bytes, u64::from(image.width) * u64::from(image.height) * bytes_per_texel)?;

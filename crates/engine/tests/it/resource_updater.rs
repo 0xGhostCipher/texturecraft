@@ -341,3 +341,24 @@ fn pbr_folder_and_materialx_imports_remember_their_image_files() {
     assert_eq!(status_of(&mut s, &pbr_name), ResourceStatus::Outdated);
     assert_eq!(status_of(&mut s, &materialx_name), ResourceStatus::Outdated);
 }
+
+#[test]
+fn a_mesh_map_imported_twice_follows_the_latest_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Ball_ao.png");
+    let import_file = |s: &mut Session| execute(s, "textureSet.meshMap.import", &json!({"files": [{"path": text(&file)}]})).unwrap();
+    let mut s = ball();
+    write_png(&file, 4, [60, 60, 60, 255]);
+    import_file(&mut s);
+    let first = s.doc.project.resource_sources.keys().next().unwrap().clone();
+    write_png(&file, 8, [200, 200, 200, 255]);
+    import_file(&mut s);
+    let latest = s.doc.project.resource_sources.keys().find(|name| **name != first).expect("a second resource").clone();
+    let imported = ambient_occlusion(&s);
+
+    write_png(&file, 16, [10, 10, 10, 255]);
+    execute(&mut s, "resource.update", &json!({"names": [latest]})).unwrap();
+
+    assert_ne!(ambient_occlusion(&s), imported, "the mesh map follows the file imported last");
+    assert!(s.doc.project.resource_sources[&first].mesh_map.is_none(), "the earlier import no longer feeds the slot");
+}

@@ -474,7 +474,7 @@ saved with the project): `resource.import {path}`, the images `file.importPbrFol
 `textureSet.meshMap.import` (with their mesh map: an update resamples it while it still holds what the
 old file gave it, so a bake or another image set over it since is kept). The shelf's Resources Updater
 window lists the project's image resources through these commands and checks them when it opens, on
-Refresh, after changes (at most twice a second), once after a project opens and when the app gets the
+Refresh, twice a second while it stays open, once after a project opens and when the app gets the
 focus back; a notice ("N resources changed on disk", with an Update button) appears when the set of
 outdated resources differs from the last notice. A file whose size matches but whose time changed is
 read once; its verdict is kept until its size or time changes again.

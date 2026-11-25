@@ -4,7 +4,7 @@ use texturecraft_engine::{ResourceState, ResourceStatus};
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ResourcesUpdater {
     /// The resources and how they compare with their files, outdated first (checked on opening,
-    /// Refresh, every change and when the app gets the focus back)
+    /// Refresh, twice a second while open and when the app gets the focus back)
     pub rows: Vec<ResourceState>,
     /// The status the list is narrowed to (None: all)
     pub status_filter: Option<ResourceStatus>,
@@ -14,8 +14,6 @@ pub struct ResourcesUpdater {
     pub jump: Option<egui::Align>,
     /// The project that was open when this window opened
     pub project: u64,
-    /// The session revision the rows were checked at
-    pub(crate) checked_revision: u64,
     /// When the rows were checked, in app seconds
     pub(crate) checked_at: f64,
     /// Whether a control of the window had the keyboard focus when it was last drawn (Escape then closes it)
