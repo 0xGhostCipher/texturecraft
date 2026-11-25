@@ -483,7 +483,8 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     });
 
     // Let the innermost popup consume Escape before cancelling the active tool
-    let popup_open = egui::Popup::is_any_open(ctx);
+    // (the drop popup of the Output templates tab is open without registering with egui, and reads Escape itself)
+    let popup_open = egui::Popup::is_any_open(ctx) || app.ui.export.pending_drop.is_some();
     let picker_open = crate::color_picker::open_window(ctx).is_some();
 
     let no_widget_focused = ctx.memory(|memory| memory.focused().is_none());
