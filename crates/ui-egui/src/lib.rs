@@ -45,7 +45,16 @@ mod folder_properties;
 pub mod fonts;
 mod frame_gizmo;
 pub mod framework;
+mod generator_input_card;
+mod generator_input_slot;
+mod generator_kind_rows;
 mod generator_panel;
+mod generator_params;
+mod generator_point_pick;
+mod generator_preview_window;
+mod generator_section_rows;
+mod generator_slot;
+mod generator_wear_rows;
 pub mod gpu;
 mod gray_slider;
 mod grid_tile;
@@ -1131,7 +1140,11 @@ impl eframe::App for TextureCraftApp {
         self.poll_link_cooks(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_link_imports(ctx);
-        self.thumbs.sync_project_previews(&self.session);
+        if self.thumbs.sync_project_previews(&self.session) {
+            self.ui.windows.generator_preview = None;
+            generator_point_pick::set(ctx, None);
+        }
+
         self.properties_scroll.sync(&self.session);
 
         // The library shelf rescans when the window comes back (MaterialCraft may have sent a material)

@@ -790,7 +790,14 @@ fn mask_anchor_micro_detail_snapshot() {
         .build_eframe(|context| TextureCraftApp::new(context, session));
     harness.state_mut().ui.dock.focus(Panel::Properties);
     harness.run_steps(6);
-    harness.get_by_label("Micro detail").scroll_to_me();
+    harness.get_by_role_and_label(egui::Role::Button, "Micro Details").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(egui::Role::Button, "Micro Details").click();
+    harness.run_steps(3);
+
+    let height = harness.get_by_role_and_label(egui::Role::ComboBox, "Micro Height");
+    assert!(height.accesskit_node().value().is_some_and(|value| value.contains("Wear")));
+    height.scroll_to_me();
     save(&mut harness, &output_dir, "mask-anchor-micro-detail");
 }
 
