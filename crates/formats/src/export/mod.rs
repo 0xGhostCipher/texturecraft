@@ -26,6 +26,7 @@ use texturecraft_texel::{ColorSpace, DilationMap, linear_to_srgb};
 use crate::{FormatError, MAX_IMAGE_SIZE, Result};
 
 mod encoding;
+mod jpeg2000;
 mod map_override;
 use encoding::Encoding;
 pub use map_override::MapOverride;
@@ -93,10 +94,14 @@ pub enum FileFormat {
     Pgm,
     /// A PSD containing only its merged image.
     Psd,
+    /// JPEG 2000 codestream, lossless
+    J2k,
+    /// JPEG 2000 in a JP2 file, lossless
+    Jp2,
 }
 
 impl FileFormat {
-    pub const ALL: [FileFormat; 11] = [
+    pub const ALL: [FileFormat; 13] = [
         FileFormat::Png,
         FileFormat::Jpeg,
         FileFormat::Tga,
@@ -108,6 +113,8 @@ impl FileFormat {
         FileFormat::Jng,
         FileFormat::Pgm,
         FileFormat::Psd,
+        FileFormat::J2k,
+        FileFormat::Jp2,
     ];
 
     pub fn extension(self) -> &'static str {
@@ -123,6 +130,8 @@ impl FileFormat {
             FileFormat::Jng => "jng",
             FileFormat::Pgm => "pgm",
             FileFormat::Psd => "psd",
+            FileFormat::J2k => "j2k",
+            FileFormat::Jp2 => "jp2",
         }
     }
 
@@ -150,7 +159,7 @@ impl FileFormat {
     /// float for TIFF and HDR).
     pub fn bit_depths(self) -> &'static [u8] {
         match self {
-            FileFormat::Png | FileFormat::Pgm | FileFormat::Psd => &[8, 16],
+            FileFormat::Png | FileFormat::Pgm | FileFormat::Psd | FileFormat::J2k | FileFormat::Jp2 => &[8, 16],
             FileFormat::Tiff => &[8, 16, 32],
             FileFormat::Exr => &[16, 32],
             FileFormat::Hdr => &[32],
@@ -1216,7 +1225,7 @@ fn encode(
 
     // Embed ICC or EXR chromaticities only where the format supports them
     if let Some(space) = embed
-        && matches!(format, FileFormat::Tga | FileFormat::Bmp | FileFormat::Hdr | FileFormat::Jng | FileFormat::Psd)
+        && matches!(format, FileFormat::Tga | FileFormat::Bmp | FileFormat::Hdr | FileFormat::Jng | FileFormat::Psd | FileFormat::J2k)
     {
         warnings.push(format!("{} export does not embed a colour space; the colours are in {}", format.extension().to_ascii_uppercase(), space.name()));
     }
@@ -1323,6 +1332,11 @@ fn encode(
         FileFormat::Pgm => CodecFormat::Pnm,
         FileFormat::Psd => return psd(bytes, size, component_count, depth).map_err(|error| encoding_error(&error)),
         FileFormat::Jng => return jng(&bytes, size, component_count).map_err(|error| encoding_error(&error)),
+        FileFormat::J2k | FileFormat::Jp2 => {
+            let profile = embed.and_then(crate::icc::profile);
+            let jp2 = format == FileFormat::Jp2;
+            return jpeg2000::write_jpeg2000(bytes, size, component_count, depth, jp2, profile.as_deref()).map_err(|error| encoding_error(&error));
+        }
         FileFormat::Exr | FileFormat::Hdr => return Err(encoding_error(&"unexpected float raster format")),
     };
     let layout = match component_count {

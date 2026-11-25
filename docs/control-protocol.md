@@ -74,7 +74,7 @@ and names it in `warnings`. Materials omit any map with incomplete tiles or a UD
 shared by different sets.
 
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
-`hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
+`hdr`, `exr`, `j2k`, `jp2`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and
 `export.plan` reports the effective setting and per-file dimensions (`size` and `sourceSize`, both in pixels). `padding: "diffusion"` dilates by
 `dilation` texels and fills the remaining space with a smooth blend of the island colours.

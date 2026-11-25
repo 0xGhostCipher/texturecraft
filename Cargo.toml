@@ -44,6 +44,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "3dff4793f1a5bd1f99a4fe3280d48f515158dff3" }
 half = "2"
 exr = { version = "1.73", default-features = false }
+# JPEG 2000 writing (craft-image-codecs only reads it); j2k 0.13 needs Rust 1.99
+j2k = "0.11.3"
+j2k-core = "0.11.3"
 eframe = { version = "0.37", default-features = false }
 egui = "0.37"
 wgpu = "30"

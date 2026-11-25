@@ -46,22 +46,21 @@ fn entries(h: &Harness<'_, TextureCraftApp>, labels: &[&str]) -> Vec<String> {
 const TYPES: [&str; 14] = ["bmp", "jpeg", "jng", "pgm", "png", "targa", "tiff", "hdr", "exr", "j2k", "jp2", "webp", "psd", "sbsar"];
 
 #[test]
-fn the_file_type_list_is_the_reference_one_with_three_greyed() {
+fn the_file_type_list_is_the_reference_one_with_sbsar_greyed() {
     let mut h = harness();
     open_combo(&mut h, "Based on output template");
     assert_eq!(entries(&h, &TYPES), TYPES.map(String::from).to_vec());
 
-    // Bottom up, so no tooltip covers the next entry
-    for name in ["sbsar", "jp2", "j2k"] {
-        assert!(h.get_all_by_label(name).last().unwrap().accesskit_node().is_disabled(), "{name} is greyed");
-        h.get_all_by_label(name).last().unwrap().scroll_to_me();
-        h.run_steps(6);
-        let at = h.get_all_by_label(name).last().unwrap().rect().center();
-        h.hover_at(at);
-        h.run_steps(30);
-        assert!(h.query_by_label("Not available yet").is_some(), "{name} at {at:?}");
+    assert!(h.get_all_by_label("sbsar").last().unwrap().accesskit_node().is_disabled(), "sbsar is greyed");
+    h.get_all_by_label("sbsar").last().unwrap().scroll_to_me();
+    h.run_steps(6);
+    let at = h.get_all_by_label("sbsar").last().unwrap().rect().center();
+    h.hover_at(at);
+    h.run_steps(30);
+    assert!(h.query_by_label("Not available yet").is_some(), "sbsar at {at:?}");
+    for name in ["j2k", "jp2", "psd"] {
+        assert!(!h.get_all_by_label(name).last().unwrap().accesskit_node().is_disabled(), "{name} can be picked");
     }
-    assert!(!h.get_all_by_label("psd").last().unwrap().accesskit_node().is_disabled());
 }
 
 #[test]
