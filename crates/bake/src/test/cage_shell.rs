@@ -17,7 +17,9 @@ fn painted_map() -> BakePaintMap {
 fn assert_cage_matches_the_ray_origins(request: &BakeRequest) {
     let shell = CageShell::new(request).unwrap();
     let corners = shell.corners(request.settings.cage.max_frontal);
-    let context = BakeContext::new(request).unwrap();
+    let extent = crate::MeshExtent::of(request.mesh).unwrap();
+    let frame = crate::cage::RayFrame::new(request, extent).unwrap();
+    let context = BakeContext::with_frame(request, extent, &frame);
     let triangles: Vec<usize> = request.mesh.triangles_of(request.material).collect();
     assert_eq!(corners.len(), triangles.len() * 3);
 

@@ -1,5 +1,8 @@
 //! The dialog that picks texture sets: which ones share settings, or which ones a copy goes to
 
+use std::sync::Arc;
+use texturecraft_engine::Session;
+
 use egui::{Align2, CornerRadius, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use egui_phosphor::regular as icon;
 use serde_json::{Value, json};
@@ -39,6 +42,10 @@ const DIALOG_RADIUS: u8 = 4;
 pub(super) struct SetPicker {
     purpose: SetPickerPurpose,
     chosen: Vec<bool>,
+    mesh_id: u64,
+    active: usize,
+    opener: egui::Id,
+    cached: Option<(u64, &'static str, Arc<[SetPickerRow]>)>,
 }
 
 impl SetPicker {
@@ -47,7 +54,7 @@ impl SetPicker {
     }
 
     /// Open the picker for `purpose`; a sync picker starts with the sets sharing the group ticked, a copy picker with none
-    pub(super) fn open(app: &TextureCraftApp, ctx: &egui::Context, purpose: SetPickerPurpose) {
+    pub(super) fn open(app: &TextureCraftApp, opener: &egui::Response, purpose: SetPickerPurpose) {
         let chosen = app
             .session
             .doc
@@ -59,15 +66,32 @@ impl SetPicker {
                 SetPickerPurpose::Copy { .. } => false,
             })
             .collect();
-        ctx.data_mut(|data| data.insert_temp(Self::id(), SetPicker { purpose, chosen }));
+        opener.ctx.data_mut(|data| {
+            data.insert_temp(Self::id(), SetPicker { purpose, chosen, mesh_id: app.session.mesh_id, active: app.session.ts(), opener: opener.id, cached: None })
+        });
     }
 
     /// The open picker, if any; OK runs its command
     pub(super) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
-        let Some(mut picker) = ctx.data(|data| data.get_temp::<SetPicker>(Self::id())) else { return };
+        let Some(mut picker) = ctx.data(|data| data.get_temp::<SetPicker>(Self::id())) else {
+            // The opener can receive focus again once the modal layer has left egui's focus order
+            if ctx.memory(|memory| memory.top_modal_layer().is_none())
+                && let Some(opener) = ctx.data_mut(|data| data.remove_temp::<Option<egui::Id>>(Self::id()).flatten())
+            {
+                ctx.memory_mut(|memory| memory.request_focus(opener));
+            }
+
+            return;
+        };
 
         let active = app.session.ts();
-        let rows = picker.rows(&app.session.doc.project, active);
+        if picker.mesh_id != app.session.mesh_id || picker.active != active || picker.chosen.len() != app.session.set_count() {
+            ctx.data_mut(|data| data.remove::<SetPicker>(Self::id()));
+            return;
+        }
+
+        let opening = picker.cached.is_none() && ctx.memory(|memory| memory.top_modal_layer().is_none());
+        let rows = picker.visible_rows(&app.session, active);
         let tokens = Tokens::get(ctx);
         let frame = egui::Frame::new()
             .fill(tokens.panel)
@@ -77,7 +101,7 @@ impl SetPicker {
         let modal = egui::Modal::new(Self::id().with("modal")).frame(frame).show(ctx, |ui| {
             ui.set_width(DIALOG_WIDTH);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            let closed = title_bar(ui, &tokens, &picker.title());
+            let closed = title_bar(ui, &tokens, &picker.title(), opening);
             ui.add_space(BODY_AIR);
             PropertySheet::show(ui, "bake_set_picker_sheet", |sheet| picker.list(sheet, &rows));
             ui.add_space(BUTTONS_AIR);
@@ -91,7 +115,11 @@ impl SetPicker {
             picker.apply(app, active);
         }
         if ok || cancel || modal.should_close() {
-            ctx.data_mut(|data| data.remove::<SetPicker>(Self::id()));
+            ctx.data_mut(|data| {
+                data.remove::<SetPicker>(Self::id());
+                data.insert_temp(Self::id(), Some(picker.opener));
+            });
+            ctx.request_repaint();
         } else {
             ctx.data_mut(|data| data.insert_temp(Self::id(), picker));
         }
@@ -108,7 +136,7 @@ impl SetPicker {
             .filter(|(index, _)| matches!(self.purpose, SetPickerPurpose::Sync(_)) || *index != active)
             .map(|(index, set)| {
                 let note = match self.purpose {
-                    // What the set would take on OK when ticked: the source `bake.sync` picks from the ticked sets with this one among them
+                    // Include this row when predicting its sync source
                     SetPickerPurpose::Sync(group) if !set.bake.sync.shares(group) => {
                         let mut members = chosen.clone();
                         if let Err(slot) = members.binary_search(&index) {
@@ -125,6 +153,20 @@ impl SetPicker {
                 SetPickerRow { index, name: set.name.clone(), note }
             })
             .collect()
+    }
+
+    fn visible_rows(&mut self, session: &Session, active: usize) -> Arc<[SetPickerRow]> {
+        let language = crate::i18n::current().code;
+        if let Some((revision, cached_language, rows)) = &self.cached
+            && *revision == session.revision
+            && *cached_language == language
+        {
+            return rows.clone();
+        }
+
+        let rows: Arc<[SetPickerRow]> = self.rows(&session.doc.project, active).into();
+        self.cached = Some((session.revision, language, rows.clone()));
+        rows
     }
 
     fn title(&self) -> String {
@@ -144,6 +186,7 @@ impl SetPicker {
         let label = if all_ticked { tr("Deselect All") } else { tr("Select All") };
         let state = if ticked == 0 { Some(false) } else { all_ticked.then_some(true) };
         if sheet.check_mixed(label, state).clicked() {
+            self.cached = None;
             for row in rows {
                 if let Some(chosen) = self.chosen.get_mut(row.index) {
                     *chosen = !all_ticked;
@@ -154,6 +197,7 @@ impl SetPicker {
             for row in rows {
                 let Some(chosen) = self.chosen.get_mut(row.index) else { continue };
                 if sheet.check_noted(&row.name, Some(*chosen), row.note.as_deref()).clicked() {
+                    self.cached = None;
                     *chosen = !*chosen;
                 }
             }
@@ -190,7 +234,7 @@ fn group_label(group: BakeSyncGroup) -> String {
 }
 
 /// The title bar: gear, title, and × at the right; returns whether × was clicked
-fn title_bar(ui: &mut Ui, tokens: &Tokens, title: &str) -> bool {
+fn title_bar(ui: &mut Ui, tokens: &Tokens, title: &str, opening: bool) -> bool {
     let (bar, _) = ui.allocate_exact_size(vec2(DIALOG_WIDTH, TITLE_BAR_HEIGHT), Sense::hover());
     let top = CornerRadius { nw: DIALOG_RADIUS, ne: DIALOG_RADIUS, sw: 0, se: 0 };
     ui.painter().rect_filled(bar, top, tokens.chrome);
@@ -203,8 +247,13 @@ fn title_bar(ui: &mut Ui, tokens: &Tokens, title: &str) -> bool {
     let close = Rect::from_center_size(pos2(bar.right() - TITLE_BAR_HEIGHT / 2.0, center_y), vec2(TITLE_BAR_HEIGHT, TITLE_BAR_HEIGHT));
     let response = ui.interact(close, ui.scope_id().with("close"), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Close")));
+    if opening {
+        response.request_focus();
+    }
+
     let color = if response.hovered() { tokens.text_strong } else { tokens.text_dim };
     ui.painter().text(close.center(), Align2::CENTER_CENTER, icon::X, FontId::proportional(TITLE_TEXT_SIZE), color);
+    crate::property_sheet::paint_keyboard_focus(ui, &response, tokens);
     response.clicked()
 }
 
@@ -222,6 +271,7 @@ fn dialog_button(ui: &mut Ui, tokens: &Tokens, rect: Rect, text: &str) -> bool {
     let fill = if response.hovered() { tokens.row_hover } else { tokens.button };
     ui.painter().rect(rect, CornerRadius::same(DIALOG_RADIUS), fill, Stroke::new(1.0, tokens.button_border), StrokeKind::Inside);
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(TITLE_TEXT_SIZE), tokens.text);
+    crate::property_sheet::paint_keyboard_focus(ui, &response, tokens);
     response.clicked()
 }
 
@@ -306,7 +356,8 @@ mod tests {
         project.texture_sets[1].bake.maps.ao.parameters.rays.rays = 16;
 
         // Set 0 leaves the group and sets 1 and 2 join with set 1 active: set 2 takes set 1's values, not set 0's
-        let picker = SetPicker { purpose: SetPickerPurpose::Sync(ao), chosen: vec![false, true, true] };
+        let picker =
+            SetPicker { purpose: SetPickerPurpose::Sync(ao), chosen: vec![false, true, true], mesh_id: 0, active: 1, opener: egui::Id::NULL, cached: None };
         let rows = picker.rows(&project, 1);
         let note = |index: usize| rows.iter().find(|row| row.index == index).and_then(|row| row.note.clone());
 

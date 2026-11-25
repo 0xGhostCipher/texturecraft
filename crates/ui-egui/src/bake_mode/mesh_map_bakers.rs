@@ -17,9 +17,6 @@ use crate::theme::{Tokens, semibold};
 const PRESETS_MENU_MIN_WIDTH: f32 = 220.0;
 const PRESET_NAME_FIELD_WIDTH: f32 = 130.0;
 
-/// Spacing of the points tested along a checkbox drag's path between two frames, well under a row's height
-const CROSS_STEP: f32 = 4.0;
-
 /// How far past its box a row's check takes clicks, so it is easy to hit
 const CHECK_HIT_AIR: f32 = 3.0;
 
@@ -64,8 +61,10 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
                 let shares = settings.sync.shares(BakeSyncGroup::Common);
                 let look = if shares { GlyphLook::Lit } else { GlyphLook::Plain };
                 let (slot, _) = ui.allocate_exact_size(vec2(ROW_BUTTON_SIZE, ROW_BUTTON_SIZE), Sense::hover());
-                if glyph_button(ui, slot, icon::LINK, tr("Synchronize Common Settings"), look).clicked() {
-                    SetPicker::open(app, ui.ctx(), SetPickerPurpose::Sync(BakeSyncGroup::Common));
+                let glyph = if shares { icon::LINK } else { icon::LINK_BREAK };
+                let sync = glyph_button(ui, slot, glyph, tr("Synchronize Common Settings"), look);
+                if sync.clicked() {
+                    SetPicker::open(app, &sync, SetPickerPurpose::Sync(BakeSyncGroup::Common));
                 }
             }
             presets_menu(app, ui, settings);
@@ -93,12 +92,13 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
         }
     }
 
-    // Kept through the frame of the release, so the click that ends a drag does not toggle its last checkbox back
+    // Keep the drag state until the release click has been handled
     let is_held = ui.input(|input| input.pointer.primary_down());
     let pointer = ui.input(|input| input.pointer.latest_pos());
     ui.data_mut(|data| {
         if let (Some(value), true) = (check_drag, is_held) {
             data.insert_temp(check_drag_id, value);
+
             // A pointer back from outside the window starts a new line, so rows it never crossed stay as they were
             if let Some(pointer) = pointer {
                 data.insert_temp(drag_from_id, pointer);
@@ -193,6 +193,7 @@ fn check_all_row(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSett
     });
     paint_check(ui.painter(), &tokens, check, state, response.hovered());
     ui.painter().galley(pos2(check.right() + THUMBNAIL_AIR, rect.center().y - galley.size().y / 2.0), galley, tokens.text);
+    crate::property_sheet::paint_keyboard_focus(ui, &response, &tokens);
     if response.clicked() {
         for map in BakedMap::ALL {
             settings.maps.set_enabled(map, !all_enabled);
@@ -217,22 +218,24 @@ fn list_menu(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSettings
         if ui.button(tr("Invert Checked Mesh Maps")).clicked() {
             BakedMap::ALL.into_iter().for_each(|map| settings.maps.set_enabled(map, !settings.maps.is_enabled(map)));
         }
-        copy_items(app, ui, "checked", None, [tr("Apply Checked to More Texture Sets..."), tr("Apply Checked to All Texture Sets")]);
+        copy_items(app, ui, &button, "checked", None, [tr("Apply Checked to More Texture Sets..."), tr("Apply Checked to All Texture Sets")]);
         ui.separator();
-        copy_items(app, ui, "settings", None, [tr("Sync All Settings to More Texture Sets..."), tr("Sync All Settings to All Texture Sets")]);
+        copy_items(app, ui, &button, "settings", None, [tr("Sync All Settings to More Texture Sets..."), tr("Sync All Settings to All Texture Sets")]);
     });
 }
 
 /// A copy's two menu items: "...more Texture Sets..." opens the set picker, "...all Texture Sets" copies to every set
-fn copy_items(app: &mut TextureCraftApp, ui: &mut Ui, what: &'static str, map: Option<BakedMap>, [more, all]: [&str; 2]) {
+fn copy_items(app: &mut TextureCraftApp, ui: &mut Ui, opener: &egui::Response, what: &'static str, map: Option<BakedMap>, [more, all]: [&str; 2]) {
     // With one texture set there is nothing to copy to
     let several_sets = app.session.doc.project.texture_sets.len() > 1;
     if ui.add_enabled(several_sets, egui::Button::new(more)).clicked() {
-        SetPicker::open(app, ui.ctx(), SetPickerPurpose::Copy { what, map });
+        SetPicker::open(app, opener, SetPickerPurpose::Copy { what, map });
+        ui.close();
     }
     if ui.add_enabled(several_sets, egui::Button::new(all)).clicked() {
         let from = app.session.ts();
         app.run("bake.copy", json!({ "what": what, "map": map.map(BakedMap::id), "from": from, "ts": "all" }));
+        ui.close();
     }
 }
 
@@ -252,7 +255,6 @@ fn row(
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, is_selected, name));
 
-    // The selected row is brighter and its name bold: no outline, no accent
     let hovered = ui.rect_contains_pointer(rect);
     if is_selected {
         ui.painter().rect_filled(rect, CornerRadius::same(ROW_RADIUS), tokens.row_hover);
@@ -272,13 +274,18 @@ fn row(
     }
     paint_check(ui.painter(), &tokens, check, Some(settings.maps.is_enabled(map)), checkbox.hovered());
 
+    crate::property_sheet::paint_keyboard_focus(ui, &checkbox, &tokens);
     let texture = app.bake_map_thumbnails.texture(ui.ctx(), &app.session, app.session.ts(), map);
     let thumbnail_rect = Rect::from_min_size(pos2(check.right() + THUMBNAIL_AIR, rect.center().y - THUMBNAIL_SIZE / 2.0), vec2(THUMBNAIL_SIZE, THUMBNAIL_SIZE));
     thumbnail(ui, thumbnail_rect, texture.as_ref());
 
-    // Icons right to left, only on the hovered or selected row
     let mut icons_left = rect.right();
-    if is_selected || hovered {
+    let focus_in_row = || {
+        ui.memory(|memory| memory.focused())
+            .and_then(|id| ui.ctx().read_response(id))
+            .is_some_and(|widget| widget.layer_id == ui.layer_id() && rect.contains(widget.rect.center()))
+    };
+    if is_selected || hovered || focus_in_row() {
         let mut next_icon = || {
             let slot =
                 Rect::from_center_size(pos2(icons_left - ROW_BUTTON_SIZE / 2.0 - ROW_INSET / 2.0, rect.center().y), vec2(ROW_BUTTON_SIZE, ROW_BUTTON_SIZE));
@@ -288,8 +295,10 @@ fn row(
         if several_sets {
             let shares = settings.sync.shares(BakeSyncGroup::Map(map));
             let look = if shares { GlyphLook::Lit } else { GlyphLook::Plain };
-            if glyph_button(ui, next_icon(), icon::LINK, &trf("Synchronize {map} Settings", &[("map", &name)]), look).clicked() {
-                SetPicker::open(app, ui.ctx(), SetPickerPurpose::Sync(BakeSyncGroup::Map(map)));
+            let glyph = if shares { icon::LINK } else { icon::LINK_BREAK };
+            let sync = glyph_button(ui, next_icon(), glyph, &trf("Synchronize {map} Settings", &[("map", &name)]), look);
+            if sync.clicked() {
+                SetPicker::open(app, &sync, SetPickerPurpose::Sync(BakeSyncGroup::Map(map)));
             }
         }
         let baking = app.bake_progress().is_some();
@@ -313,22 +322,40 @@ fn row(
     let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), font, color);
     job.wrap = egui::text::TextWrapping::truncate_at_width((icons_left - name_left).max(0.0));
     let galley = ui.painter().layout_job(job);
-    // The full name on hover only when the row cuts it short
+
+    // Expose the full label when its text is elided
     let response = if galley.elided { response.on_hover_text(name) } else { response };
     ui.painter().galley(pos2(name_left, rect.center().y - galley.size().y / 2.0), galley, color);
 
-    response.context_menu(|ui| {
+    crate::property_sheet::paint_keyboard_focus(ui, &response, &tokens);
+    ui.ctx().accesskit_node_builder(response.id, |node| node.set_has_popup(egui::accesskit::HasPopup::Menu));
+    let mut popup = egui::Popup::context_menu(&response);
+    let restore_focus = popup.is_open() && ui.input(|input| input.key_pressed(egui::Key::Escape));
+    if response.has_focus()
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::F10) || input.consume_key(egui::Modifiers::NONE, egui::Key::Menu))
+    {
+        popup = popup.anchor(&response).open_memory(Some(egui::SetOpenCommand::Bool(true)));
+    } else if !response.secondary_clicked() && popup.is_open() && egui::Popup::position_of_id(ui.ctx(), popup.get_id()).is_none() {
+        popup = popup.anchor(&response);
+    }
+
+    popup.show(|ui| {
         let labels = |more: &str, all: &str| [trf(more, &[("map", &name)]), trf(all, &[("map", &name)])];
         let [check_more, check_all] = labels("Check {map} for More Texture Sets...", "Check {map} for All Texture Sets");
-        copy_items(app, ui, "check", Some(map), [&check_more, &check_all]);
+        copy_items(app, ui, &response, "check", Some(map), [&check_more, &check_all]);
         ui.separator();
         let [apply_more, apply_all] = labels("Apply {map} Settings to More Texture Sets...", "Apply {map} Settings to All Texture Sets");
-        copy_items(app, ui, "settings", Some(map), [&apply_more, &apply_all]);
+        copy_items(app, ui, &response, "settings", Some(map), [&apply_more, &apply_all]);
         ui.separator();
         if ui.add_enabled(several_sets, egui::Button::new(tr("Sync Settings..."))).clicked() {
-            SetPicker::open(app, ui.ctx(), SetPickerPurpose::Sync(BakeSyncGroup::Map(map)));
+            SetPicker::open(app, &response, SetPickerPurpose::Sync(BakeSyncGroup::Map(map)));
+            ui.close();
         }
     });
+    if restore_focus {
+        response.request_focus();
+    }
+
     response.clicked()
 }
 
@@ -348,8 +375,13 @@ fn drag_check(ui: &Ui, checkbox: &egui::Response, row: Rect, is_enabled: bool, c
 
 /// Whether the straight line from `from` to `to` passes through `rect`, so a row skipped between two frames still counts
 fn crosses(rect: Rect, from: Pos2, to: Pos2) -> bool {
-    let steps = (from.distance(to) / CROSS_STEP).ceil().max(1.0) as u32;
-    (0..=steps).any(|step| rect.contains(from.lerp(to, step as f32 / steps as f32)))
+    if !rect.intersects(Rect::from_two_pos(from, to)) {
+        return false;
+    }
+
+    // Test the last separating axis, perpendicular to the drag
+    let normal = (to - from).rot90();
+    (rect.center() - from).dot(normal).abs() <= (rect.size() * 0.5).dot(normal.abs())
 }
 
 /// The baked map's thumbnail in `rect`; before it is baked, an empty square crossed by a diagonal
@@ -378,6 +410,7 @@ fn glyph_button(ui: &mut Ui, rect: Rect, glyph: &str, label: &str, look: GlyphLo
     }
     let color = if look == GlyphLook::Plain && !response.hovered() { tokens.text_dim } else { tokens.text_strong };
     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, FontId::proportional(ROW_GLYPH_SIZE), color);
+    crate::property_sheet::paint_keyboard_focus(ui, &response, &tokens);
     response
 }
 
@@ -394,5 +427,6 @@ fn header_button(ui: &mut Ui, glyph: &str, text: &str) -> egui::Response {
     let x = rect.left() + HEADER_BUTTON_PADDING;
     ui.painter().galley(pos2(x, rect.center().y - icon.size().y / 2.0), icon.clone(), tokens.text);
     ui.painter().galley(pos2(x + icon.size().x + HEADER_GLYPH_GAP, rect.center().y - words.size().y / 2.0), words, tokens.text);
+    crate::property_sheet::paint_keyboard_focus(ui, &response, &tokens);
     response
 }

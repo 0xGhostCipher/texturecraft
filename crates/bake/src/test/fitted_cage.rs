@@ -109,10 +109,13 @@ fn the_automatic_cage_stays_low_where_the_high_poly_is_low() {
 fn a_ray_that_only_finds_a_far_surface_takes_the_nearest_surface_height_instead() {
     const PATCH_HEIGHT: f32 = 0.02;
     const CEILING_HEIGHT: f32 = 1.0;
+
     // A low-plane vertex beside the patch's edge: the patch is its nearest high poly, the ceiling is straight above it
     const BESIDE_PATCH: Vec3 = Vec3::new(0.125, 0.0, 0.0);
+
     // Far enough that the ceiling's own corners are nearest to the low plane's border, not to the vertex tested
     const CEILING_REACH: f32 = 1000.0;
+
     // The ceiling starts just past the patch's edge (x = 0), the patch covers the low plane's other half
     const CEILING_FROM_X: f32 = 0.05;
     const PATCH_SIZE: f32 = 0.5;

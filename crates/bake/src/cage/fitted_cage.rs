@@ -2,6 +2,7 @@ use super::name_keys::NameKeys;
 use crate::map::interpolate;
 use crate::{BakeRequest, HighPoly, MeshExtent};
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use texturecraft_geom::Mesh;
 use texturecraft_geom::glam::Vec3;
@@ -14,6 +15,9 @@ const MARGIN_PER_DIAGONAL: f32 = 4e-3;
 
 /// How many times farther than the nearest high-poly point a low-poly vertex's ray may find the high poly: beyond it (a surface more than about 75 degrees off the ray) the ray has left the vertex's own part
 const MAX_RAY_PER_NEAREST_DISTANCE: f32 = 4.0;
+
+/// Bound temporary high-vertex projections while giving Rayon thousands of independent queries per batch
+const PROJECTION_BATCH_VERTICES: usize = 8192;
 
 /// The automatic cage: how far the transfer rays start in front of each low-poly vertex and how far they run behind it, fitted to the high poly
 pub(crate) struct FittedCage {
@@ -44,11 +48,23 @@ impl FittedCage {
                 widen(vertex, height);
             }
         }
-        for (triangle, height) in heights_of_high_vertices(request, high, &fitting_normals, &keys).into_iter().flatten() {
-            for corner in low.tri(triangle).into_iter().flatten() {
-                widen(corner, height);
+        let mut projected = Vec::new();
+        for (batch, positions) in high.mesh.positions.chunks(PROJECTION_BATCH_VERTICES).enumerate() {
+            let first = batch * PROJECTION_BATCH_VERTICES;
+            positions
+                .par_iter()
+                .enumerate()
+                .map(|(index, &position)| project_high_vertex(request, &fitting_normals, &keys, first + index, position))
+                .collect_into_vec(&mut projected);
+
+            for (triangle, height) in projected.drain(..).flatten() {
+                for corner in low.tri(triangle).into_iter().flatten() {
+                    widen(corner, height);
+                }
             }
         }
+        drop(projected);
+
         spread_to_neighbours(&mut reach, low.indices.as_chunks::<3>().0.iter().map(|corners| corners.map(|corner| welded(corner as usize))));
 
         let floor = MARGIN_PER_DIAGONAL * extent.diagonal;
@@ -75,9 +91,9 @@ impl FittedCage {
 }
 
 /// `welded_indices` with the vertices of different mesh-name groups (`vertex_keys`, empty when names don't matter) kept apart, so a group's distances come only from its own high poly and never spread into another group
-fn welded_within_groups(welded_indices: &[u32], vertex_keys: &[u32]) -> Vec<u32> {
+fn welded_within_groups<'a>(welded_indices: &'a [u32], vertex_keys: &[u32]) -> Cow<'a, [u32]> {
     if vertex_keys.is_empty() {
-        return welded_indices.to_vec();
+        return Cow::Borrowed(welded_indices);
     }
 
     let mut indices: HashMap<(u32, Option<u32>), u32> = HashMap::new();
@@ -92,7 +108,11 @@ fn welded_within_groups(welded_indices: &[u32], vertex_keys: &[u32]) -> Vec<u32>
 }
 
 /// `ray_normals`, except where parts welded back to back cancelled a vertex's normal out: there, the vertex's own normal, the direction its transfer rays fall back to
-fn fitting_normals(low: &Mesh, ray_normals: &[Vec3]) -> Vec<Vec3> {
+fn fitting_normals<'a>(low: &Mesh, ray_normals: &'a [Vec3]) -> Cow<'a, [Vec3]> {
+    if !ray_normals.contains(&Vec3::ZERO) {
+        return Cow::Borrowed(ray_normals);
+    }
+
     ray_normals
         .iter()
         .enumerate()
@@ -130,27 +150,26 @@ fn heights_at_low_vertices(low: &Mesh, high: HighPoly, ray_normals: &[Vec3], key
         .collect()
 }
 
-/// Per high-poly vertex, its nearest low-poly triangle and its height over it along the ray normal there
-fn heights_of_high_vertices(request: &BakeRequest, high: HighPoly, ray_normals: &[Vec3], keys: &NameKeys) -> Vec<Option<(usize, f32)>> {
+/// The nearest matching low-poly triangle and signed height of one high-poly vertex
+fn project_high_vertex(request: &BakeRequest, ray_normals: &[Vec3], keys: &NameKeys, vertex: usize, position: Vec3) -> Option<(usize, f32)> {
     let low = request.mesh;
-    high.mesh
-        .positions
-        .par_iter()
-        .enumerate()
-        .map(|(vertex, &high_position)| {
-            let high_key = keys.high_vertices.get(vertex);
-            let rays_reach = |triangle: u32| NameKeys::matches(keys.low_triangles.get(triangle as usize), high_key);
-            let nearest = request.bvh.nearest(high_position, f32::INFINITY, &rays_reach)?;
-            let barycentric = [nearest.u, nearest.v];
-            let low_position = interpolate(low, &low.positions, nearest.tri, barycentric)?;
-            let up = interpolate(low, ray_normals, nearest.tri, barycentric)?.try_normalize()?;
-            Some((nearest.tri as usize, (high_position - low_position).dot(up)))
-        })
-        .collect()
+    let high_key = keys.high_vertices.get(vertex);
+    let rays_reach = |triangle: u32| NameKeys::matches(keys.low_triangles.get(triangle as usize), high_key);
+    let nearest = request.bvh.nearest(position, f32::INFINITY, &rays_reach)?;
+    let barycentric = [nearest.u, nearest.v];
+    let low_position = interpolate(low, &low.positions, nearest.tri, barycentric)?;
+    let up = interpolate(low, ray_normals, nearest.tri, barycentric)?.try_normalize()?;
+
+    Some((nearest.tri as usize, (position - low_position).dot(up)))
 }
 
 /// Give each vertex without distances the largest of its nearest fitted neighbours', walking outward along the edges of `triangles`
 fn spread_to_neighbours(reach: &mut [Option<(f32, f32)>], triangles: impl Iterator<Item = [usize; 3]>) {
+    // Only unfitted vertices adjacent to a fitted region can gain distances
+    if reach.iter().all(Option::is_some) || reach.iter().all(Option::is_none) {
+        return;
+    }
+
     let mut neighbours = vec![Vec::new(); reach.len()];
     for corners in triangles {
         for (corner, next) in [(0, 1), (1, 2), (2, 0)] {
@@ -163,7 +182,7 @@ fn spread_to_neighbours(reach: &mut [Option<(f32, f32)>], triangles: impl Iterat
         }
     }
 
-    // Steps from the nearest fitted vertex; a vertex only takes distances from vertices one step nearer
+    // Propagate distances from the preceding breadth-first layer
     let mut steps: Vec<Option<u32>> = reach.iter().map(|distances| distances.map(|_| 0)).collect();
     let mut queue: VecDeque<usize> = (0..reach.len()).filter(|vertex| reach[*vertex].is_some()).collect();
     while let Some(vertex) = queue.pop_front() {
@@ -192,10 +211,10 @@ mod tests {
 
     #[test]
     fn coincident_vertices_of_different_name_groups_are_not_welded() {
-        // Vertices 0 and 1 share a position, as do 2 and 3; 1 and 2 are in group 7, the others in group 5
-        assert_eq!(welded_within_groups(&[0, 0, 1, 1], &[5, 7, 7, 5]), [0, 1, 2, 3]);
-        assert_eq!(welded_within_groups(&[0, 0, 1, 1], &[5, 5, 7, 7]), [0, 0, 1, 1], "same group: still welded");
-        assert_eq!(welded_within_groups(&[0, 0, 1], &[]), [0, 0, 1], "without name matching nothing changes");
+        // The coincident pairs span different mesh-name groups
+        assert_eq!(welded_within_groups(&[0, 0, 1, 1], &[5, 7, 7, 5]).as_ref(), [0, 1, 2, 3]);
+        assert_eq!(welded_within_groups(&[0, 0, 1, 1], &[5, 5, 7, 7]).as_ref(), [0, 0, 1, 1], "same group: still welded");
+        assert_eq!(welded_within_groups(&[0, 0, 1], &[]).as_ref(), [0, 0, 1], "without name matching nothing changes");
     }
 
     #[test]

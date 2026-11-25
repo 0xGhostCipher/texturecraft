@@ -80,6 +80,12 @@ pub(crate) use slot_response::SlotResponse;
 pub(crate) use stack_slider::StackSlider;
 pub(crate) use stacked_rows::{CHECK_SIZE, paint_check};
 
+pub(crate) fn paint_keyboard_focus(ui: &egui::Ui, response: &egui::Response, tokens: &crate::theme::Tokens) {
+    if response.has_focus() {
+        switch_control::paint_focus_outline(ui.painter(), response.rect, tokens.text_strong);
+    }
+}
+
 /// Side padding: every row starts and ends this far inside the panel
 pub(crate) const SIDE_PADDING_POINTS: f32 = 12.0;
 

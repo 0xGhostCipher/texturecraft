@@ -145,8 +145,10 @@ that differ elsewhere stay; Restore Defaults resets the whole parameter section 
 group from now on; sets joining take the settings the group shares. `bake.copy {what: "settings" |
 "checked" | "check", map?, from?, ts}` copies once: every setting with which maps are checked (or
 one map's settings), which maps are checked, or checks one map; settings also reach the sets sharing a group with a target, while
-checkboxes stay per set. Each is one
-undo step. `bake.settings` with `model` keeps each set's sync membership.
+checkboxes stay per set. Each is one undo step. `bake.settings` with `model` keeps each set's sync
+membership. A `patch` containing `sync` is rejected. Use `bake.sync` to change membership.
+For `bake.copy`, `from` takes a texture set index and `map` takes a mesh map ID. Omit either field
+or pass `null` to use its default.
 
 `bake.settings {ts: "all", patch: {maps: {ao: {parameters: {rays: {rays: 128}}}}}}` changes
 only AO secondary rays. A `patch` uses the nested `BakeSettings` field names and named enum
@@ -154,7 +156,8 @@ values returned in the command's `model` result; omitted fields retain each set'
 `null` clears optional fields such as `common.resolution_height`. All targeted sets are validated
 before the edit is applied as one undo step. `model` still replaces the complete settings;
 when combined, `patch` follows `model`, then the flat command parameters apply. Omitting `ts`
-still targets the active set for scripts that need individual control.
+still targets the active set. Settings passed to `bake.run` follow the same sync rules, while only
+the requested texture sets bake. The settings and baked maps share one undo step.
 
 Bake presets are saved settings in the UI state (Mesh Map Bakers > Presets). Loading one is
 `bake.settings {ts: <index>, model: <the preset's settings>, preserveEnabled: true, preset: true}`; Apply to All

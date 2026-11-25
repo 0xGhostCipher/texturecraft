@@ -18,7 +18,7 @@ const SHORTEST_RAY: f32 = 1e-20;
 pub(crate) struct BakeContext<'a> {
     low: Source<'a>,
     high: Option<Source<'a>>,
-    ray_frame: RayFrame<'a>,
+    ray_frame: &'a RayFrame<'a>,
     settings: &'a BakeSettings,
     frontal: f32,
     rear: f32,
@@ -31,11 +31,9 @@ pub(crate) struct BakeContext<'a> {
 }
 
 impl<'a> BakeContext<'a> {
-    pub(crate) fn new(request: &BakeRequest<'a>) -> Result<BakeContext<'a>, BakeError> {
+    pub(crate) fn with_frame(request: &BakeRequest<'a>, extent: MeshExtent, ray_frame: &'a RayFrame<'a>) -> Self {
         let settings = request.settings;
-        let extent = MeshExtent::of(request.mesh)?;
         let (low, high) = Source::of_request(request);
-        let ray_frame = RayFrame::new(request, extent)?;
         let (mesh_scale, ray_epsilon) = (extent.scale, extent.ray_epsilon());
         let pass = |map: BakedMap, ray_settings: &RaySettings, kind: RayKind| {
             let half_angle_radians = (ray_settings.spread.clamp(0.0, 180.0) * 0.5).to_radians();
@@ -77,7 +75,7 @@ impl<'a> BakeContext<'a> {
         }
 
         let cage_units = ray_frame.cage_units;
-        Ok(BakeContext {
+        BakeContext {
             low,
             high,
             ray_frame,
@@ -90,7 +88,7 @@ impl<'a> BakeContext<'a> {
             ao,
             bent,
             thickness,
-        })
+        }
     }
 
     pub(crate) fn ignore_transfer_backface(&self) -> bool {

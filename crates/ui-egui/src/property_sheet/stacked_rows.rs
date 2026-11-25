@@ -110,6 +110,7 @@ impl PropertySheet<'_> {
         }
         let enabled = self.ui.is_enabled();
         fold.widget_info(|| WidgetInfo::selected(egui::Role::Button, enabled, open, title));
+        self.ui.ctx().accesskit_node_builder(fold.id, |node| node.set_expanded(open));
 
         // Added after the caption's response, so the glyph takes the clicks over it
         let reset = self.ui.interact(reset_rect, section.with("reset"), Sense::click());
@@ -320,7 +321,7 @@ impl PropertySheet<'_> {
         let id = self.named_id("slider_above", label);
         let shown = shown_number(*value, decimals);
 
-        // Fine-grained values read as the reference's do, without trailing zeros ("0.01", "1"); short ones keep their places ("0.50")
+        // Trim trailing zeros only on high-precision values
         let shown = if decimals > SHORT_DECIMALS && shown.contains('.') { shown.trim_end_matches('0').trim_end_matches('.').to_owned() } else { shown };
         let width = self.text_width(&shown, semibold(TEXT_SIZE)).max(super::VALUE_MIN_WIDTH);
         let value_text = ValueText { label: &label, right: self.right, width, center_y: line.top() + LABEL_CENTER, shown: &shown, suffix: "" };
@@ -367,6 +368,7 @@ impl PropertySheet<'_> {
         paint_check(self.ui.painter(), &self.tokens, check, state, response.hovered());
         self.ui.painter().galley(pos2(check.right() + CHECK_TO_LABEL, center_y - text.size().y / 2.0), text, self.tokens.text);
         if let Some(note) = note {
+            self.ui.ctx().accesskit_node_builder(response.id, |node| node.set_description(note));
             self.ui.painter().text(pos2(self.right, center_y), Align2::RIGHT_CENTER, note, FontId::proportional(SMALL_TEXT_SIZE), self.tokens.text_dim);
         }
         self.paint_control_focus(&response);
@@ -410,6 +412,7 @@ impl PropertySheet<'_> {
         response.widget_info(|| WidgetInfo::selected(egui::Role::Button, enabled, pressed, text));
 
         let tokens = self.tokens;
+
         // Held down: the hairline grey, as the paired dropdowns' link
         let fill = match (pressed, response.hovered()) {
             (true, _) => tokens.separator,
@@ -446,7 +449,7 @@ impl PropertySheet<'_> {
 /// A check's box in `rect`: on = dim fill and a tick in the panel's colour, mixed (`None`) = a dash, off = the row colour with a field's border
 pub(crate) fn paint_check(painter: &egui::Painter, tokens: &crate::theme::Tokens, rect: Rect, state: Option<bool>, hovered: bool) {
     if state == Some(false) {
-        let border = if hovered { tokens.button_border } else { tokens.field_border };
+        let border = if hovered { tokens.text } else { tokens.text_dim };
         painter.rect(rect, CornerRadius::same(CHECK_RADIUS), tokens.row, Stroke::new(1.0, border), StrokeKind::Inside);
         return;
     }
@@ -458,6 +461,7 @@ pub(crate) fn paint_check(painter: &egui::Painter, tokens: &crate::theme::Tokens
         painter.line_segment([pos2(rect.center().x - DASH_HALF, y), pos2(rect.center().x + DASH_HALF, y)], Stroke::new(DASH_WIDTH, tokens.panel));
         return;
     }
+
     let points = TICK_POINTS.map(|(x, y)| pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height()));
     painter.line(points.to_vec(), Stroke::new(TICK_WIDTH, tokens.panel));
 }

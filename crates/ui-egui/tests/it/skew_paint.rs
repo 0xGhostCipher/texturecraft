@@ -34,6 +34,7 @@ fn the_bake_panel_has_the_bake_paint_brush_and_dragging_paints_the_map() {
     h.hover_at(STROKE_END);
     h.drop_at(STROKE_END);
     h.run_steps(3);
+
     assert!(h.state().session.doc.bake_paint.is_empty(), "the brush is off");
 
     // On: the checkbox turns it on, and the same drag makes a map with paint along the stroke
@@ -41,6 +42,7 @@ fn the_bake_panel_has_the_bake_paint_brush_and_dragging_paints_the_map() {
     h.run_steps(3);
     h.get(by().label_contains("Paint Skew Correction")).click();
     h.run_steps(3);
+
     assert!(h.state().ui.bake_paint_brush.on);
     h.get_by_label("Radius");
     h.drag_at(STROKE_START);
@@ -58,6 +60,7 @@ fn the_bake_panel_has_the_bake_paint_brush_and_dragging_paints_the_map() {
     h.run_steps(3);
     h.get_by_role_and_label(egui::accesskit::Role::Button, "Clear All Skew Paint Strokes").click();
     h.run_steps(3);
+
     assert!(h.state().session.doc.bake_paint.is_empty());
 }
 

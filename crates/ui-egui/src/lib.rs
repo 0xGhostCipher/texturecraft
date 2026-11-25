@@ -48,6 +48,7 @@ mod generator_panel;
 pub mod gpu;
 mod gray_slider;
 mod grid_tile;
+#[cfg(not(target_arch = "wasm32"))]
 mod high_poly_job;
 mod histogram_cache;
 pub mod i18n;
@@ -90,6 +91,8 @@ mod orb_environment;
 mod orb_material;
 pub mod orb_previews;
 mod orb_shape;
+/// The channel's OS identity (app id, window and app names) — see its module docs.
+pub mod os_window;
 pub mod parity;
 mod past_end;
 mod path_hit;
@@ -183,6 +186,7 @@ use texturecraft_engine::bake::Progress;
 
 pub use bake_job::BakeJob;
 pub use control::ControlRequest;
+#[cfg(not(target_arch = "wasm32"))]
 pub use high_poly_job::HighPolyJob;
 pub use running_bake::RunningBake;
 pub use state::UiState;
@@ -267,6 +271,7 @@ pub struct TextureCraftApp {
     pub pbr_import: Option<pbr_import::PbrDialog>,
     pub resize: Option<ResizeJob>,
     /// High poly files being loaded for the bake
+    #[cfg(not(target_arch = "wasm32"))]
     pub high_poly_job: Option<HighPolyJob>,
     pub link_cooks: Vec<LinkCook>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -413,6 +418,7 @@ impl TextureCraftApp {
             bake_report: Default::default(),
             pbr_import: None,
             resize: None,
+            #[cfg(not(target_arch = "wasm32"))]
             high_poly_job: None,
             link_cooks: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -621,21 +627,18 @@ impl TextureCraftApp {
             return;
         }
 
-        // The bake takes the 3D view over from the map preview
-        self.live_preview.release(&mut self.session);
-
-        // Restore the picker's view before the preview starts following baked maps
-        id_color_pick::IdColorPick::end(self);
-
-        match only {
-            Some(map) => self.session.bake_preview_begin(sets.iter().map(|set| (*set, vec![map])).collect()),
-            None => {
-                if let Err(error) = self.session.bake_preview_begin_for(&sets) {
-                    self.toast(error.to_string(), true);
-                    return;
-                }
+        let orders = match self.session.bake_preview_orders(&sets, only) {
+            Ok(orders) => orders,
+            Err(error) => {
+                self.toast(error.to_string(), true);
+                return;
             }
-        }
+        };
+
+        // Restore the previous view before the real bake takes it over
+        self.live_preview.release(&mut self.session);
+        id_color_pick::IdColorPick::end(self);
+        self.session.bake_preview_begin(orders);
 
         let total = sets.len();
         self.bake_report = bake_report::BakeReport::started(self.last_time);
@@ -829,7 +832,9 @@ impl TextureCraftApp {
                 let receiver = spawn_worker("texturecraft-bake", move || {
                     task.run_streaming(&worker_progress, &mut |map| {
                         worker_done.fetch_add(1, Ordering::Relaxed);
-                        let _ = sender.send(map);
+                        if sender.send(map).is_err() {
+                            worker_progress.cancel();
+                        }
                     })
                 });
 
@@ -1139,6 +1144,7 @@ impl eframe::App for TextureCraftApp {
             }
         }
         self.poll_bake(ctx);
+        self.bake_map_thumbnails.retain_mesh(self.session.mesh_id);
         bake_mode::poll_live_preview(self, ctx);
         self.poll_resize(ctx);
         #[cfg(not(target_arch = "wasm32"))]
@@ -1252,6 +1258,26 @@ impl eframe::App for TextureCraftApp {
 #[cfg(not(target_arch = "wasm32"))]
 static DATA_FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
+/// A private Nightly profile's data folder, fixed before the first window (unset: stable's
+/// Settings folder or the default). Every user folder this app writes — logs, autosave, smart
+/// materials, layouts, templates, brushes and export presets — hangs off [`data_dir`], so a
+/// Nightly install keeps all of it beside its own settings and never reads Stable's.
+#[cfg(not(target_arch = "wasm32"))]
+static DATA_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Use `root` as the data folder for this process; called once, before the first window, by a
+/// Nightly launch with its validated profile. The Settings › Data folder value is not consulted.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_data_root(root: std::path::PathBuf) {
+    let _ = DATA_ROOT.set(root);
+}
+
+/// Whether this process runs from a private Nightly profile.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn has_data_root() -> bool {
+    DATA_ROOT.get().is_some()
+}
+
 /// The data folder for a `Prefs::data_folder` value: that path when it is absolute, otherwise
 /// `Documents/TextureCraft` in the user's home folder.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1264,9 +1290,12 @@ pub fn data_folder(pref: &str) -> std::path::PathBuf {
     std::path::Path::new(&home).join("Documents").join("TextureCraft")
 }
 
-/// The data folder in use (Settings › Folders › Data folder).
+/// The data folder in use: the Nightly profile when this is one, else Settings › Folders › Data folder.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> std::path::PathBuf {
+    if let Some(root) = DATA_ROOT.get() {
+        return root.clone();
+    }
     DATA_FOLDER.get().cloned().unwrap_or_else(|| data_folder(""))
 }
 

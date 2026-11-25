@@ -30,7 +30,6 @@ const NAME_SIZE: f32 = 12.0;
 pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, selected: BakedMap, restorable: bool) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let active_set = app.session.ts();
-    let set_names: Vec<String> = app.session.doc.project.texture_sets.iter().map(|texture_set| texture_set.name.clone()).collect();
     let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), LINE_HEIGHT), Sense::hover());
     let center_y = line.center().y;
     let painter = ui.painter().clone();
@@ -38,7 +37,7 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, selected: BakedMap, r
     let mut x = line.left();
     let set_caret = caret(ui, &painter, &tokens, x, center_y, "texture_set_caret", tr("Switch Texture Set"));
     x += CARET_BOX + CARET_TO_NAME;
-    let set_name = set_names.get(active_set).map_or("", String::as_str);
+    let set_name = app.session.doc.project.texture_sets.get(active_set).map_or("", |set| set.name.as_str());
     let map_name = tr(baked_map_label(selected));
     let map_width = painter.layout_no_wrap(map_name.to_owned(), semibold(NAME_SIZE), tokens.text_strong).size().x;
     let reset_width = if restorable { RESET_BOX } else { 0.0 };
@@ -52,9 +51,10 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, selected: BakedMap, r
     painter.text(pos2(x, center_y), Align2::LEFT_CENTER, map_name, semibold(NAME_SIZE), tokens.text_strong);
 
     egui::Popup::menu(&set_caret).show(|ui| {
-        for (set_index, name) in set_names.iter().enumerate() {
-            if ui.selectable_label(set_index == active_set, name).clicked() {
+        for (set_index, set) in app.session.doc.project.texture_sets.iter().enumerate() {
+            if ui.selectable_label(set_index == active_set, &set.name).clicked() {
                 app.run("textureSet.select", json!({ "ts": set_index }));
+                break;
             }
         }
     });
@@ -74,6 +74,7 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, selected: BakedMap, r
         let response = response.on_hover_text(tr("Restore Defaults"));
         let color = if response.hovered() { tokens.text_strong } else { tokens.text_dim };
         painter.text(rect.center(), Align2::CENTER_CENTER, icon::CLOCK_COUNTER_CLOCKWISE, FontId::proportional(RESET_SIZE), color);
+        crate::property_sheet::paint_keyboard_focus(ui, &response, &tokens);
         restore = response.clicked();
     }
 
@@ -89,5 +90,6 @@ fn caret(ui: &mut Ui, painter: &egui::Painter, tokens: &Tokens, left: f32, cente
     response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, true, label));
     let color = if response.hovered() { tokens.text_strong } else { tokens.text_dim };
     painter.text(rect.center(), Align2::CENTER_CENTER, icon::CARET_RIGHT, FontId::proportional(CARET_SIZE), color);
+    crate::property_sheet::paint_keyboard_focus(ui, &response, tokens);
     response
 }

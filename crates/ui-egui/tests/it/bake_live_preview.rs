@@ -19,6 +19,7 @@ fn harness() -> Harness<'static, TextureCraftApp> {
     let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
     session.doc.project.texture_sets[0].bake = Default::default();
     session.doc.project.texture_sets[0].bake.common.resolution = BakeResolution::R1024;
+
     // No earlier bake to start the preview from: its first picture is a preview bake at the chosen size
     session.doc.baked.clear();
     let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_eframe(|context| TextureCraftApp::new(context, session));
@@ -39,6 +40,7 @@ fn run_until(harness: &mut Harness<'static, TextureCraftApp>, mut done: impl FnM
         if done(harness) {
             return true;
         }
+
         std::thread::sleep(WAIT_STEP);
     }
     false
@@ -64,6 +66,7 @@ fn the_selected_map_shows_on_the_model_and_common_settings_hide_it_at_once() {
 
     harness.state_mut().ui.dock.focus(Panel::CommonSettings);
     harness.run_steps(1);
+
     assert!(!harness.state().session.bake_preview_active(), "no lingering picture");
     assert_ne!(harness.state().session.view, texturecraft_engine::ViewMode::MeshMap(BakedMap::AmbientOcclusion));
 }
@@ -102,6 +105,7 @@ fn switching_the_preview_off_hides_it() {
 #[test]
 fn pictures_keep_coming_while_the_slider_is_still_moving() {
     let mut harness = harness();
+
     // Many rays: each preview bake takes several frames, as on a real mesh
     harness.state_mut().session.doc.project.texture_sets[0].bake.maps.ao.parameters.rays.rays = 256;
     wait_for_preview(&mut harness, |_| true);
@@ -114,6 +118,7 @@ fn pictures_keep_coming_while_the_slider_is_still_moving() {
     harness.hover_at(from);
     harness.run_steps(1);
     harness.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+
     // Holding the last picture keeps a new one from reusing its address
     let mut last = picture(&harness);
     let mut pictures = 0;

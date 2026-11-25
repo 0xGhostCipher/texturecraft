@@ -59,6 +59,7 @@ fn picked_high_polys_load_in_the_background_and_each_is_an_undo_step() {
 
     run_until_loaded(&mut harness);
     harness.run_steps(2);
+
     assert_eq!(high_names(&harness), ["first.obj", "second.obj"], "the unreadable file is skipped and the rest load in order");
     assert_eq!(harness.state().session.history_labels().len(), steps + 2);
     assert!(harness.state().toasts.iter().any(|toast| toast.text.contains("missing.obj")), "the unreadable file is reported");
@@ -66,6 +67,7 @@ fn picked_high_polys_load_in_the_background_and_each_is_an_undo_step() {
     assert_eq!(harness.state().session.doc.bake_meshes.merged_high().unwrap().mesh.triangle_count(), 2);
 
     harness.state_mut().run("edit.undo", serde_json::Value::Null);
+
     assert_eq!(high_names(&harness), ["first.obj"]);
     let _ = std::fs::remove_dir_all(folder);
 }
@@ -94,6 +96,7 @@ fn a_high_poly_that_finishes_after_the_list_changed_joins_the_list_as_it_is() {
     let load = texturecraft_engine::HighPolyLoad::prepare(&session.doc.bake_meshes, file("part.obj")).unwrap();
 
     session.add_high_poly_bytes("part.obj", TRIANGLE_OBJ.as_bytes().to_vec()).unwrap();
+
     assert_eq!(session.apply_high_poly_load(load), "2_part.obj", "the name is made unique against the list of now");
     assert_eq!(session.doc.bake_meshes.merged_high().unwrap().mesh.triangle_count(), 2, "both meshes bake");
 }
@@ -106,16 +109,19 @@ fn a_high_poly_read_during_a_paint_stroke_is_added_after_it_and_survives_its_can
     std::fs::write(&path, TRIANGLE_OBJ).unwrap();
 
     let mut harness = harness();
+
     // Bake mode finishes strokes at once: the files go on loading after a switch back to painting
     harness.state_mut().ui.mode = Mode::Painting;
     texturecraft_engine::execute(&mut harness.state_mut().session, "layer.add.paint", &serde_json::json!({})).unwrap();
     harness.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
     harness.state_mut().load_high_polys([path]);
+
     // Time for the worker to read one triangle
     for _ in 0..STROKE_FRAMES {
         std::thread::sleep(Duration::from_millis(5));
         harness.run_steps(1);
     }
+
     assert!(harness.state().session.stroke_active());
     assert!(high_names(&harness).is_empty(), "nothing is added while the stroke runs");
 

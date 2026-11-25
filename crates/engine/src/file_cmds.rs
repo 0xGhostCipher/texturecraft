@@ -1489,6 +1489,7 @@ f 1/1 2/2 3/3
         std::fs::create_dir_all(&dir).unwrap();
         let a = dir.join("a.obj");
         std::fs::write(&a, "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n").unwrap();
+
         // Same triangle count, other vertices
         let b = dir.join("b.obj");
         std::fs::write(&b, "v 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n").unwrap();
@@ -1499,10 +1500,12 @@ f 1/1 2/2 3/3
 
         // The same mesh again keeps the cage but not the cached colours
         crate::execute(&mut s, "file.changeMesh", &json!({"path": a.display().to_string()})).unwrap();
+
         assert!(s.doc.bake_meshes.cage.is_some());
         assert!(s.doc.bake_meshes.low_base_color.get().is_none(), "the colours are read again");
 
         crate::execute(&mut s, "file.changeMesh", &json!({"path": b.display().to_string()})).unwrap();
+
         assert!(s.doc.bake_meshes.cage.is_none(), "the cage was made for another mesh");
         std::fs::remove_dir_all(&dir).ok();
     }

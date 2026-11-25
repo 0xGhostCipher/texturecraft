@@ -1,13 +1,14 @@
 //! The map preview: while Mesh Map Settings shows a map's settings, the 3D view shows that map on the model, re-baked small on a worker as the settings change
 
+use crate::bake_scene::SharedHandle;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::sync::mpsc::TryRecvError;
 
 use texturecraft_engine::StreamedMap;
 use texturecraft_engine::bake::Progress;
-use texturecraft_engine::core::{BakeResolution, BakedMap};
+use texturecraft_engine::core::{BakePaintTarget, BakeResolution, BakedMap};
 
 use super::live_preview_target::LivePreviewTarget;
 use super::preview_input::PreviewInput;
@@ -62,9 +63,7 @@ impl LivePreview {
 
     fn cancel(&mut self) {
         self.drag_waiting = false;
-        if let Some(running) = self.running.take() {
-            running.progress.cancel.store(true, Ordering::Relaxed);
-        }
+        self.running = None;
     }
 
     /// The size `map` bakes at while a slider drags: it starts small, follows how fast this machine bakes it, and never passes `chosen`
@@ -135,12 +134,12 @@ pub(crate) fn poll(app: &mut TextureCraftApp, ctx: &egui::Context) {
         }
     }
 
-    // After a drag, and whenever what the picture was made from changes (undo, a synced set, automation, the chosen size, the meshes)
+    // Refine after release and refresh after external edits
     if let Some(target) = app.live_preview.shown {
         let released = app.live_preview.refine_on_release && ctx.dragged_id().is_none();
         let chosen = app.ui.bake_visualization.map_preview_size;
 
-        // Only after an edit or a new size: comparing the inputs copies the settings
+        // Compare input snapshots only after an edit or a size change
         let check = (app.session.revision, chosen);
         let unchecked = app.live_preview.checked_at != Some(check);
         let out_of_date = unchecked && !app.live_preview.refine_on_release && app.live_preview.made_from != input(app, target, chosen);
@@ -212,7 +211,8 @@ fn show(app: &mut TextureCraftApp, ctx: &egui::Context, target: LivePreviewTarge
 fn input(app: &TextureCraftApp, target: LivePreviewTarget, size: BakeResolution) -> Option<PreviewInput> {
     let set = app.session.doc.project.texture_sets.get(target.set)?;
     let meshes = &app.session.doc.bake_meshes;
-    let painted = app.session.doc.bake_paint.iter().filter(|((index, _), _)| *index == target.set).map(|(_, map)| Arc::as_ptr(map) as usize).collect();
+    let painted = [BakePaintTarget::Skew, BakePaintTarget::Cage].map(|kind| SharedHandle::of(app.session.doc.bake_paint.get(&(target.set, kind))));
+    let previous_pixels = app.session.doc.baked.get(&target.set).filter(|_| !set.bake_excluded_tiles.is_empty()).and_then(|baked| baked.maps.get(&target.map));
 
     Some(PreviewInput {
         settings: set.bake.clone(),
@@ -220,8 +220,9 @@ fn input(app: &TextureCraftApp, target: LivePreviewTarget, size: BakeResolution)
         uv_tiles: set.uv_tiles.clone(),
         excluded_tiles: set.bake_excluded_tiles.clone(),
         tile_resolutions: set.tile_resolutions.clone(),
-        high_polys: meshes.high.iter().map(|mesh| Arc::as_ptr(&mesh.mesh) as usize).collect(),
-        cage: meshes.cage.as_ref().map(|cage| Arc::as_ptr(&cage.mesh) as usize),
+        high: SharedHandle::of(meshes.merged_high().map(|source| &source.mesh)),
+        cage: SharedHandle::of(meshes.cage.as_ref().map(|source| &source.mesh)),
+        previous_pixels: SharedHandle::of(previous_pixels),
         painted,
         size,
     })
@@ -231,10 +232,10 @@ fn input(app: &TextureCraftApp, target: LivePreviewTarget, size: BakeResolution)
 fn start(app: &mut TextureCraftApp, ctx: &egui::Context, target: LivePreviewTarget, size: BakeResolution, dragging: bool) {
     app.live_preview.cancel();
     app.live_preview.made_from = input(app, target, size);
-    let mut task = match app.session.bake_task_only(target.set, target.map) {
+    let mut task = match app.session.bake_map_preview_task(target.set, target.map) {
         Ok(task) => task,
         Err(error) => {
-            // Once, not on every change while it stays unbakeable
+            // Log only the first failure until a bake can start
             if !app.live_preview.cannot_bake {
                 let map = tr(baked_map_label(target.map));
                 app.session.log.warn("Baker", trf("The {map} preview can't bake: {error}", &[("map", &map), ("error", &error.to_string())]));
@@ -253,19 +254,27 @@ fn start(app: &mut TextureCraftApp, ctx: &egui::Context, target: LivePreviewTarg
     let progress = Arc::new(Progress::new());
     let worker_progress = progress.clone();
 
-    // Queued on the preview pool's own threads: starting a new thread per change can stall the UI while a bake allocates
+    let pending = Arc::new(Mutex::new(Some(task)));
+    let worker_task = pending.clone();
+    let run = move || {
+        let task = worker_task.lock().unwrap_or_else(|error| error.into_inner()).take();
+        let task = task.ok_or_else(|| texturecraft_engine::EngineError::Other("bake cancelled".into()))?;
+        task.run(&worker_progress)
+    };
+
+    // The preview pool keeps bake setup off the UI thread
     let receiver = match preview_pool() {
         Some(pool) => {
             let (sender, receiver) = std::sync::mpsc::channel();
             pool.spawn(move || {
-                let _ = sender.send(task.run(&worker_progress));
+                let _ = sender.send(run());
             });
             receiver
         }
-        None => crate::spawn_worker("texturecraft-map-preview", move || task.run(&worker_progress)),
+        None => crate::spawn_worker("texturecraft-map-preview", run),
     };
     let started = ctx.input(|input| input.time);
-    app.live_preview.running = Some(RunningPreview { target, size, started, dragging, progress, receiver });
+    app.live_preview.running = Some(RunningPreview { target, size, started, dragging, progress, receiver, pending });
 }
 
 /// A dragged slider's first preview size before this machine's speed is known: 64 for the ray-traced bakers (well over 100 ms at 128 on a 4-core machine), else 128

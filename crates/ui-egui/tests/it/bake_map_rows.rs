@@ -2,7 +2,7 @@
 
 use egui::{Event, Modifiers, PointerButton, Role};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use texturecraft_engine::core::BakedMap;
 use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::docking::Panel;
@@ -100,4 +100,34 @@ fn a_click_on_one_checkbox_still_toggles_only_that_row() {
 
     let expected: Vec<BakedMap> = BakedMap::ALL.into_iter().filter(|other| *other != map).collect();
     assert_eq!(enabled(&harness), expected);
+}
+
+#[test]
+fn keyboard_opens_an_unselected_maps_actions_without_selecting_it() {
+    let mut harness = harness();
+    let row = "Height";
+    harness.get_by_role_and_label(Role::Button, row).focus();
+    harness.run_steps(2);
+
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F10);
+    harness.run_steps(3);
+
+    assert!(harness.query_by_label("Check Height for More Texture Sets...").is_some());
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+
+    assert!(harness.get_by_role_and_label(Role::Button, row).is_focused());
+    harness.key_press(egui::Key::Menu);
+    harness.run_steps(3);
+    harness.get_by_label("Check Height for More Texture Sets...").focus();
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+
+    assert!(harness.get_by_role_and_label(Role::Button, "Close").is_focused());
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+
+    assert!(harness.get_by_role_and_label(Role::Button, row).is_focused());
+    assert_eq!(harness.get_by_role_and_label(Role::Button, row).accesskit_node().toggled(), Some(egui::accesskit::Toggled::False));
 }

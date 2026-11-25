@@ -71,7 +71,8 @@ fn id(sheet: &mut PropertySheet<'_>, settings: &mut IdSettings) {
             (IdColorSource::Submesh, tr("Submesh")),
         ],
     );
-    // Dependent controls show greyed and indented, never hidden, as in the reference
+
+    // Keep dependent controls visible when disabled
     let generates_colors = matches!(settings.source, IdColorSource::FileId | IdColorSource::MeshId | IdColorSource::Submesh);
     dependent(sheet, generates_colors, |sheet| {
         choice(
@@ -157,7 +158,7 @@ fn curvature(sheet: &mut PropertySheet<'_>, settings: &mut CurvatureSettings) {
 }
 
 fn position(sheet: &mut PropertySheet<'_>, settings: &mut PositionSettings) {
-    // The reference splits the axis into a Mode and an Axis that applies only to One Axis
+    // Axis selection applies only in One Axis mode
     let mut one_axis = settings.axis != PositionAxis::All;
     choice(sheet, tr("Mode"), &mut one_axis, &[(false, tr("All Axis")), (true, tr("One Axis"))]);
     if one_axis && settings.axis == PositionAxis::All {

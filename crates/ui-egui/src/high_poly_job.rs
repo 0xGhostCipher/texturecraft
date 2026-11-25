@@ -31,7 +31,6 @@ impl HighPolyJob {
 
 impl TextureCraftApp {
     /// Add the mesh files at `paths` as high polys, read and parsed on a worker thread
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_high_polys(&mut self, paths: impl IntoIterator<Item = String>) {
         let mut paths: VecDeque<String> = paths.into_iter().collect();
         match &mut self.high_poly_job {
@@ -41,19 +40,20 @@ impl TextureCraftApp {
     }
 
     /// Start loading the first of `queue`, on top of the high polys the session has now
-    #[cfg(not(target_arch = "wasm32"))]
     fn load_next_high_poly(&mut self, mut queue: VecDeque<String>) {
         self.high_poly_job = queue.pop_front().map(|current| {
-            let (meshes, path) = (self.session.doc.bake_meshes.clone(), current.clone());
+            let mut meshes = texturecraft_engine::BakeMeshes::default();
+            meshes.high.clone_from(&self.session.doc.bake_meshes.high);
+            let path = current.clone();
             let answer = crate::spawn_worker("texturecraft-high-poly", move || HighPolyLoad::read(&meshes, &path));
             HighPolyJob { current, answer, queue, project: self.session.project_id }
         });
     }
 
     /// Add a loaded high poly to the session (once no paint stroke is running) and start on the next file; drop them all once another project is open
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn poll_high_poly_job(&mut self, context: &egui::Context) {
         let Some(job) = &self.high_poly_job else { return };
+
         if job.project != self.session.project_id {
             self.high_poly_job = None;
             self.toast(tr("The project changed while the high polys loaded, so they were not added"), true);
@@ -61,7 +61,8 @@ impl TextureCraftApp {
         }
 
         context.request_repaint_after(POLL_INTERVAL);
-        // A stroke's cancel or undo restores the document from its start, which would drop a high poly added during it
+
+        // An unfinished stroke can restore its starting document
         if self.session.stroke_active() {
             return;
         }

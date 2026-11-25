@@ -187,6 +187,7 @@ pub fn mesh_map_settings_panel(app: &mut TextureCraftApp, ui: &mut Ui) {
     let changed = edit_settings(app, ui, "mesh_map_settings", texture_sets, |_, ui, settings| {
         PropertySheet::show(ui, ("mesh_map_settings_sheet", selected), |sheet| map_settings::show(sheet, selected, &mut settings.maps, restore.inner))
     });
+
     // Other changes reach the preview through its check of what its picture was made from
     if changed && ui.ctx().dragged_id().is_some() {
         let ctx = ui.ctx().clone();

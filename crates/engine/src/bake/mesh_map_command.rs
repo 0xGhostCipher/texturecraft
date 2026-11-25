@@ -36,7 +36,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Bake mesh maps",
             ["Mode"],
             None,
-            "{ts?: index|[indices]|\"all\"|\"selected\", cpu?: true (skip the GPU), ...any bake.settings parameter} → {baked, tracer: [where each set's rays ran]}",
+            "{ts?: index|[indices]|\"all\"|\"selected\", cpu?: true (skip the GPU), ...any bake.settings parameter} → {baked, tracer: [where each set's rays ran]}; settings reach sync partners, only the requested sets bake",
             always,
             bake_run
         ),
@@ -101,19 +101,19 @@ pub(super) fn unique_name(file_name: &str, taken: &[&str]) -> String {
     let leaf = std::path::Path::new(file_name).file_name().and_then(|n| n.to_str()).unwrap_or("mesh");
     let base = texturecraft_formats::sanitize_resource_name(leaf);
     let mut name = base.clone();
-    let mut n = 2;
+    let mut suffix = 2;
     while taken.contains(&name.as_str()) {
-        name = format!("{n}_{base}");
-        n += 1;
+        name = format!("{suffix}_{base}");
+        suffix += 1;
     }
     name
 }
 
 pub(super) fn parse_mesh(file_name: &str, bytes: Vec<u8>) -> Result<BakeMesh> {
-    let h = texturecraft_formats::import_high_poly_bytes(file_name, &bytes).map_err(|e| EngineError::Other(format!("{file_name}: {e}")))?;
-    let base_color = h.base_color.into_iter().map(|c| c.map(Arc::new)).collect();
+    let imported = texturecraft_formats::import_high_poly_bytes(file_name, &bytes).map_err(|e| EngineError::Other(format!("{file_name}: {e}")))?;
+    let base_color = imported.base_color.into_iter().map(|c| c.map(Arc::new)).collect();
     let folder = std::path::Path::new(file_name).parent().map(|folder| folder.display().to_string()).filter(|folder| !folder.is_empty());
-    Ok(BakeMesh { name: file_name.to_string(), folder, bytes: Arc::new(bytes), mesh: Arc::new(h.mesh), base_color })
+    Ok(BakeMesh { name: file_name.to_string(), folder, bytes: Arc::new(bytes), mesh: Arc::new(imported.mesh), base_color })
 }
 
 impl Session {
@@ -125,6 +125,13 @@ impl Session {
     /// The bake of texture set `texture_set`'s map `map` alone, checked or not
     pub fn bake_task_only(&self, texture_set: usize, map: BakedMap) -> Result<BakeTask> {
         self.bake_task_of(texture_set, Some(map))
+    }
+
+    /// Prepare a display-only bake, retaining previous pixels only for the displayed map's excluded UV tiles
+    pub fn bake_map_preview_task(&self, texture_set: usize, map: BakedMap) -> Result<BakeTask> {
+        let mut task = self.bake_task_only(texture_set, map)?;
+        task.previous_maps.maps.retain(|&previous_map, _| previous_map == map);
+        Ok(task)
     }
 
     fn bake_task_of(&self, texture_set: usize, only: Option<BakedMap>) -> Result<BakeTask> {
@@ -320,27 +327,28 @@ impl Session {
 
     /// Parse a cage mesh file, refusing one whose triangles are not the low poly's
     fn cage_from_bytes(&self, file_name: &str, bytes: Vec<u8>) -> Result<BakeMesh> {
-        let mut m = parse_mesh(file_name, bytes)?;
-        if m.mesh.triangle_count() != self.mesh.triangle_count() {
+        let mut cage = parse_mesh(file_name, bytes)?;
+        if cage.mesh.triangle_count() != self.mesh.triangle_count() {
             return Err(EngineError::Other(format!(
                 "the cage has {} triangles but the low poly has {}; export the cage from the low poly",
-                m.mesh.triangle_count(),
+                cage.mesh.triangle_count(),
                 self.mesh.triangle_count()
             )));
         }
-        m.name = unique_name(file_name, &[]);
-        m.base_color.clear();
-        Ok(m)
+
+        cage.name = unique_name(file_name, &[]);
+        cage.base_color.clear();
+        Ok(cage)
     }
 
-    /// Add mesh file `f` as a high poly or the cage, logging what it could not fold in; replies `{name, meshes}` like `bake.highPoly.add` / `bake.cage.set`
-    pub fn add_bake_mesh(&mut self, f: texturecraft_formats::MeshFile, cage: bool) -> Result<Value> {
+    /// Add mesh file `file` as a high poly or the cage, logging what it could not fold in; replies `{name, meshes}` like `bake.highPoly.add` / `bake.cage.set`
+    pub fn add_bake_mesh(&mut self, file: texturecraft_formats::MeshFile, cage: bool) -> Result<Value> {
         let name = if cage {
-            let name = self.set_cage_bytes(&f.name, f.bytes)?;
-            self.log.warnings("Baker", f.warnings);
+            let name = self.set_cage_bytes(&file.name, file.bytes)?;
+            self.log.warnings("Baker", file.warnings);
             name
         } else {
-            let load = HighPolyLoad::prepare(&self.doc.bake_meshes, f)?;
+            let load = HighPolyLoad::prepare(&self.doc.bake_meshes, file)?;
             self.apply_high_poly_load(load)
         };
         Ok(json!({ "name": name, "meshes": meshes_json(self) }))
@@ -390,7 +398,7 @@ impl Session {
 
     /// The bake meshes for a project file: (high polys, cage)
     pub(crate) fn saved_bake_meshes(&self) -> (Vec<MeshFile>, Option<MeshFile>) {
-        let entry = |m: &BakeMesh| (m.name.clone(), m.bytes.as_ref().clone());
+        let entry = |mesh: &BakeMesh| (mesh.name.clone(), mesh.bytes.as_ref().clone());
         (self.doc.bake_meshes.high.iter().map(entry).collect(), self.doc.bake_meshes.cage.as_ref().map(entry))
     }
 }
@@ -430,6 +438,7 @@ fn high_remove(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(meshes_json(s));
     }
+
     let index = match (u64p(p, "index"), strp(p, "name")) {
         (Some(i), _) => usize::try_from(i).unwrap_or(usize::MAX),
         (None, Some(n)) => s.doc.bake_meshes.high.iter().position(|h| h.name == n).ok_or_else(|| bad("bake.highPoly.remove", format!("no high poly `{n}`")))?,
@@ -444,17 +453,24 @@ fn cage_set(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Texture sets named by `ts` (default: the active one)
-pub(super) fn sets_param(s: &Session, cmd: &str, p: &Value) -> Result<Vec<usize>> {
-    let n = s.set_count();
-    let one = |v: &Value| v.as_u64().map(|t| t as usize).filter(|t| *t < n).ok_or_else(|| bad(cmd, format!("invalid texture set {v}")));
-    match p.get("ts") {
-        Some(Value::String(a)) if a == "all" => Ok((0..n).collect()),
-        Some(Value::String(a)) if a == "selected" => {
-            Ok((0..n).filter(|t| s.doc.project.texture_sets.get(*t).is_some_and(|set| set.bake.common.is_enabled)).collect())
+pub(super) fn sets_param(session: &Session, command: &str, params: &Value) -> Result<Vec<usize>> {
+    let set_count = session.set_count();
+    let parse_index = |value: &Value| {
+        value
+            .as_u64()
+            .and_then(|index| usize::try_from(index).ok())
+            .filter(|index| *index < set_count)
+            .ok_or_else(|| bad(command, format!("invalid texture set {value}")))
+    };
+
+    match params.get("ts") {
+        Some(Value::String(selection)) if selection == "all" => Ok((0..set_count).collect()),
+        Some(Value::String(selection)) if selection == "selected" => {
+            Ok(session.doc.project.texture_sets.iter().enumerate().filter_map(|(index, set)| set.bake.common.is_enabled.then_some(index)).collect())
         }
-        Some(Value::Array(a)) => a.iter().map(one).collect(),
-        Some(v) => Ok(vec![one(v)?]),
-        None => Ok(vec![s.ts()]),
+        Some(Value::Array(indices)) => indices.iter().map(parse_index).collect(),
+        Some(value) => Ok(vec![parse_index(value)?]),
+        None => Ok(vec![session.ts()]),
     }
 }
 
@@ -501,6 +517,7 @@ fn apply_settings(settings: &mut BakeSettings, params: &Value, command: &str) ->
         let replacement: BakeSettings = serde_json::from_value(model.clone()).map_err(|error| bad(command, error.to_string()))?;
         validate_model_settings(&replacement, command, boolp(params, "preset") == Some(true), None)?;
         let (is_enabled, sync) = (settings.common.is_enabled, std::mem::take(&mut settings.sync));
+
         // Sync membership is not a setting: only `bake.sync` changes it
         *settings = BakeSettings { sync, ..replacement };
         if boolp(params, "preserveEnabled") == Some(true) {
@@ -509,6 +526,10 @@ fn apply_settings(settings: &mut BakeSettings, params: &Value, command: &str) ->
     }
 
     if let Some(patch) = params.get("patch") {
+        if patch.get("sync").is_some() {
+            return Err(bad(command, "use bake.sync to change sync membership"));
+        }
+
         let mut model = json!(settings);
         model_patch::apply_patch(&mut model, patch, command)?;
         let updated: BakeSettings = serde_json::from_value(model).map_err(|error| bad(command, error.to_string()))?;
@@ -754,15 +775,28 @@ fn set_settings(session: &mut Session, params: &Value, command: &str) -> Result<
 
 /// `targets` plus every set sharing a sync group with a target, which takes the fields the target changed in that group; fails when a set's values come out inconsistent
 fn with_sync_partners(project: &texturecraft_core::Project, targets: Vec<(usize, BakeSettings)>, command: &str) -> Result<Vec<(usize, BakeSettings)>> {
+    let targets: BTreeMap<usize, BakeSettings> = targets.into_iter().collect();
+
+    // Each explicit target already has its final settings
+    if targets.len() == project.texture_sets.len() {
+        return Ok(targets.into_iter().collect());
+    }
+
     let mut next: BTreeMap<usize, BakeSettings> = BTreeMap::new();
     for (target, settings) in &targets {
         let Some(before) = project.texture_sets.get(*target).map(|set| &set.bake) else { continue };
+
+        if before == settings {
+            continue;
+        }
+
         let Some(changed) = model_patch::changed_fields(&json!(before), &json!(settings)) else { continue };
 
         let groups = std::iter::once(BakeSyncGroup::Common).chain(BakedMap::ALL.map(BakeSyncGroup::Map));
         for group in groups {
-            for partner in project.bake_synced_sets(*target, group).into_iter().filter(|partner| partner != target) {
+            for partner in project.bake_synced_sets(*target, group).into_iter().filter(|partner| !targets.contains_key(partner)) {
                 let Some(set) = project.texture_sets.get(partner) else { continue };
+
                 let entry = next.entry(partner).or_insert_with(|| set.bake.clone());
 
                 let mut model = json!(entry);
@@ -773,8 +807,8 @@ fn with_sync_partners(project: &texturecraft_core::Project, targets: Vec<(usize,
         }
     }
 
-    // The target's checks already bound each value it changed, but beside a partner's other values one can clash: min above the partner's max
-    for (_, settings) in next.iter().filter(|(partner, _)| targets.iter().all(|(target, _)| target != *partner)) {
+    // A copied value can conflict with a partner's retained settings
+    for settings in next.values() {
         validate_model_settings(settings, command, false, Some(settings))?;
     }
 
@@ -809,11 +843,15 @@ fn bake_run(session: &mut Session, params: &Value) -> Result<Value> {
         return Ok(json!({"baked": [], "tracer": []}));
     }
 
+    let next = with_sync_partners(&session.doc.project, next, "bake.run")?;
     let cpu = boolp(params, "cpu") == Some(true);
     let tracers = session.edit("Bake mesh maps", |session| {
-        let mut tracers = Vec::with_capacity(next.len());
         for (index, settings) in next {
             session.doc.project.texture_set_mut(index)?.bake = settings;
+        }
+
+        let mut tracers = Vec::with_capacity(sets.len());
+        for &index in &sets {
             let mut task = session.bake_task(index)?;
             if cpu {
                 task.tracer = None;
@@ -896,6 +934,7 @@ mod bake_task_tests {
         let mut session = crate::sample_session(128, 64).unwrap();
         session.doc.project.texture_sets[0].bake.maps.select([BakedMap::Normal]);
         let colours = Arc::new(vec![None]);
+
         // The sample bakes when made, which already read the colours
         session.doc.bake_meshes.low_base_color = Default::default();
         assert!(session.doc.bake_meshes.low_base_color.set(Ok(colours.clone())).is_ok());

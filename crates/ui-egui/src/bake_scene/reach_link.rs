@@ -22,6 +22,11 @@ pub(super) struct ReachLink {
 }
 
 impl ReachLink {
+    pub(super) fn reset_for_mesh(&mut self) {
+        // Keep at most one worker across project switches and discard its obsolete result
+        *self = Self { job: self.job.take(), ..Default::default() };
+    }
+
     /// Whether a reach is being worked out (the view must keep drawing to pick it up)
     pub(super) fn busy(&self) -> bool {
         self.job.is_some()
@@ -38,7 +43,9 @@ impl ReachLink {
 
         match job.try_recv() {
             Ok(reach) => {
-                self.reach = reach;
+                if !self.keys.is_empty() {
+                    self.reach = reach;
+                }
                 self.shown = None;
                 self.job = None;
             }
@@ -94,6 +101,21 @@ mod tests {
     use texturecraft_engine::bake::BakePaintMap;
     use texturecraft_engine::core::BakePaintTarget;
     use texturecraft_engine::geom::primitives;
+
+    #[test]
+    fn switching_projects_waits_for_old_work_and_discards_its_result() {
+        let (sender, receiver) = mpsc::channel();
+        let mut link = ReachLink { job: Some(receiver), ..Default::default() };
+
+        link.reset_for_mesh();
+
+        assert!(link.busy(), "a project switch must keep the single running worker");
+        sender.send(vec![Some(HighPolyReach::default())]).unwrap();
+        link.poll();
+
+        assert!(!link.busy());
+        assert!(link.reach.is_empty(), "a hidden scene must release the previous project's result");
+    }
 
     #[test]
     fn rebuilding_reach_releases_previous_vertex_arrays_before_starting_work() {

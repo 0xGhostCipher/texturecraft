@@ -71,12 +71,15 @@ fn high_poly_meshes_drive_the_bake_and_round_trip() {
     assert_eq!(reloaded.doc.project.texture_sets[0].bake, session.doc.project.texture_sets[0].bake);
 
     execute(&mut session, "bake.highPoly.remove", &json!({ "name": "hp_high.obj" })).unwrap();
+
     assert!(session.doc.bake_meshes.high.is_empty());
     execute(&mut session, "bake.cage.clear", &Value::Null).unwrap();
+
     assert!(session.doc.bake_meshes.cage.is_none());
 
     // Without high polys the bake falls back to the low poly
     execute(&mut session, "bake.run", &json!({ "resolution": 128, "maps": ["opacity"] })).unwrap();
+
     assert!(session.doc.baked[&0].maps[&BakedMap::Opacity].iter().all(|v| *v == 1.0));
     let _ = std::fs::remove_dir_all(std::path::Path::new(&high).parent().unwrap());
 }
@@ -90,31 +93,38 @@ fn high_poly_and_cage_edits_are_undo_steps() {
     let merged_triangles = |session: &Session| session.doc.bake_meshes.merged_high().map(|merged| merged.mesh.triangle_count());
 
     session.add_high_poly_bytes("part_high.obj", obj(&low, 0.002, f32::MAX, [1.0; 3]).into_bytes()).unwrap();
+
     assert_eq!(session.undo_label(), Some("Add high poly mesh"));
     assert!(!session.doc.project.texture_sets[0].bake.high_poly.use_low_as_high);
 
     session.undo().unwrap();
+
     assert!(high_names(&session).is_empty(), "undo takes the high poly out");
     assert_eq!(merged_triangles(&session), None, "bakes no longer see it");
     assert!(session.doc.project.texture_sets[0].bake.high_poly.use_low_as_high, "the setting the add changed comes back");
 
     session.redo().unwrap();
+
     assert_eq!(high_names(&session), ["part_high.obj"]);
     assert_eq!(merged_triangles(&session), Some(low.triangle_count()));
 
     execute(&mut session, "bake.highPoly.remove", &json!({ "index": 0 })).unwrap();
     session.undo().unwrap();
+
     assert_eq!(high_names(&session), ["part_high.obj"], "undo brings a removed high poly back");
     execute(&mut session, "bake.highPoly.remove", &json!({ "all": true })).unwrap();
     session.undo().unwrap();
+
     assert_eq!(merged_triangles(&session), Some(low.triangle_count()));
 
     session.set_cage_bytes("cage.obj", obj(&low, 0.05, f32::MAX, [1.0; 3]).into_bytes()).unwrap();
     session.undo().unwrap();
+
     assert!(session.doc.bake_meshes.cage.is_none(), "undo takes the cage out");
     session.redo().unwrap();
     execute(&mut session, "bake.cage.clear", &Value::Null).unwrap();
     session.undo().unwrap();
+
     assert_eq!(session.doc.bake_meshes.cage.as_ref().map(|cage| cage.name.as_str()), Some("cage.obj"), "undo brings a removed cage back");
 
     let steps = session.history_labels().len();
@@ -122,6 +132,7 @@ fn high_poly_and_cage_edits_are_undo_steps() {
     execute(&mut session, "bake.highPoly.remove", &json!({ "all": true })).unwrap();
     execute(&mut session, "bake.cage.clear", &Value::Null).unwrap();
     execute(&mut session, "bake.cage.clear", &Value::Null).unwrap();
+
     assert_eq!(session.history_labels().len(), steps + 2, "removing nothing adds no step");
 }
 
@@ -430,6 +441,7 @@ fn opacity_samples_a_textured_gltf_high_poly() {
     let low = session.mesh.as_ref().clone();
     let png = quadrants_png();
     session.add_high_poly_bytes("painted.glb", textured_glb(&low, 0.002, &png)).unwrap();
+
     assert!(session.log.iter().any(|l| l.contains("1 base color textures")), "{:?}", session.log);
     execute(&mut session, "bake.run", &json!({ "resolution": 128, "maps": ["opacity"], "dilation": 0 })).unwrap();
     assert_opacity_quadrants(&session);
@@ -505,8 +517,10 @@ fn opacity_samples_textures_next_to_a_high_poly() {
     std::fs::remove_file(dir.join("tex/painted color.png")).unwrap();
     let mut session = plane_session();
     execute(&mut session, "bake.highPoly.add", &json!({ "path": dir.join("painted.gltf").display().to_string() })).unwrap();
+
     assert!(session.log.iter().any(|l| l.contains("tex/painted color.png was not found")), "{:?}", session.log);
     execute(&mut session, "bake.run", &json!({ "resolution": 128, "maps": ["opacity"], "dilation": 0 })).unwrap();
+
     assert!(session.doc.baked[&0].maps[&BakedMap::Opacity].iter().all(|opacity| *opacity == 1.0));
 
     std::fs::remove_dir_all(&dir).unwrap();
@@ -718,7 +732,8 @@ fn changing_the_mesh_keeps_the_bake_setup_and_marks_the_project_changed() {
     let high = temp_file("change_high.obj", &obj(&plane, 0.002, f32::MAX, [1.0; 3]));
     execute(&mut s, "bake.highPoly.add", &json!({ "path": high })).unwrap();
     execute(&mut s, "bake.skew.set", &json!({ "value": 1.0 })).unwrap();
-    // 1x1 PNG as an image resource.
+
+    // A single-pixel image resource
     let png = [
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08,
         0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00,

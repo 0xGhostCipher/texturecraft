@@ -1,6 +1,6 @@
 use super::controls::{choice, integer, number, section, text_input};
 use crate::TextureCraftApp;
-use crate::i18n::{tr, trf};
+use crate::i18n::tr;
 use crate::property_sheet::{FileListAdd, FileRow, PropertySheet};
 use egui_phosphor::regular as icon;
 use serde_json::{Map, Value, json};
@@ -49,7 +49,7 @@ pub(super) fn show(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, set
             sheet.check(tr("Use Low Poly Mesh as High Poly Mesh"), &mut settings.high_poly.use_low_as_high);
             high_poly_scene(app, sheet);
 
-            // Without a high poly the reference shows everything that needs one greyed, not hidden
+            // Keep high-poly controls visible when their input is missing
             sheet.greyed(has_high, Some(tr("These settings apply once a high poly mesh is loaded.")), |sheet| {
                 sheet.check(tr("Ignore Backface"), &mut settings.high_poly.ignore_backface);
                 choice(
@@ -124,7 +124,7 @@ pub(super) fn show(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, set
         }
     }
 
-    // Shown greyed when it can't apply, as the reference does, with the reason on hover
+    // Explain why the disabled control is unavailable
     let skew_applies = has_high && settings.skew_applies();
     let mut menu = [""; 3];
     (menu[RESET_PARAMETERS], menu[CLEAR_STROKES], menu[RESET_AND_CLEAR]) =
@@ -215,7 +215,12 @@ fn output_size(sheet: &mut PropertySheet<'_>, settings: &mut CommonBakeSettings)
 
 /// The high poly meshes, one row each with × to remove it, and + beside them to add some; files still loading show greyed
 fn high_poly_scene(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>) {
-    let loading: Vec<String> = app.high_poly_job.iter().flat_map(|job| job.file_names()).map(|name| trf("Loading {name}...", &[("name", &name)])).collect();
+    #[cfg(not(target_arch = "wasm32"))]
+    let loading: Vec<String> =
+        app.high_poly_job.iter().flat_map(|job| job.file_names()).map(|name| crate::i18n::trf("Loading {name}...", &[("name", &name)])).collect();
+    #[cfg(target_arch = "wasm32")]
+    let loading: [String; 0] = [];
+
     let meshes = &app.session.doc.bake_meshes.high;
     let rows: Vec<FileRow<'_>> = meshes
         .iter()

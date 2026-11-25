@@ -82,16 +82,23 @@ impl Session {
     /// [`crate::BakeTask::maps`]. Invalid indices return the project's texture-set error before
     /// changing the preview or view mode. This reads settings without preparing bake geometry.
     pub fn bake_preview_begin_for(&mut self, sets: &[usize]) -> Result<()> {
-        let orders = sets
-            .iter()
-            .map(|&texture_set| {
-                let set = self.doc.project.texture_set(texture_set)?;
-                Ok((texture_set, set.bake.maps.enabled().collect()))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
+        let orders = self.bake_preview_orders(sets, None)?;
         self.bake_preview_begin(orders);
         Ok(())
+    }
+
+    /// Validate the entire selection before a bake takes the view or starts its first worker.
+    pub fn bake_preview_orders(&self, sets: &[usize], only: Option<BakedMap>) -> Result<Vec<(usize, Vec<BakedMap>)>> {
+        sets.iter()
+            .map(|&texture_set| {
+                let set = self.doc.project.texture_set(texture_set)?;
+                let maps = match only {
+                    Some(map) => vec![map],
+                    None => set.bake.maps.enabled().collect(),
+                };
+                Ok((texture_set, maps))
+            })
+            .collect()
     }
 
     /// Start showing a bake of `sets` (each with the maps it makes, in order): the 3D view

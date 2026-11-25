@@ -60,6 +60,7 @@ fn cancel_leaves_the_group_as_it_was() {
     harness.get_by_role_and_label(Role::CheckBox, &second).click();
     harness.run_steps(3);
     click(&mut harness, "Cancel");
+
     assert!(harness.state().session.doc.project.texture_sets[1].bake.sync.common);
 }
 
@@ -108,4 +109,50 @@ fn a_rows_menu_checks_the_map_for_sets_picked_in_the_dialog() {
 
     let sets = &harness.state().session.doc.project.texture_sets;
     assert!(!sets[0].bake.maps.height.is_enabled && sets[1].bake.maps.height.is_enabled);
+}
+
+#[test]
+fn replacing_the_project_discards_the_open_sync_picker() {
+    let mut harness = harness();
+    click(&mut harness, "Synchronize Common Settings");
+    harness.get_by_label("Common Settings Sync");
+
+    harness.state_mut().session = texturecraft_engine::sample_session(256, 64).unwrap();
+    harness.run_steps(3);
+
+    assert!(harness.query_by_label("Common Settings Sync").is_none());
+}
+
+#[test]
+fn keyboard_opens_the_sync_picker_and_returns_to_its_button() {
+    let mut harness = harness();
+    let opener = "Synchronize Common Settings";
+    harness.get_by_role_and_label(Role::Button, opener).focus();
+    harness.run_steps(2);
+
+    let node = harness.get_by_role_and_label(Role::Button, opener);
+    assert!(node.is_focused());
+    let center = node.rect().center();
+    assert!(
+        harness
+            .output()
+            .shapes
+            .iter()
+            .any(|clipped| { matches!(&clipped.shape, egui::Shape::Rect(shape) if shape.stroke.width > 1.0 && shape.rect.center().distance(center) < 1.0) }),
+        "the focused sync control has a visible outline"
+    );
+
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+
+    assert!(harness.get_by_role_and_label(Role::Button, "Close").is_focused());
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(2);
+
+    assert!(!harness.get_by_role_and_label(Role::Button, "Close").is_focused());
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+
+    assert!(harness.query_by_label("Common Settings Sync").is_none());
+    assert!(harness.get_by_role_and_label(Role::Button, opener).is_focused());
 }

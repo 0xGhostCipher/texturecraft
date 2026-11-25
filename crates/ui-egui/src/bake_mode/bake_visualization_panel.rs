@@ -54,7 +54,7 @@ pub(crate) fn bake_visualization_panel(app: &mut TextureCraftApp, ui: &Ui, view:
             egui::Frame::popup(ui.style()).fill(tokens.panel.gamma_multiply(PANEL_OPACITY)).show(ui, |ui| {
                 ui.set_width(PANEL_WIDTH);
 
-                // Ids renamed with the reference defaults, so open/closed states saved by earlier builds don't carry over
+                // New section IDs keep legacy fold states separate
                 let mut collapsing_state = CollapsingState::load_with_default_open(ui.ctx(), ui.make_persistent_id("baking_visualization_open"), true);
                 if header(ui, toggles, collapsing_state.is_open()).clicked() {
                     collapsing_state.toggle(ui);
@@ -194,6 +194,9 @@ fn collapsible(ui: &mut Ui, id: &str, title: &str, opening: SectionOpening, rese
         collapsing_state.toggle(ui);
     }
 
+    header.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
+    ui.ctx().accesskit_node_builder(header.id, |node| node.set_expanded(collapsing_state.is_open()));
+    crate::property_sheet::paint_keyboard_focus(ui, &header, &tokens);
     collapsing_state.show_body_indented(&header, ui, |ui| {
         ui.add_enabled_ui(editable, body);
     });

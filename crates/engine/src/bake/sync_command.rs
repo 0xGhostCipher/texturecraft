@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use texturecraft_core::{BakeSettings, BakeSyncGroup, BakedMap};
 
 use super::mesh_map_command::sets_param;
-use crate::commands::{CommandSpec, always, bad, strp, u64p};
+use crate::commands::{CommandSpec, always, bad, strp};
 use crate::{Result, Session, cmd};
 
 pub(super) fn specs() -> Vec<CommandSpec> {
@@ -73,24 +73,25 @@ fn sync(session: &mut Session, params: &Value) -> Result<Value> {
 
 fn copy(session: &mut Session, params: &Value) -> Result<Value> {
     const COMMAND: &str = "bake.copy";
-    let map = strp(params, "map").map(|id| BakedMap::parse(id).ok_or_else(|| bad(COMMAND, format!("unknown mesh map {id}")))).transpose()?;
-    let from = match u64p(params, "from") {
-        Some(index) => usize::try_from(index).map_err(|_| bad(COMMAND, "invalid `from`"))?,
-        None => session.ts(),
+
+    let map = match params.get("map") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_str().and_then(BakedMap::parse).ok_or_else(|| bad(COMMAND, format!("invalid mesh map {value}")))?),
+    };
+    let from = match params.get("from") {
+        None | Some(Value::Null) => session.ts(),
+        Some(value) => value.as_u64().and_then(|index| usize::try_from(index).ok()).ok_or_else(|| bad(COMMAND, "`from` must be a texture set index"))?,
     };
     let source = session.doc.project.texture_set(from)?.bake.clone();
     let targets = sets_param(session, COMMAND, params)?;
     let maps: Vec<BakedMap> = map.map_or_else(|| BakedMap::ALL.to_vec(), |map| vec![map]);
 
     let mut next: Vec<BakeSettings> = session.doc.project.texture_sets.iter().map(|set| set.bake.clone()).collect();
-    let project = &session.doc.project;
-    // Every target together with the sets sharing `group` with it, so a sync group never drifts apart
-    let reached = |group: BakeSyncGroup| -> Vec<usize> {
-        let mut reached: Vec<usize> = targets.iter().flat_map(|target| project.bake_synced_sets(*target, group)).collect();
-        reached.sort_unstable();
-        reached.dedup();
-        reached
-    };
+    let mut explicit = vec![false; next.len()];
+    for &index in &targets {
+        explicit[index] = true;
+    }
+
     match strp(params, "what") {
         Some("settings") => {
             let groups = map.map_or_else(
@@ -98,14 +99,15 @@ fn copy(session: &mut Session, params: &Value) -> Result<Value> {
                 |map| vec![BakeSyncGroup::Map(map)],
             );
             for group in groups {
-                for index in reached(group) {
-                    if let Some(settings) = next.get_mut(index) {
+                let shared = targets.iter().any(|&index| next[index].sync.shares(group));
+                for (index, settings) in next.iter_mut().enumerate() {
+                    if explicit[index] || (shared && settings.sync.shares(group)) {
                         settings.copy_group(&source, group);
                     }
                 }
             }
             if map.is_none() {
-                for (_, settings) in next.iter_mut().enumerate().filter(|(index, _)| targets.contains(index)) {
+                for (_, settings) in next.iter_mut().enumerate().filter(|(index, _)| explicit[*index]) {
                     for map in BakedMap::ALL {
                         settings.maps.set_enabled(map, source.maps.is_enabled(map));
                     }
@@ -116,7 +118,8 @@ fn copy(session: &mut Session, params: &Value) -> Result<Value> {
             if what == "check" && map.is_none() {
                 return Err(bad(COMMAND, "`check` needs a `map`"));
             }
-            for (_, settings) in next.iter_mut().enumerate().filter(|(index, _)| targets.contains(index)) {
+
+            for (_, settings) in next.iter_mut().enumerate().filter(|(index, _)| explicit[*index]) {
                 for map in &maps {
                     settings.maps.set_enabled(*map, what == "check" || source.maps.is_enabled(*map));
                 }
@@ -177,12 +180,14 @@ mod tests {
         assert_eq!(session.doc.project.bake_synced_sets(0, BakeSyncGroup::Common), [0, 1]);
 
         execute(&mut session, "bake.sync", &json!({ "group": "common", "ts": [0] })).unwrap();
+
         assert_eq!(session.doc.project.bake_synced_sets(0, BakeSyncGroup::Common), [0]);
         assert_eq!(session.doc.project.bake_synced_sets(1, BakeSyncGroup::Common), [1]);
         assert_eq!(session.doc.project.bake_synced_sets(1, BakeSyncGroup::Map(BakedMap::Normal)), [0, 1], "map sync is separate");
 
         let reached = session.doc.project.bake_synced_sets(0, BakeSyncGroup::Common);
         execute(&mut session, "bake.settings", &json!({ "ts": reached, "patch": { "common": { "dilation": 7 } } })).unwrap();
+
         assert_eq!((bake(&session, 0).common.dilation, bake(&session, 1).common.dilation), (7, 32));
     }
 
@@ -197,11 +202,13 @@ mod tests {
 
         execute(&mut session, "bake.sync", &json!({ "group": "ambientOcclusion", "ts": "all" })).unwrap();
         execute(&mut session, "bake.sync", &json!({ "group": "common", "ts": "all" })).unwrap();
+
         assert_eq!(bake(&session, 1).maps.ao.parameters, bake(&session, 0).maps.ao.parameters);
         assert_eq!(bake(&session, 1).common.dilation, bake(&session, 0).common.dilation);
         assert!(!bake(&session, 1).common.is_enabled, "whether the set bakes is its own");
 
         session.undo().unwrap();
+
         assert_eq!(bake(&session, 1).common.dilation, 5, "one undo per sync");
     }
 
@@ -212,14 +219,17 @@ mod tests {
         session.doc.project.texture_sets[0].bake.maps.height.parameters.scaling_divisor = 9.0;
 
         execute(&mut session, "bake.copy", &json!({ "what": "check", "map": "height", "ts": "all" })).unwrap();
+
         assert!(bake(&session, 0).maps.height.is_enabled && bake(&session, 1).maps.height.is_enabled);
 
         execute(&mut session, "bake.copy", &json!({ "what": "settings", "map": "height", "from": 0, "ts": [1] })).unwrap();
+
         assert_eq!(bake(&session, 1).maps.height.parameters.scaling_divisor, 9.0);
         assert!(!bake(&session, 1).sync.shares(BakeSyncGroup::Map(BakedMap::Height)), "a copy does not link");
 
         session.doc.project.texture_sets[0].bake.maps.select([BakedMap::Normal]);
         execute(&mut session, "bake.copy", &json!({ "what": "checked", "from": 0, "ts": [1] })).unwrap();
+
         assert_eq!(bake(&session, 1).maps.enabled().collect::<Vec<_>>(), [BakedMap::Normal]);
     }
 
@@ -234,6 +244,7 @@ mod tests {
         session.doc.project.texture_sets[2].bake.maps.set_enabled(BakedMap::Height, height_checked);
 
         execute(&mut session, "bake.copy", &json!({ "what": "settings", "from": 2, "ts": [0] })).unwrap();
+
         assert_eq!((bake(&session, 0).maps.ao.parameters.rays.rays, bake(&session, 1).maps.ao.parameters.rays.rays), (3, 3), "set 1 shares AO with set 0");
         assert!(!bake(&session, 2).sync.shares(BakeSyncGroup::Map(BakedMap::AmbientOcclusion)));
         assert_eq!(bake(&session, 0).maps.is_enabled(BakedMap::Height), height_checked, "every setting includes which maps are checked");
@@ -251,6 +262,7 @@ mod tests {
 
         let params = json!({ "ts": 0, "model": preset, "preserveEnabled": true, "preset": true });
         execute(&mut session, "bake.settings", &params).unwrap();
+
         assert!(!bake(&session, 0).sync.shares(BakeSyncGroup::Map(BakedMap::AmbientOcclusion)), "a preset is settings, not membership");
         assert_eq!(bake(&session, 1).common.dilation, 9, "set 1 shares Common Settings with set 0");
         assert_ne!(bake(&session, 1).maps.ao.parameters.rays.rays, 5, "set 1 no longer shares AO with set 0");
@@ -262,6 +274,7 @@ mod tests {
         session.doc.project.texture_sets[1].bake.common.dilation = 3;
 
         execute(&mut session, "bake.settings", &json!({ "ts": 0, "patch": { "maps": { "ao": { "parameters": { "rays": { "rays": 6 } } } } } })).unwrap();
+
         assert_eq!(bake(&session, 1).maps.ao.parameters.rays.rays, 6);
         assert_eq!(bake(&session, 1).common.dilation, 3);
     }
@@ -285,6 +298,56 @@ mod tests {
         preset.common.dilation = LEGACY_DILATION;
 
         execute(&mut session, "bake.settings", &json!({ "ts": 0, "model": preset, "preset": true })).unwrap();
+
         assert_eq!(bake(&session, 1).common.dilation, LEGACY_DILATION, "set 1 shares Common Settings with set 0");
+    }
+
+    #[test]
+    fn a_settings_patch_cannot_change_sync_membership() {
+        let mut session = session();
+        let original_sync = bake(&session, 0).sync.clone();
+
+        let result = execute(&mut session, "bake.settings", &json!({ "ts": 0, "patch": { "sync": { "common": false }, "common": { "dilation": 7 } } }));
+
+        assert!(result.is_err(), "membership changes must go through bake.sync");
+        assert_eq!(bake(&session, 0).sync, original_sync);
+        assert_eq!(bake(&session, 0).common.dilation, bake(&session, 1).common.dilation);
+    }
+
+    #[test]
+    fn invalid_copy_selectors_do_not_overwrite_other_settings() {
+        let mut session = session();
+        execute(&mut session, "bake.sync", &json!({ "group": "common", "ts": [0] })).unwrap();
+        execute(&mut session, "bake.settings", &json!({ "ts": 1, "dilation": 7 })).unwrap();
+        let before = session.doc.project.texture_sets.clone();
+
+        for params in [json!({ "what": "settings", "ts": 1, "from": "invalid" }), json!({ "what": "settings", "ts": 1, "map": false })] {
+            let result = execute(&mut session, "bake.copy", &params);
+
+            assert!(result.is_err(), "invalid selector in {params}");
+            assert_eq!(session.doc.project.texture_sets, before);
+        }
+    }
+
+    #[test]
+    fn running_a_bake_shares_settings_without_baking_or_checking_maps_on_partners() {
+        let mut session = session();
+        let previous_resolution = bake(&session, 0).common.resolution;
+        let partner_maps = bake(&session, 1).maps.clone();
+        session.doc.baked.clear();
+
+        let result = execute(&mut session, "bake.run", &json!({ "ts": 0, "resolution": 64, "maps": ["opacity"], "cpu": true })).unwrap();
+
+        assert_eq!(result["baked"], json!([0]));
+        assert_ne!(bake(&session, 0).common.resolution, previous_resolution);
+        assert_eq!(bake(&session, 1).common.resolution, bake(&session, 0).common.resolution);
+        assert_eq!(bake(&session, 1).maps, partner_maps);
+        assert!(!session.doc.baked.contains_key(&1));
+
+        session.undo().unwrap();
+
+        assert_eq!(bake(&session, 0).common.resolution, previous_resolution);
+        assert_eq!(bake(&session, 1).common.resolution, previous_resolution);
+        assert!(session.doc.baked.is_empty());
     }
 }
