@@ -1,6 +1,8 @@
 //! A generator's preview enlarged in a tool window, following its settings while they change
 
-use egui::{Align2, Color32, CornerRadius, Rect, Role, Sense, WidgetInfo, pos2, vec2};
+use std::time::Duration;
+
+use egui::{Align2, Color32, Context, CornerRadius, Rect, Role, Sense, WidgetInfo, pos2, vec2};
 use texturecraft_engine::core::{EffectKind, LayerId};
 
 use crate::TextureCraftApp;
@@ -21,16 +23,19 @@ const MIN_SIDE: f32 = 160.0;
 const BESIDE_GAP: f32 = 24.0;
 
 /// How soon a picture still rendering is looked for again
-const PICTURE_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+const PICTURE_POLL: Duration = Duration::from_millis(100);
 
 /// The open enlarged preview, if any: closed by its ×, and when its generator is gone
-pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
+pub(crate) fn show(app: &mut TextureCraftApp, ctx: &Context) {
+    // Pictures of generators gone from the project are dropped, whether or not their window is open
+    let project = &app.session.doc.project;
+    app.thumbs.keep_generator_pictures(|effect| project.effect(LayerId(effect)).is_some());
+
     let Some(effect) = app.ui.windows.generator_preview else { return };
     let generator = match app.session.doc.project.effect(LayerId(effect)).map(|(_, effect)| &effect.kind) {
         Some(EffectKind::Generator(generator)) => generator.clone(),
         _ => {
             app.ui.windows.generator_preview = None;
-            app.thumbs.forget_generator_pictures(effect);
             return;
         }
     };
@@ -66,7 +71,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
 }
 
 /// Opens generator effect `effect`'s enlarged preview beside its small one at `small`, or closes it when it is the one open
-pub(crate) fn toggle(app: &mut TextureCraftApp, ctx: &egui::Context, effect: u64, small: Rect) {
+pub(crate) fn toggle(app: &mut TextureCraftApp, ctx: &Context, effect: u64, small: Rect) {
     ctx.data_mut(|data| data.insert_temp(anchor_id(), small));
     let open = &mut app.ui.windows.generator_preview;
     *open = if *open == Some(effect) { None } else { Some(effect) };

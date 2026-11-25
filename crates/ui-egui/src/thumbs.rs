@@ -330,9 +330,9 @@ impl Thumbs {
         shown
     }
 
-    /// Drops the pictures kept for generator effect `effect`, gone from the project
-    pub fn forget_generator_pictures(&mut self, effect: u64) {
-        self.set_pictures.retain(|(kept, _), _| *kept != effect);
+    /// Keeps the generator pictures only of the effects `exists` still finds
+    pub fn keep_generator_pictures(&mut self, exists: impl Fn(u64) -> bool) {
+        self.set_pictures.retain(|(effect, _), _| exists(*effect));
     }
 
     /// Sphere thumbnail of library filter `id` applied to a sample material
@@ -501,6 +501,17 @@ mod tests {
     use crate::orb_shape::OrbShape;
 
     static NEXT_FILE: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn the_pictures_of_a_removed_generator_go() {
+        let mut thumbs = Thumbs::default();
+        thumbs.set_pictures.insert((1, 8), (None, None));
+        thumbs.set_pictures.insert((2, 8), (None, None));
+
+        thumbs.keep_generator_pictures(|effect| effect == 2);
+
+        assert!(!thumbs.set_pictures.contains_key(&(1, 8)) && thumbs.set_pictures.contains_key(&(2, 8)));
+    }
 
     #[test]
     fn a_generator_picture_shows_the_last_one_while_the_next_renders() {

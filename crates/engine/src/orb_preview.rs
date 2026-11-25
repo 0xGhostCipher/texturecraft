@@ -122,7 +122,7 @@ impl OrbPreview {
         let replaced: Vec<_> = images.iter().map(|(name, image)| (name.clone(), self.session.images.insert(name.clone(), image.clone()))).collect();
         let pixels = self.generator_of(with_sample_image(generator), size);
 
-        // The orb's own images come back, last replaced first so a name given twice ends as it began: the next preview reads only what it brings
+        // Restore in reverse so a name given twice ends as it began
         for (name, previous) in replaced.into_iter().rev() {
             match previous {
                 Some(previous) => self.session.images.insert(name, previous),
@@ -265,6 +265,24 @@ mod tests {
     /// Mean mask value over the pixels a preview sees
     fn mean_mask(pixels: &[Option<MaskPreviewPixel>]) -> f32 {
         pixels.iter().flatten().map(|pixel| pixel.mask).sum::<f32>() / pixels.iter().flatten().count().max(1) as f32
+    }
+
+    #[test]
+    fn a_render_reading_an_image_twice_leaves_the_orbs_own_images() {
+        let session = Session::new_project("Orb preview", primitives::cube(2.0), "builtin:cube", None, 128).unwrap();
+        let layer = session.doc.project.texture_set(SET).unwrap().stack[0];
+        let bare = (session.doc.clone(), session.selected.clone());
+        let mut preview = OrbPreview { session, layer, bare, cameras: Vec::new() };
+        let image = |value| Arc::new(ImageRes::new(1, 1, vec![[value; 4]], false));
+        let own = image(0.1);
+        preview.session.images.insert("shared.png".into(), own.clone());
+
+        let brought = image(0.9);
+        let images = [("shared.png".into(), brought.clone()), ("shared.png".into(), brought.clone()), ("added.png".into(), brought)];
+        preview.generator_reading(Generator::new(GeneratorKind::Dirt), &images, 0);
+
+        assert!(preview.session.images.get("shared.png").is_some_and(|kept| Arc::ptr_eq(kept, &own)), "the orb's own image is back");
+        assert!(!preview.session.images.contains_key("added.png"), "an image it lacked is gone again");
     }
 
     #[test]

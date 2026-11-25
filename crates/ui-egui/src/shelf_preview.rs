@@ -6,7 +6,7 @@ use std::sync::Arc;
 use egui::ColorImage;
 use texturecraft_engine::compose::ImageRes;
 use texturecraft_engine::compose::ImageStore;
-use texturecraft_engine::core::{CurvatureMode, Generator, GeneratorKind, ProceduralKind};
+use texturecraft_engine::core::{CurvatureMode, Generator, GeneratorKind, ProceduralKind, Source};
 use texturecraft_engine::materials;
 use texturecraft_engine::paint::BrushSettings;
 use texturecraft_engine::paint::alphas::LibraryAlpha;
@@ -68,7 +68,7 @@ impl ShelfPreview {
         // An image read in two slots goes once
         let mut images: Vec<(String, Arc<ImageRes>)> = Vec::new();
         for source in generator.sources() {
-            if let texturecraft_engine::core::Source::Image { name, .. } = source
+            if let Source::Image { name, .. } = source
                 && let Some(image) = store.get(name)
                 && !images.iter().any(|(taken, _)| taken == name)
             {
@@ -195,18 +195,15 @@ mod tests {
     use texturecraft_engine::paint::alphas;
     use texturecraft_engine::paint::presets::PRESETS;
 
+    use texturecraft_engine::core::TextureLayer;
+
     use super::*;
 
     #[test]
     fn a_generator_preview_is_keyed_by_its_settings_and_reads_an_image_once() {
         let image = Arc::new(ImageRes::new(1, 1, vec![[0.5; 4]], false));
         let store: ImageStore = [("grunge.png".to_owned(), image)].into();
-        let dirt = |grunge: Option<&str>, invert| Generator {
-            grunge: grunge.map(texturecraft_engine::core::Source::image),
-            micro: None,
-            invert,
-            ..Generator::new(GeneratorKind::Dirt)
-        };
+        let dirt = |grunge: Option<&str>, invert| Generator { grunge: grunge.map(Source::image), micro: None, invert, ..Generator::new(GeneratorKind::Dirt) };
 
         let plain = ShelfPreview::generator_set(&dirt(None, false), &store);
         assert_eq!(plain.key(), ShelfPreview::generator_set(&dirt(None, false), &store).key(), "the same settings share a picture");
@@ -214,10 +211,7 @@ mod tests {
         assert_ne!(plain.key(), ShelfPreview::generator_set(&dirt(Some("grunge.png"), false), &store).key(), "so is an image read");
 
         let mut both = dirt(Some("grunge.png"), false);
-        both.texture = Some(Box::new(texturecraft_engine::core::TextureLayer {
-            source: Some(texturecraft_engine::core::Source::image("grunge.png")),
-            ..Default::default()
-        }));
+        both.texture = Some(Box::new(TextureLayer { source: Some(Source::image("grunge.png")), ..TextureLayer::default() }));
         let ShelfPreview::GeneratorSet { images, .. } = ShelfPreview::generator_set(&both, &store) else { panic!("a generator preview") };
         assert_eq!(images.len(), 1, "an image in two slots goes once");
     }

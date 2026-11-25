@@ -1,5 +1,8 @@
 //! The generator panel: global adjustments, restore defaults and image inputs edit the selected generator
 
+use std::path::PathBuf;
+use std::time::Duration;
+
 use egui::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -279,7 +282,7 @@ fn micro_details_show_their_settings_once_switched_on() {
 #[test]
 #[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
 fn generator_panel_snapshots() {
-    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    let directory = PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
     std::fs::create_dir_all(&directory).unwrap();
     let (mut harness, effect) = harness(true);
     harness.run_steps(12);
@@ -312,7 +315,7 @@ fn generator_panel_snapshots() {
 #[test]
 #[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
 fn full_set_panel_snapshots() {
-    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    let directory = PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
     std::fs::create_dir_all(&directory).unwrap();
     let kinds = ["edgeWear", "fiberGlassEdgeWear", "dirt", "direction", "curvature", "ambientOcclusion", "position", "worldSpaceNormals"];
     for kind in kinds {
@@ -324,7 +327,7 @@ fn full_set_panel_snapshots() {
         // The orbs render on the preview worker
         for _ in 0..40 {
             harness.run_steps(4);
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(50));
         }
         for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
             harness.state_mut().ui.prefs.brightness = brightness;
@@ -375,7 +378,7 @@ fn the_texture_slot_takes_a_uniform_value_and_empties_again() {
 #[test]
 #[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
 fn texture_panel_snapshots() {
-    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    let directory = PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
     std::fs::create_dir_all(&directory).unwrap();
     for kind in ["position", "ambientOcclusion"] {
         let (mut harness, _) = harness_with(true, json!({"generator": kind, "useTexture": true, "textureOpacity": 0.6, "textureBlend": "normal"}));
@@ -485,7 +488,7 @@ fn the_color_rows_follow_the_color_mode() {
 #[test]
 #[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
 fn new_kind_panel_snapshots() {
-    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    let directory = PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
     std::fs::create_dir_all(&directory).unwrap();
     let gradient = json!([[0.02, 0.02, 0.02], [0.6, 0.12, 0.03], [0.8, 0.8, 0.8]]);
     let kinds = [
@@ -508,7 +511,7 @@ fn new_kind_panel_snapshots() {
         // The orbs render on the preview worker
         for _ in 0..40 {
             harness.run_steps(4);
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(50));
         }
         for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
             harness.state_mut().ui.prefs.brightness = brightness;
@@ -540,7 +543,7 @@ fn the_preview_opens_enlarged_in_its_own_window() {
 #[test]
 #[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
 fn enlarged_preview_snapshots() {
-    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    let directory = PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
     std::fs::create_dir_all(&directory).unwrap();
     let (mut harness, _) = harness_with(true, json!({"generator": "edgeWear", "seed": 12}));
     click_live(&mut harness, Role::Button, "Enlarge preview");
@@ -548,7 +551,7 @@ fn enlarged_preview_snapshots() {
     // The pictures render on the preview worker: up to three seconds of frames
     const WAITS: usize = 60;
     const STEPS_PER_WAIT: usize = 4;
-    const WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+    const WAIT: Duration = Duration::from_millis(50);
     for _ in 0..WAITS {
         harness.run_steps(STEPS_PER_WAIT);
         std::thread::sleep(WAIT);
