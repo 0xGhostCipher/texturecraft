@@ -896,7 +896,9 @@ mod bake_task_tests {
         let mut session = crate::sample_session(128, 64).unwrap();
         session.doc.project.texture_sets[0].bake.maps.select([BakedMap::Normal]);
         let colours = Arc::new(vec![None]);
-        let _ = session.doc.bake_meshes.low_base_color.set(Ok(colours.clone()));
+        // The sample bakes when made, which already read the colours
+        session.doc.bake_meshes.low_base_color = Default::default();
+        assert!(session.doc.bake_meshes.low_base_color.set(Ok(colours.clone())).is_ok());
 
         assert!(session.bake_task(0).unwrap().low_base_color.is_empty(), "the checked maps need no colours");
         let task = session.bake_task_only(0, BakedMap::Opacity).unwrap();
