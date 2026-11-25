@@ -316,11 +316,23 @@ fn create_temp_with_mode(
     excluded: &std::collections::HashSet<std::path::PathBuf>,
     unix_mode: Option<u32>,
 ) -> Result<(std::path::PathBuf, BatchFile)> {
-    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("out");
-
     // Bound retries when stale files, batch targets, or concurrent writers occupy candidate names
     const MAX_TEMP_ATTEMPTS: u32 = 256;
+
+    // Capability-scoped writes keep temporary files in the output root so a parent folder that is
+    // replaced after staging cannot hide the staged file, and so two maps with the same basename
+    // in different folders do not share a temporary name
+    let (parent, name) = match root {
+        BatchRoot::Ambient => {
+            let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("out").to_owned();
+            (parent.to_path_buf(), name)
+        }
+        BatchRoot::Dir(_) => {
+            let name: String = path.iter().map(|part| part.to_string_lossy()).collect::<Vec<_>>().join("_");
+            (std::path::PathBuf::from("."), if name.is_empty() { "out".into() } else { name })
+        }
+    };
 
     for attempt in 0..MAX_TEMP_ATTEMPTS {
         let temporary_path = parent.join(format!(".{name}.{}.{attempt}.tmp", std::process::id()));
@@ -642,18 +654,22 @@ mod atomic_tests {
         std::fs::create_dir_all(&outside)?;
 
         let root_dir = cap_std::fs::Dir::open_ambient_dir(&dir, cap_std::ambient_authority())?;
+        let replaced = std::cell::Cell::new(false);
         let result = write_batch_atomic_in_dir_with_hook(
             &root_dir,
             [(std::path::Path::new("first.png"), b"first".as_slice()), (std::path::Path::new("sub/second.png"), b"second".as_slice())],
             |index, _target| {
                 if index == 1 {
+                    // Temporary files for capability-scoped writes live in the output root, so `sub` is still empty
                     std::fs::remove_dir(dir.join("sub"))?;
                     std::os::unix::fs::symlink(&outside, dir.join("sub"))?;
+                    replaced.set(std::fs::symlink_metadata(dir.join("sub"))?.file_type().is_symlink());
                 }
                 Ok(())
             },
         );
 
+        assert!(replaced.get(), "the hook must install the escaping symlink before the second rename");
         assert!(result.is_err());
         assert!(!dir.join("first.png").exists());
         assert!(!outside.join("second.png").exists());

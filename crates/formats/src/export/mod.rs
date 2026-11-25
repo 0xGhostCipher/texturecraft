@@ -1605,12 +1605,34 @@ pub fn write_files(files: &[ExportedFile], dir: &std::path::Path) -> Result<Vec<
     std::fs::create_dir_all(dir)?;
     let root_dir = cap_std::fs::Dir::open_ambient_dir(dir, cap_std::ambient_authority())?;
     for (rel, _) in &rel_targets {
-        if let Some(parent) = rel.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-            root_dir.create_dir_all(parent)?;
-        }
+        create_export_folders(&root_dir, rel)?;
     }
     crate::write_batch_atomic_in_dir(&root_dir, rel_targets)?;
     Ok(files.iter().map(|f| dir.join(&f.name)).collect())
+}
+
+/// Create each folder in `rel` beneath `root`, refusing a component that is a symbolic link so two
+/// export names cannot resolve to the same file through an in-tree alias.
+#[cfg(not(target_arch = "wasm32"))]
+fn create_export_folders(root: &cap_std::fs::Dir, rel: &std::path::Path) -> Result<()> {
+    let Some(parent) = rel.parent().filter(|parent| !parent.as_os_str().is_empty()) else {
+        return Ok(());
+    };
+
+    let mut prefix = std::path::PathBuf::new();
+    for component in parent.components() {
+        prefix.push(component);
+        match root.symlink_metadata(&prefix) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(FormatError::Invalid(format!("\"{}\" cannot use a symbolic link as a folder", rel.display())));
+            }
+            Ok(meta) if meta.file_type().is_dir() => {}
+            Ok(_) => return Err(FormatError::Invalid(format!("\"{}\" cannot use an existing file as a folder", rel.display()))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => root.create_dir(&prefix)?,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

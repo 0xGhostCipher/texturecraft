@@ -1541,3 +1541,21 @@ fn folder_templates_reject_symlink_escapes_before_creating_subfolders() {
 
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[test]
+fn folder_templates_reject_in_tree_symlink_aliases() {
+    let fx = Fx::new(&default_channels());
+    let files = fx.render_preset("Unreal Engine (Packed)");
+    let dir = std::env::temp_dir().join(format!("tc-formats-symlink-alias-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::os::unix::fs::symlink(dir.join("a"), dir.join("b")).unwrap();
+
+    let one = ExportedFile { name: "a/map.png".into(), ..files[0].clone() };
+    let two = ExportedFile { name: "b/map.png".into(), ..files[1].clone() };
+    assert!(write_files(&[one, two], &dir).is_err());
+    assert!(!dir.join("a").join("map.png").exists());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
