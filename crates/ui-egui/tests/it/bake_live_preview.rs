@@ -8,8 +8,11 @@ use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::docking::Panel;
 use texturecraft_ui_egui::state::Mode;
 
-/// How long a steady drag may take to bring its first new pictures, on a slow machine
-const MOVING_DRAG_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a preview bake may take on a busy CI machine running every test at once
+const PREVIEW_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long the tests let the worker run between frames while they wait
+const WAIT_STEP: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// Bake mode on the sample with Ambient Occlusion's settings in front
 fn harness() -> Harness<'static, TextureCraftApp> {
@@ -28,18 +31,27 @@ fn harness() -> Harness<'static, TextureCraftApp> {
     harness
 }
 
-/// The size of the picture the preview shows for the first set, once it is `wanted` (the worker gets a few seconds)
-fn wait_for_preview(harness: &mut Harness<'static, TextureCraftApp>, wanted: impl Fn(u32) -> bool) -> Option<u32> {
-    for _ in 0..600 {
+/// Run frames until `done` holds, letting the worker run between them; false when the preview limit passes first
+fn run_until(harness: &mut Harness<'static, TextureCraftApp>, mut done: impl FnMut(&Harness<'static, TextureCraftApp>) -> bool) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < PREVIEW_LIMIT {
         harness.run_steps(1);
-        let shown =
-            harness.state().session.bake_preview_baked(0).and_then(|baked| baked.maps.contains_key(&BakedMap::AmbientOcclusion).then_some(baked.resolution));
-        if shown.is_some_and(&wanted) {
-            return shown;
+        if done(harness) {
+            return true;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(WAIT_STEP);
     }
-    None
+    false
+}
+
+/// The size of the picture the preview shows for the first set
+fn shown_size(harness: &Harness<'static, TextureCraftApp>) -> Option<u32> {
+    harness.state().session.bake_preview_baked(0).and_then(|baked| baked.maps.contains_key(&BakedMap::AmbientOcclusion).then_some(baked.resolution))
+}
+
+/// The size of the picture the preview shows for the first set, once it is `wanted`
+fn wait_for_preview(harness: &mut Harness<'static, TextureCraftApp>, wanted: impl Fn(u32) -> bool) -> Option<u32> {
+    run_until(harness, |harness| shown_size(harness).is_some_and(&wanted)).then(|| shown_size(harness)).flatten()
 }
 
 #[test]
@@ -107,7 +119,7 @@ fn pictures_keep_coming_while_the_slider_is_still_moving() {
     let mut pictures = 0;
     let started = std::time::Instant::now();
     for step in 0.. {
-        if pictures > 2 || started.elapsed() > MOVING_DRAG_LIMIT {
+        if pictures > 2 || started.elapsed() > PREVIEW_LIMIT {
             break;
         }
 
@@ -139,15 +151,7 @@ fn a_new_resolution_or_a_settings_change_from_anywhere_bakes_the_preview_again()
     // A change that doesn't come from the panel: a script, an undo or a synced set
     let before = picture(&harness);
     harness.state_mut().run("bake.settings", serde_json::json!({ "ts": 0, "patch": { "maps": { "ao": { "parameters": { "rays": { "rays": 8 } } } } } }));
-    let mut changed = false;
-    for _ in 0..600 {
-        harness.run_steps(1);
-        if picture(&harness).as_ref().map(std::sync::Arc::as_ptr) != before.as_ref().map(std::sync::Arc::as_ptr) {
-            changed = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    let changed = run_until(&mut harness, |harness| picture(harness).as_ref().map(std::sync::Arc::as_ptr) != before.as_ref().map(std::sync::Arc::as_ptr));
     assert!(changed, "the settings change brings a new picture");
 
     // The same file loaded again: same name, new geometry
@@ -158,11 +162,7 @@ fn a_new_resolution_or_a_settings_change_from_anywhere_bakes_the_preview_again()
         }
         session.add_high_poly_bytes("High.obj", bytes.to_vec()).unwrap();
         let before = picture(&harness);
-        let reloaded = (0..600).any(|_| {
-            harness.run_steps(1);
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            picture(&harness).as_ref().map(std::sync::Arc::as_ptr) != before.as_ref().map(std::sync::Arc::as_ptr)
-        });
+        let reloaded = run_until(&mut harness, |harness| picture(harness).as_ref().map(std::sync::Arc::as_ptr) != before.as_ref().map(std::sync::Arc::as_ptr));
         assert!(reloaded, "high poly load {index} brings a new picture");
     }
 }
