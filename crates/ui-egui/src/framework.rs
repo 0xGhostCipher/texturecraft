@@ -17,7 +17,7 @@ use craft_host::target::ShellInfo;
 use craft_host::{AppInfo, Host};
 use craft_keymap::Overrides;
 use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
-use craft_ui::runtime::commands::{CommandInput, CommandSet as _, NavCommand, QuitCommand};
+use craft_ui::runtime::commands::{ChromeCommand, CommandInput, CommandSet as _, NavCommand, QuitCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
 use craft_ui::runtime::focus::{EditSet, KeepKeys, KeyUse};
 use craft_ui::runtime::frame::{ChromeToggle, FrameInput, FrameOutput};
@@ -79,14 +79,15 @@ pub(crate) fn host() -> Arc<Host> {
 }
 
 /// TextureCraft's own shortcut table keeps the keys the framework binds by default: Ctrl+Q is `ui.quit`, F6 is
-/// `camera.orthographic` (and Shift+F6 stays free for it), so the framework's quit and pane moves are unbound.
+/// `camera.orthographic` (and Shift+F6 stays free for it), so the framework's quit and pane moves are unbound, as is
+/// Shift+Tab's panels toggle except tools (TextureCraft has one Hide UI, on Tab).
 /// Overrides are keyed by command id, which the command sets give.
 fn command_overrides() -> Arc<Overrides> {
     static OVERRIDES: OnceLock<Arc<Overrides>> = OnceLock::new();
     OVERRIDES
         .get_or_init(|| {
             let mut overrides = Overrides::new();
-            for id in [QuitCommand::Quit.id(), NavCommand::NextPane.id(), NavCommand::PreviousPane.id()] {
+            for id in [QuitCommand::Quit.id(), NavCommand::NextPane.id(), NavCommand::PreviousPane.id(), ChromeCommand::TogglePanelsKeepTools.id()] {
                 overrides.insert(id, Vec::new());
             }
             Arc::new(overrides)
@@ -111,7 +112,7 @@ impl TextureCraftApp {
     /// shows in the root window, the runtime blocks the panels floated into windows of their own.
     pub(crate) fn frame_input(&mut self, ctx: &egui::Context, output: FrameOutput, scale: f32) -> FrameInput {
         for (viewport, toggle) in &output.chrome_toggles {
-            if *viewport == ViewportId::ROOT && matches!(toggle, ChromeToggle::Panels | ChromeToggle::PanelsKeepTools) {
+            if *viewport == ViewportId::ROOT && *toggle == ChromeToggle::Panels {
                 self.ui.hide_ui = !self.ui.hide_ui;
             }
         }
