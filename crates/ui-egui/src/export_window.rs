@@ -533,28 +533,36 @@ fn file_type_text(t: &FileType) -> String {
 
 /// The rows of texture set `ts`'s Output maps: the template's maps the set has sources for
 fn map_rows(app: &mut TextureCraftApp, ts: usize) -> Vec<MapRow> {
-    let mut p = set_params(app, ts);
-    if let Some(o) = p.as_object_mut() {
-        o.remove("maps");
+    let mut params = set_params(app, ts);
+    if let Some(object) = params.as_object_mut() {
+        object.remove("maps");
     }
     let preset = app.session.export_preset(&set_template(app, ts));
-    let Ok(plan) = texturecraft_engine::execute(&mut app.session, "export.plan", &p) else { return Vec::new() };
+    let Ok(plan) = texturecraft_engine::execute(&mut app.session, "export.plan", &params) else { return Vec::new() };
     let mut rows: Vec<MapRow> = Vec::new();
-    for f in plan.as_array().into_iter().flatten() {
-        let Some(map) = f.get("map").and_then(serde_json::Value::as_u64).map(|m| m as usize) else { continue };
-        if rows.iter().any(|r| r.map == map) {
-            continue;
-        }
+    let index = |value: &serde_json::Value| value.get("map").and_then(serde_json::Value::as_u64).map(|map| map as usize);
+    for file in plan.as_array().into_iter().flatten() {
+        // A PSD writes each of its layers' maps
+        let layers = file.get("layers").and_then(serde_json::Value::as_array).filter(|layers| !layers.is_empty());
+        let maps: Vec<usize> = match layers {
+            Some(layers) => layers.iter().filter_map(index).collect(),
+            None => index(file).into_iter().collect(),
+        };
+        for map in maps {
+            if rows.iter().any(|row| row.map == map) {
+                continue;
+            }
 
-        let format = f.get("format").and_then(serde_json::Value::as_str).unwrap_or("png").to_string();
-        let bit_depth = f.get("bitDepth").and_then(serde_json::Value::as_u64).unwrap_or(8) as u8;
-        let dithering = f.get("dithering").and_then(serde_json::Value::as_bool).unwrap_or(false);
-        let pattern = preset
-            .as_ref()
-            .and_then(|p| p.maps.get(map))
-            .map(|m| m.file.replace("$channel", texturecraft_engine::formats::export::channel_label(m)))
-            .unwrap_or_default();
-        rows.push(MapRow { map, pattern, inherited: FileType { format: file_type_name(&format), bit_depth, dithering } });
+            let format = file.get("format").and_then(serde_json::Value::as_str).unwrap_or("png").to_string();
+            let bit_depth = file.get("bitDepth").and_then(serde_json::Value::as_u64).unwrap_or(8) as u8;
+            let dithering = file.get("dithering").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let pattern = preset
+                .as_ref()
+                .and_then(|preset| preset.maps.get(map))
+                .map(|map_spec| map_spec.file.replace("$channel", texturecraft_engine::formats::export::channel_label(map_spec)))
+                .unwrap_or_default();
+            rows.push(MapRow { map, pattern, inherited: FileType { format: file_type_name(&format), bit_depth, dithering } });
+        }
     }
     rows
 }

@@ -58,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|j2k|jp2|webp|psd (or the extension), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, JP2, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, J2K, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts, options and reservedNames, a list gives each texture set's own `ts`, options and `reservedNames`, a file the texture export skipped is not read, the export window sends it with the last command; a failure is a warning)} → {files, warnings, materialUdimPatterns?}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|j2k|jp2|webp|psd (or the extension; the maps written as psd are the layers of one <mesh>_<texture set>.psd per texture set and UV tile, which the USD asset and MaterialX don't read), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, JP2, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, J2K, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts, options and reservedNames, a list gives each texture set's own `ts`, options and `reservedNames`, a file the texture export skipped is not read, the export window sends it with the last command; a failure is a warning)} → {files, warnings, materialUdimPatterns?}",
             always,
             export_textures
         ),
@@ -76,7 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "List export outputs",
             [],
             None,
-            "{preset?: name or preset object, ts?, format?, bitDepth?, dithering?, size?, colorSpace?, maps?} → [{ts, map, file, format, bitDepth, dithering, size, sourceSize, warnings}] (keeps the first file per case-insensitive name and warns about later duplicates)",
+            "{preset?: name or preset object, ts?, format?, bitDepth?, dithering?, size?, colorSpace?, maps?} → [{ts, map, file, format, bitDepth, dithering, size, sourceSize, warnings, layers: [{map, name}] (a PSD's maps, top first)}] (keeps the first file per case-insensitive name and warns about later duplicates)",
             always,
             plan
         ),
@@ -457,6 +457,7 @@ fn plan(session: &mut Session, params: &Value) -> Result<Value> {
                 "size": size,
                 "sourceSize": source_size,
                 "warnings": output.warnings,
+                "layers": output.layers.iter().map(|layer| json!({ "map": layer.map, "name": layer.name })).collect::<Vec<_>>(),
             }));
         }
     }
@@ -763,7 +764,7 @@ fn usd_asset_param(session: &Session, params: &Value, options: &ExportOptions, s
 /// warning: the textures of the command are already written.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_usd_asset(session: &Session, dir: &std::path::Path, exports: &[UsdAssetExport], warnings: &mut Vec<String>) -> Option<std::path::PathBuf> {
-    match build_usd_asset(session, dir, exports) {
+    match build_usd_asset(session, dir, exports, warnings) {
         Ok(path) => Some(path),
         Err(error) => {
             warnings.push(format!("{USD_ASSET_FAILED}: {error}"));
@@ -773,7 +774,7 @@ fn write_usd_asset(session: &Session, dir: &std::path::Path, exports: &[UsdAsset
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn build_usd_asset(session: &Session, dir: &std::path::Path, exports: &[UsdAssetExport]) -> Result<std::path::PathBuf> {
+fn build_usd_asset(session: &Session, dir: &std::path::Path, exports: &[UsdAssetExport], warnings: &mut Vec<String>) -> Result<std::path::PathBuf> {
     use texturecraft_formats::{list_outputs, usd_layer_with_textures, usd_texture_bindings};
     let project = &session.doc.project;
     let mesh_name = stem_of(project.mesh.trim_start_matches("builtin:"));
@@ -794,6 +795,12 @@ fn build_usd_asset(session: &Session, dir: &std::path::Path, exports: &[UsdAsset
 
             // A map that lost any file (a tile of a UDIM map) is not bound: its `<UDIM>` name would read a file it does not own
             kept.retain(|file| !skipped_maps.contains(&file.map));
+            if kept.iter().any(|file| file.format == FileFormat::Psd) {
+                let warning = format!("The USD asset doesn't read PSD files, so the material of texture set \"{}\" leaves out its PSD maps", texture_set.name);
+                if !warnings.contains(&warning) {
+                    warnings.push(warning);
+                }
+            }
             by_set.entry(set).or_insert_with(|| usd_texture_bindings(texture_set, options, project.normal_format, &kept));
         }
     }
@@ -841,7 +848,7 @@ fn reserve_export_names(
     plans.retain(|plan| {
         let name = plan.name.to_ascii_lowercase();
         if reserved_patterns.iter().any(|pattern| udim_matches(pattern, &name)) {
-            blocked_maps.insert(plan.map);
+            blocked_maps.extend(plan.maps());
             warnings.push(format!(
                 "\"{}\" was not written: an earlier MaterialX document uses that UDIM pattern. Rename a texture set or change the template file names",
                 plan.name
@@ -854,7 +861,7 @@ fn reserve_export_names(
             return true;
         }
 
-        blocked_maps.insert(plan.map);
+        blocked_maps.extend(plan.maps());
         if fallback {
             warnings.push(format!(
                 "MaterialX: \"{}\" was not written: a file of the chosen template or of an earlier command of this export has the name. Rename a texture set or change the template file names",

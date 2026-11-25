@@ -21,15 +21,21 @@ use serde::{Deserialize, Serialize};
 use texturecraft_compose::{BakedMaps, Composite};
 use texturecraft_core::{AoMixing, BakedMap, BlockScales, Channel, ChannelKind, NormalFormat, NormalMixing, Project, TextureSet};
 use texturecraft_geom::glam::Vec3;
-use texturecraft_texel::{ColorSpace, DilationMap, linear_to_srgb};
+use texturecraft_texel::{ColorSpace, linear_to_srgb};
 
 use crate::{FormatError, MAX_IMAGE_SIZE, Result};
 
 mod encoding;
 mod jpeg2000;
+mod layered_psd;
 mod map_override;
+mod map_renderer;
+mod planned_layer;
+mod rendered_map;
 use encoding::Encoding;
 pub use map_override::MapOverride;
+use map_renderer::MapRenderer;
+pub use planned_layer::PlannedLayer;
 
 /// Height-to-normal slope: with strength 1, a height change of 1 across 1/16 of the texture
 /// width tilts the normal 45°, at any resolution.
@@ -37,6 +43,8 @@ const HEIGHT_SPAN: f32 = 16.0;
 const JPEG_QUALITY: u8 = 95;
 const PSD_MAX_SIDE_PIXELS: u32 = 30_000;
 const PSD_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Planes of a PSD image or layer: red, green, blue and alpha
+const PSD_RGBA_PLANES: usize = 4;
 /// Preset limits (user presets are untrusted JSON).
 const MAX_MAPS: usize = 64;
 const MAX_TEMPLATE: usize = 256;
@@ -92,7 +100,7 @@ pub enum FileFormat {
     Jng,
     /// Portable graymap (binary).
     Pgm,
-    /// A PSD containing only its merged image.
+    /// Photoshop document: every output map of a texture set in this format as a layer of one file
     Psd,
     /// JPEG 2000 codestream, lossless
     J2k,
@@ -517,6 +525,16 @@ pub struct PlannedFile {
     /// covers every tile refers to); None when the file isn't tiled.
     pub udim_name: Option<String>,
     pub warnings: Vec<String>,
+    /// A PSD's output maps, top layer first (`map` is the first); empty for a file of one map
+    pub layers: Vec<PlannedLayer>,
+}
+
+impl PlannedFile {
+    /// The output maps the file writes
+    pub fn maps(&self) -> impl Iterator<Item = usize> + '_ {
+        let own = self.layers.is_empty().then_some(self.map);
+        own.into_iter().chain(self.layers.iter().map(|layer| layer.map))
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -592,8 +610,7 @@ pub fn sanitize_file_path(s: &str) -> String {
     s.split('/').map(sanitize_file_stem).collect::<Vec<_>>().join("/")
 }
 
-/// The files `opts` produces for texture set `ts`, without rendering (for the export dialog).
-/// Template variables: [`FILE_TOKENS`].
+/// The files `opts` produces for texture set `ts` without rendering ([`FILE_TOKENS`] are the template variables); PSD maps are layers of one file
 pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOptions) -> Result<Vec<PlannedFile>> {
     opts.preset.validate()?;
     let set = project.texture_set(ts)?;
@@ -607,9 +624,10 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
     let mut active_files = BTreeSet::new();
     let mut active_dirs = BTreeSet::new();
     let mut out = Vec::new();
+
+    // Maps written as PSD layers, with their tile, bit depth and warnings
+    let mut psd_layers: Vec<(Option<u32>, PlannedLayer, u8, Vec<String>)> = Vec::new();
     let tiles: Vec<Option<u32>> = if set.uv_tiles.is_empty() || opts.atlas { vec![None] } else { set.uv_tiles.iter().copied().map(Some).collect() };
-    let grid = set.tile_grid();
-    let block_resolution = set.block_resolution();
     for (i, map) in opts.preset.maps.iter().enumerate() {
         if !map.channels.iter().any(|(_, s)| source_present(set, s)) {
             continue;
@@ -619,7 +637,6 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
         let format = own.and_then(|o| o.format).or(opts.format_override).unwrap_or(map.format);
         let bit_depth = format.depth(own.and_then(|o| o.bit_depth).or(opts.bit_depth_override).unwrap_or(map.bit_depth));
         let enabled = own.is_none_or(|o| o.enabled);
-        let psd_channels = (enabled && format == FileFormat::Psd).then(|| layout(set, map).len());
         let dither = bit_depth == 8 && !format.holds_float(bit_depth) && own.and_then(|o| o.dither).unwrap_or(opts.dither);
         let space = opts.space_for_map(map, format, bit_depth);
         let requested_space = opts.space_for_depth(format, bit_depth);
@@ -636,25 +653,6 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
         // Append `$udim` to names for separate UV tiles
         let template = if tiles.iter().any(Option::is_some) && !map.file.contains("$udim") { format!("{}.$udim", map.file) } else { map.file.clone() };
         for &tile in &tiles {
-            if let Some(channels) = psd_channels {
-                let size = match (tile, grid) {
-                    (Some(tile), Some(_)) => {
-                        let side = tile_side(set, tile, block_resolution);
-                        let side = scale_export_side(side, block_resolution, opts.size);
-                        (side, side)
-                    }
-                    (_, Some(grid)) => {
-                        let side = opts.size.unwrap_or(block_resolution);
-                        (side.saturating_mul(grid.cols), side.saturating_mul(grid.rows))
-                    }
-                    (_, None) => {
-                        let side = opts.size.unwrap_or(block_resolution);
-                        (side, side)
-                    }
-                };
-                check_psd_size(size, channels, bit_depth)?;
-            }
-
             // A name of the project, mesh or texture set never adds a folder
             let no_folder = |name: &str| name.replace('/', "_");
             let stem = template
@@ -678,7 +676,6 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
             });
             let stem = sanitize_file_path(&stem);
             let ext = format.extension();
-            let mut name = format!("{stem}.{ext}");
             let mut warnings = Vec::new();
             if color_map
                 && format == FileFormat::Pgm
@@ -698,49 +695,121 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
                     format.extension().to_uppercase()
                 ));
             }
+            let packs_colour = |name: &str| {
+                (color_map && requested_space != space)
+                    .then(|| format!("\"{name}\" packs colour into one channel (L), so it is written in linear Rec.709, not {}", requested_space.name()))
+            };
 
-            // Compare names case-insensitively for Windows and macOS
-            let mut k = 2;
-            while used.contains(&name.to_ascii_lowercase()) {
-                name = format!("{stem}_{k}.{ext}");
-                k += 1;
+            // The PSD's own name holds the tile number, so its layers are named without the one appended
+            if format == FileFormat::Psd {
+                if enabled {
+                    let appended = tile.filter(|_| template != map.file).map(|number| format!(".{number}"));
+                    let name = appended.as_deref().and_then(|suffix| stem.strip_suffix(suffix)).unwrap_or(&stem).to_string();
+                    warnings.extend(packs_colour(&name));
+                    psd_layers.push((tile, PlannedLayer { map: i, name, dither }, bit_depth, warnings));
+                }
+                continue;
             }
-            if k > 2 {
-                warnings.push(format!("\"{stem}.{ext}\" is produced by more than one map; this one was renamed to \"{name}\""));
-            }
-            let lower = name.to_ascii_lowercase();
-            used.insert(lower.clone());
+
+            let (name, renamed) = unique_name(&mut used, &stem, ext, &mut warnings);
             if !enabled {
                 continue;
             }
 
-            if active_dirs.contains(&lower) {
-                return Err(FormatError::Invalid(format!("\"{name}\" cannot be both an exported file and a folder")));
-            }
-            let mut prefix = lower.as_str();
-            while let Some((folder, _)) = prefix.rsplit_once('/') {
-                if active_files.contains(folder) {
-                    return Err(FormatError::Invalid(format!("\"{name}\" cannot use \"{folder}\" as a folder because another map exports that file")));
-                }
-                active_dirs.insert(folder.to_owned());
-                prefix = folder;
-            }
-            active_files.insert(lower);
-
-            if color_map && requested_space != space {
-                warnings.push(format!("\"{name}\" packs colour into one channel (L), so it is written in linear Rec.709, not {}", requested_space.name()));
-            }
+            claim_path(&mut active_files, &mut active_dirs, &name)?;
+            warnings.extend(packs_colour(&name));
 
             // Use a UDIM name only when substituting its tile recovers the output name
             // Truncation or literal placeholder text can make that substitution ambiguous
-            let udim_name = token_stem.filter(|t| tile.is_some_and(|n| t.contains("UDIMTOKEN") && t.replace("UDIMTOKEN", &n.to_string()) == stem)).map(|t| {
-                let renamed = if k > 2 { format!("_{}", k - 1) } else { String::new() };
-                format!("{t}{renamed}.{ext}").replace("UDIMTOKEN", "<UDIM>")
-            });
-            out.push(PlannedFile { name, map: i, format, bit_depth, dither, tile, udim_name, warnings });
+            let udim_name = token_stem
+                .filter(|t| tile.is_some_and(|n| t.contains("UDIMTOKEN") && t.replace("UDIMTOKEN", &n.to_string()) == stem))
+                .map(|t| format!("{t}{renamed}.{ext}").replace("UDIMTOKEN", "<UDIM>"));
+            out.push(PlannedFile { name, map: i, format, bit_depth, dither, tile, udim_name, warnings, layers: Vec::new() });
         }
     }
+
+    // Each tile's PSD maps are the layers of one file named after the texture set
+    let psd_stem = sanitize_file_stem(&format!("{mesh_name}_{}", set.name));
+    for &tile in &tiles {
+        let in_tile: Vec<_> = psd_layers.iter().filter(|(layer_tile, ..)| *layer_tile == tile).collect();
+        let Some((_, first, ..)) = in_tile.first() else { continue };
+
+        let bit_depth = in_tile.iter().map(|(_, _, depth, _)| *depth).max().unwrap_or(8);
+        let folder_count: usize = in_tile.iter().map(|(_, layer, ..)| layer.name.matches('/').count()).sum();
+        check_psd_size(psd_size(set, tile, opts.size), in_tile.len(), folder_count, bit_depth)?;
+
+        let mut warnings: Vec<String> = Vec::new();
+        for warning in in_tile.iter().flat_map(|(.., layer_warnings)| layer_warnings) {
+            if !warnings.contains(warning) {
+                warnings.push(warning.clone());
+            }
+        }
+        let stem = sanitize_file_stem(&tile.map_or_else(|| psd_stem.clone(), |number| format!("{psd_stem}.{number}")));
+        let ext = FileFormat::Psd.extension();
+        let (name, renamed) = unique_name(&mut used, &stem, ext, &mut warnings);
+        claim_path(&mut active_files, &mut active_dirs, &name)?;
+        let udim_name = tile.filter(|number| stem == format!("{psd_stem}.{number}")).map(|_| format!("{psd_stem}.<UDIM>{renamed}.{ext}"));
+        let layers: Vec<PlannedLayer> = in_tile.iter().map(|(_, layer, ..)| layer.clone()).collect();
+        let dither = layers.iter().any(|layer| layer.dither);
+        out.push(PlannedFile { name, map: first.map, format: FileFormat::Psd, bit_depth, dither, tile, udim_name, warnings, layers });
+    }
     Ok(out)
+}
+
+/// `stem.ext`, or `stem_2.ext`… when an earlier file has the name ignoring case (as Windows and macOS file systems do): the name and the suffix added
+fn unique_name(used: &mut BTreeSet<String>, stem: &str, ext: &str, warnings: &mut Vec<String>) -> (String, String) {
+    let mut name = format!("{stem}.{ext}");
+    let mut renamed = String::new();
+    let mut k = 2;
+    while used.contains(&name.to_ascii_lowercase()) {
+        renamed = format!("_{k}");
+        name = format!("{stem}{renamed}.{ext}");
+        k += 1;
+    }
+    if !renamed.is_empty() {
+        warnings.push(format!("\"{stem}.{ext}\" is produced by more than one map; this one was renamed to \"{name}\""));
+    }
+
+    used.insert(name.to_ascii_lowercase());
+    (name, renamed)
+}
+
+/// Record exported file `name` and its folders, refusing a name that is already a folder or a folder that is already a file, ignoring case
+fn claim_path(files: &mut BTreeSet<String>, dirs: &mut BTreeSet<String>, name: &str) -> Result<()> {
+    let lower = name.to_ascii_lowercase();
+    if dirs.contains(&lower) {
+        return Err(FormatError::Invalid(format!("\"{name}\" cannot be both an exported file and a folder")));
+    }
+
+    let mut prefix = lower.as_str();
+    while let Some((folder, _)) = prefix.rsplit_once('/') {
+        if files.contains(folder) {
+            return Err(FormatError::Invalid(format!("\"{name}\" cannot use \"{folder}\" as a folder because another map exports that file")));
+        }
+        dirs.insert(folder.to_owned());
+        prefix = folder;
+    }
+    files.insert(lower);
+    Ok(())
+}
+
+/// The size of a texture set's PSD for `tile` (None: the whole set, an atlas of a UV-tiled one)
+fn psd_size(set: &TextureSet, tile: Option<u32>, export_size: Option<u32>) -> (u32, u32) {
+    let block_resolution = set.block_resolution();
+    match (tile, set.tile_grid()) {
+        (Some(tile), Some(_)) => {
+            let side = scale_export_side(tile_side(set, tile, block_resolution), block_resolution, export_size);
+            (side, side)
+        }
+        (_, Some(grid)) => {
+            let side = export_size.unwrap_or(block_resolution);
+            (side.saturating_mul(grid.cols), side.saturating_mul(grid.rows))
+        }
+        (_, None) => {
+            let side = export_size.unwrap_or(block_resolution);
+            (side, side)
+        }
+    }
 }
 
 /// Plan a selection in export order, keeping only the first case-insensitive use of a name.
@@ -906,137 +975,23 @@ pub fn render_maps(input: &ExportInput, options: &ExportOptions) -> Result<Vec<E
 
 /// Render the retained plans from `list_outputs` for this input and these options.
 pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned: Vec<PlannedFile>) -> Result<Vec<ExportedFile>> {
-    let set = input.project.texture_set(input.ts)?;
-    let (width, height) = (input.composite.resolution, input.composite.height);
-    let grid = set.tile_grid();
-    let tile_res = width / grid.map_or(1, |g| g.cols.max(1));
-    if tile_res == 0 || tile_res > MAX_IMAGE_SIZE || height != tile_res * grid.map_or(1, |g| g.rows) {
-        return Err(FormatError::Invalid(format!("composite size {width}×{height} does not fit texture set \"{}\"", set.name)));
-    }
-
-    if input.coverage.len() != width as usize * height as usize {
-        return Err(FormatError::Invalid(format!("coverage has {} texels, expected {width}×{height}", input.coverage.len())));
-    }
-
     if planned.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Padding stays inside each UV tile
-    let dilation_map = match options.padding {
-        Padding::None => None,
-        Padding::Dilation(d) | Padding::DilationDefault(d) | Padding::DilationDiffusion(d) => {
-            Some(DilationMap::in_blocks(input.coverage, width, height, Some(d), tile_res))
-        }
-        Padding::Infinite => Some(DilationMap::in_blocks(input.coverage, width, height, None, tile_res)),
-    };
-    let beyond_default = matches!(options.padding, Padding::DilationDefault(_) | Padding::Infinite);
-    let diffuse = matches!(options.padding, Padding::DilationDiffusion(_));
-    let sampler = Sampler {
-        set,
-        comp: input.composite,
-        baked: input.baked,
-        coverage: input.coverage,
-        res: width,
-        tile_res,
-        scales: set.block_scales(),
-        normal_override: options.normal_format,
-        project_normal: input.project.normal_format,
-    };
-
+    let renderer = MapRenderer::new(input, options)?;
     planned
         .into_iter()
         .map(|planned_file| {
-            let map = options.preset.maps.get(planned_file.map).ok_or_else(|| FormatError::Invalid("planned map out of range".into()))?;
-            let channel_layout = layout(set, map);
-            let component_count = channel_layout.len();
-            let inverted: Vec<bool> = channel_layout.iter().map(|(d, _)| map.inverted.contains(d)).collect();
-
-            // The texels written: one tile, or the whole set
-            let (x0, y0, w, h) = match (planned_file.tile, grid) {
-                (Some(t), Some(g)) => {
-                    let (bx, by) = g.block(t).ok_or_else(|| FormatError::Invalid(format!("UV tile {t} is not in the set's grid")))?;
-
-                    // A tile smaller than its block fills the block's top-left corner
-                    let side = tile_side(set, t, tile_res);
-                    (bx * tile_res, by * tile_res, side, side)
-                }
-                _ => (0, 0, width, height),
-            };
-
-            // An atlas scales by the requested size per tile
-            let scale = |value| scale_export_side(value, tile_res, options.size);
-            let size = (scale(w), scale(h));
             if planned_file.format == FileFormat::Psd {
-                check_psd_size(size, component_count, planned_file.bit_depth)?;
+                return layered_psd::render_psd(&renderer, planned_file);
             }
 
-            let mut data = vec![0.0f32; w as usize * h as usize * component_count];
-            data.par_chunks_mut(w as usize * component_count).enumerate().for_each(|(row_y, row)| {
-                let y = y0 + row_y as u32;
-                for (column, x) in (x0..x0 + w).enumerate() {
-                    let at = if sampler.covered(x, y) {
-                        Some(At::Texel(x, y))
-                    } else {
-                        match dilation_map.as_ref().and_then(|d| d.source(x, y)) {
-                            Some((sx, sy)) => Some(At::Texel(sx, sy)),
-                            None => beyond_default.then_some(At::Default),
-                        }
-                    };
-                    let Some(at) = at else { continue };
-                    let mut cache = None;
-                    for (component, (_, source)) in channel_layout.iter().enumerate() {
-                        if let Some(value) = row.get_mut(column * component_count + component) {
-                            let sample = sampler.sample(source, at, &mut cache);
-                            *value = if inverted.get(component).copied().unwrap_or(false) { 1.0 - sample } else { sample };
-                        }
-                    }
-                }
-            });
-
-            // Diffuse into the texels the dilation did not reach
-            if diffuse {
-                let known: Vec<bool> = (y0..y0 + h)
-                    .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-                    .map(|(x, y)| sampler.covered(x, y) || dilation_map.as_ref().is_some_and(|d| d.source(x, y).is_some()))
-                    .collect();
-
-                // Keep diffusion within each UV tile when rendering an atlas
-                let block = if planned_file.tile.is_none() && grid.is_some() { tile_res } else { w.max(h) };
-                diffuse_blocks(&mut data, (w as usize, h as usize), component_count, &known, block as usize);
-            }
-
-            let mut data = resize(data, (w, h), component_count, size);
-
-            // Integer sRGB converts in `encode`; other color spaces convert here
-            let space = options.space_for_map(map, planned_file.format, planned_file.bit_depth);
-            let float = planned_file.format.holds_float(planned_file.bit_depth);
-            let rgb = component_count >= 3;
+            let map = renderer.render(planned_file.map, planned_file.tile, planned_file.format, planned_file.bit_depth)?;
             let mut warnings = planned_file.warnings;
-            let color_map = map.is_color();
-            let convert = (space != ColorSpace::Srgb || float) && space != ColorSpace::LinearRec709;
-
-            if convert {
-                data.par_chunks_mut(component_count).for_each(|px| {
-                    if let [r, g, b, ..] = px {
-                        [*r, *g, *b] = space.from_linear_rec709([*r, *g, *b]);
-                    }
-                });
-            }
-            let srgb: Vec<bool> = channel_layout.iter().map(|(d, _)| *d != Dest::A && !float && space == ColorSpace::Srgb).collect();
-
-            // A colour space the user chose is written into the colour maps (data maps have none)
-            let embed = (options.color_space.is_some() && color_map && rgb).then_some(space);
-            let bytes = encode(
-                Encoding { format: planned_file.format, depth: planned_file.bit_depth, dither: planned_file.dither },
-                size,
-                component_count,
-                data,
-                &srgb,
-                embed,
-                &mut warnings,
-            )?;
-            Ok(ExportedFile { name: planned_file.name, bytes, width: size.0, height: size.1, warnings })
+            let encoding = Encoding { format: planned_file.format, depth: planned_file.bit_depth, dither: planned_file.dither };
+            let bytes = encode(encoding, map.size, map.component_count, map.data, &map.srgb, map.embed, &mut warnings)?;
+            Ok(ExportedFile { name: planned_file.name, bytes, width: map.size.0, height: map.size.1, warnings })
         })
         .collect()
 }
@@ -1225,7 +1180,7 @@ fn encode(
 
     // Embed ICC or EXR chromaticities only where the format supports them
     if let Some(space) = embed
-        && matches!(format, FileFormat::Tga | FileFormat::Bmp | FileFormat::Hdr | FileFormat::Jng | FileFormat::Psd | FileFormat::J2k)
+        && matches!(format, FileFormat::Tga | FileFormat::Bmp | FileFormat::Hdr | FileFormat::Jng | FileFormat::J2k)
     {
         warnings.push(format!("{} export does not embed a colour space; the colours are in {}", format.extension().to_ascii_uppercase(), space.name()));
     }
@@ -1330,7 +1285,6 @@ fn encode(
         FileFormat::Bmp => CodecFormat::Bmp,
         FileFormat::Webp => CodecFormat::WebP,
         FileFormat::Pgm => CodecFormat::Pnm,
-        FileFormat::Psd => return psd(bytes, size, component_count, depth).map_err(|error| encoding_error(&error)),
         FileFormat::Jng => return jng(&bytes, size, component_count).map_err(|error| encoding_error(&error)),
         FileFormat::J2k | FileFormat::Jp2 => {
             let profile = embed.and_then(crate::icc::profile);
@@ -1338,6 +1292,7 @@ fn encode(
             return jpeg2000::write_jpeg2000(bytes, size, component_count, depth, jp2, profile.as_deref()).map_err(|error| encoding_error(&error));
         }
         FileFormat::Exr | FileFormat::Hdr => return Err(encoding_error(&"unexpected float raster format")),
+        FileFormat::Psd => return Err(encoding_error(&"a PSD holds the layers of several maps (`layered_psd`)")),
     };
     let layout = match component_count {
         1 => ChannelLayout::Gray,
@@ -1384,35 +1339,38 @@ fn quantize_integer(encoding: Encoding, width: u32, component_count: usize, samp
     Ok(bytes)
 }
 
-fn check_psd_size((width, height): (u32, u32), channels: usize, depth: u8) -> Result<()> {
+/// The PSD file of a texture set (its merged image and `layer_count` RGBA layers in `folder_count` groups) must fit PSD's side and 2 GiB limits
+fn check_psd_size((width, height): (u32, u32), layer_count: usize, folder_count: usize, depth: u8) -> Result<()> {
+    // A layer record with its names, and each of a group's two records, stays below this
+    const PSD_RECORD_BYTES: u64 = 2048;
+
     if width == 0 || height == 0 || width > PSD_MAX_SIDE_PIXELS || height > PSD_MAX_SIDE_PIXELS {
         return Err(FormatError::Invalid(format!("PSD size {width}×{height} must be between 1 and {PSD_MAX_SIDE_PIXELS} pixels per side")));
     }
 
-    // Measure the flat file's overhead without allocating any pixel buffers
-    let overhead = flat_psd((width, height), channels, depth).encoded_len().map_err(|error| FormatError::Invalid(format!("PSD sizing failed: {error}")))?;
-    let sample_bytes = u64::from(width) * u64::from(height) * channels as u64 * u64::from(depth / 8);
-    if overhead + sample_bytes >= PSD_MAX_FILE_BYTES {
-        return Err(FormatError::Invalid(format!("PSD size {width}×{height} would reach the 2 GiB file limit; use a smaller export size or another format")));
+    // Measure the merged image's overhead without allocating any pixel buffers
+    let merged = flat_psd((width, height), depth).encoded_len().map_err(|error| FormatError::Invalid(format!("PSD sizing failed: {error}")))?;
+    let records = PSD_RECORD_BYTES * (layer_count as u64 + 2 * folder_count as u64);
+    let planes = PSD_RGBA_PLANES as u64 * (1 + layer_count as u64);
+    let sample_bytes = u64::from(width) * u64::from(height) * planes * u64::from(depth / 8);
+    if merged + records + sample_bytes >= PSD_MAX_FILE_BYTES {
+        return Err(FormatError::Invalid(format!(
+            "a PSD of {layer_count} maps at {width}×{height} would reach the 2 GiB file limit; use a smaller export size, fewer PSD maps or another format"
+        )));
     }
 
     Ok(())
 }
 
-fn flat_psd((width, height): (u32, u32), channels: usize, depth: u8) -> craft_psd::PsdFile {
-    use craft_psd::{ColorMode, Compression, Header, ImageData, ImageResource, PsdFile, Version};
+/// A PSD of only an RGBA merged image with no pixels yet, to measure
+fn flat_psd((width, height): (u32, u32), depth: u8) -> craft_psd::PsdFile {
+    use craft_psd::{ColorMode, Compression, Header, ImageData, PsdFile, Version};
 
-    const PSD_ALPHA_NAMES_RESOURCE_ID: u16 = 1006;
-    let color_mode = if channels <= 2 { ColorMode::Grayscale } else { ColorMode::Rgb };
-    let header = Header::new(Version::Psd, width, height, channels as u16, u16::from(depth), color_mode);
-
-    // A Pascal name marks the extra plane as a channel separate from merged transparency
-    let resources = if matches!(channels, 2 | 4) { vec![ImageResource::new(PSD_ALPHA_NAMES_RESOURCE_ID, b"\x05Alpha".to_vec())] } else { Vec::new() };
-
+    let header = Header::new(Version::Psd, width, height, PSD_RGBA_PLANES as u16, u16::from(depth), ColorMode::Rgb);
     PsdFile {
         header,
         color_mode_data: Vec::new(),
-        resources,
+        resources: Vec::new(),
         layer_info: None,
         layer_info_placement: Default::default(),
         global_layer_mask: None,
@@ -1421,26 +1379,6 @@ fn flat_psd((width, height): (u32, u32), channels: usize, depth: u8) -> craft_ps
         image_data: ImageData::new(Compression::Raw, Vec::new()),
         write_as_psb: false,
     }
-}
-
-/// Write a merged PSD image with raw planes, including an extra alpha plane when present.
-fn psd(bytes: Vec<u8>, size: (u32, u32), channels: usize, depth: u8) -> craft_psd::Result<Vec<u8>> {
-    let mut file = flat_psd(size, channels, depth);
-    let planes = &mut file.image_data.data;
-    planes.try_reserve_exact(bytes.len()).map_err(|_| craft_psd::PsdError::OutOfMemory("cannot allocate PSD planes"))?;
-    if depth == 16 {
-        let samples = bytes.as_chunks::<2>().0;
-        for channel in 0..channels {
-            planes.extend(samples.iter().skip(channel).step_by(channels).flat_map(|sample| u16::from_ne_bytes(*sample).to_be_bytes()));
-        }
-    } else {
-        for channel in 0..channels {
-            planes.extend(bytes.iter().skip(channel).step_by(channels).copied());
-        }
-    }
-    drop(bytes);
-
-    file.to_bytes()
 }
 
 /// A JNG file: the colour as JPEG, alpha (when present) as lossless 8-bit deflate data.

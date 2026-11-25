@@ -928,10 +928,25 @@ fn preview_names(app: &mut TextureCraftApp, preset: &ExportPreset) -> Result<Vec
     }
     let plan = texturecraft_engine::execute(&mut app.session, "export.plan", &p).map_err(|e| e.to_string())?;
     let mut names = vec![None; preset.maps.len()];
+    let index = |value: &Value| value.get("map").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok());
     for f in plan.as_array().into_iter().flatten() {
-        let map = f.get("map").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok());
-        if let (Some(slot), Some(file)) = (map.and_then(|i| names.get_mut(i)), f.get("file").and_then(Value::as_str)) {
-            *slot = Some(file.to_string());
+        let Some(file) = f.get("file").and_then(Value::as_str) else { continue };
+        let layers = f.get("layers").and_then(Value::as_array).filter(|layers| !layers.is_empty());
+        match layers {
+            // A PSD's maps each show the file and their layer
+            Some(layers) => {
+                for layer in layers {
+                    let name = layer.get("name").and_then(Value::as_str).unwrap_or_default();
+                    if let Some(slot) = index(layer).and_then(|i| names.get_mut(i)) {
+                        *slot = Some(format!("{file} › {name}"));
+                    }
+                }
+            }
+            None => {
+                if let Some(slot) = index(f).and_then(|i| names.get_mut(i)) {
+                    *slot = Some(file.to_string());
+                }
+            }
         }
     }
     Ok(names)

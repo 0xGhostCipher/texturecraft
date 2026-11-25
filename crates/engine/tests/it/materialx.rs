@@ -197,8 +197,10 @@ fn a_file_type_a_material_cannot_use_falls_back_to_png() {
         )
         .unwrap();
 
+        // A PSD holds every map of the texture set as a layer
         let all = names(&result);
-        assert!(all.iter().any(|f| f.ends_with(&format!("_baseColor.{ext}"))), "{format}: the template's files keep the file type: {all:?}");
+        let template_file = if format == "psd" { ".psd".to_string() } else { format!("_baseColor.{ext}") };
+        assert!(all.iter().any(|f| f.ends_with(&template_file)), "{format}: the template's files keep the file type: {all:?}");
         let mtlx = files(&result).into_iter().find(|f| f.ends_with(".mtlx")).unwrap_or_else(|| panic!("{format}: no .mtlx in {all:?}"));
         let text = std::fs::read_to_string(mtlx).unwrap();
         let wanted = if format == "tiff" { "tif" } else { "png" };

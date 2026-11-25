@@ -386,11 +386,16 @@ fn output_for_slot<'m>(slot: usize, map: &'m MapSpec, set: &TextureSet, format: 
 /// opacity, clear coat and clear coat roughness. Maps with none of them (ambient occlusion,
 /// height, specular/glossiness, baked maps...) bind nothing, and neither do channels the set has
 /// no data for. `project_normal` is the project's normal convention, used by normal maps that
-/// follow it.
+/// follow it. A PSD holds several maps as layers, so it binds nothing
 pub fn usd_texture_bindings(set: &TextureSet, opts: &ExportOptions, project_normal: NormalFormat, files: &[PlannedFile]) -> Vec<UsdTextureBinding> {
     let mut out: Vec<UsdTextureBinding> = Vec::new();
     let mut seen_maps = Vec::new();
     for file in files {
+        // A PSD's merged image is no one map's texture
+        if file.format == FileFormat::Psd {
+            continue;
+        }
+
         // The first tile stands for all the tiles of a map
         if seen_maps.contains(&file.map) {
             continue;
@@ -412,7 +417,7 @@ pub fn usd_texture_bindings(set: &TextureSet, opts: &ExportOptions, project_norm
             }
 
             let Some((output, source)) = output_for_slot(slot, map, set, file.format) else { continue };
-            let normal = (slot == 3).then(|| {
+            let normal = (SLOTS[slot].0 == "Normal").then(|| {
                 opts.normal_format.unwrap_or(match source {
                     SourceRef::Virtual { map: VirtualMap::NormalOpenGl, .. } => NormalFormat::OpenGl,
                     SourceRef::Virtual { map: VirtualMap::NormalDirectX, .. } => NormalFormat::DirectX,
@@ -585,6 +590,7 @@ mod texture_binding_tests {
             tile: None,
             udim_name: None,
             warnings: Vec::new(),
+            layers: Vec::new(),
         }
     }
 

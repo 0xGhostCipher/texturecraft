@@ -1122,45 +1122,89 @@ fn pgm_is_a_binary_graymap() {
 }
 
 #[test]
-fn psd_holds_the_merged_image_planar() {
+fn psd_holds_every_map_as_a_layer_over_their_merged_image() {
     let fx = Fx::new(&default_channels());
-    let f = &fx.render(&one_map(FileFormat::Psd, 8, rgba_half_alpha()))[0];
-    let b = &f.bytes;
-    assert_eq!(&b[0..4], b"8BPS");
-    assert_eq!(u16::from_be_bytes([b[12], b[13]]), 4, "channels");
-    assert_eq!((u32::from_be_bytes(b[14..18].try_into().unwrap()), u32::from_be_bytes(b[18..22].try_into().unwrap())), (64, 64));
-    assert_eq!((u16::from_be_bytes([b[22], b[23]]), u16::from_be_bytes([b[24], b[25]])), (8, 3), "8-bit RGB");
-    let parsed = craft_psd::PsdFile::from_bytes(b).unwrap();
-    assert!(!parsed.merged_has_alpha());
-    assert_eq!(parsed.alpha_channel_names(), ["Alpha"]);
-    let samples = parsed.decode_merged().unwrap();
-    assert_eq!(samples.len(), 4 * 64 * 64);
-    let plane = |c: usize| &samples[c * 64 * 64..(c + 1) * 64 * 64];
-    assert!(plane(3).iter().all(|a| *a == 128), "alpha plane");
-    let png = decode(&fx.render(&one_map(FileFormat::Png, 8, rgba_half_alpha()))[0]).to_rgba8();
-    assert_eq!(plane(0)[64 * 10 + 40], png.get_pixel(40, 10)[0], "the red plane holds the same values as a PNG");
+    let mut png_options = ExportOptions::new(builtin_preset("glTF PBR Metal Roughness").unwrap());
+    png_options.bit_depth_override = Some(8);
+    let pngs = fx.render(&png_options);
+    let mut options = png_options.clone();
+    options.format_override = Some(FileFormat::Psd);
 
-    let f16 = &fx.render(&one_map(FileFormat::Psd, 16, roughness()))[0];
-    assert_eq!((u16::from_be_bytes([f16.bytes[12], f16.bytes[13]]), u16::from_be_bytes([f16.bytes[22], f16.bytes[23]])), (1, 16));
-    assert_eq!(f16.bytes.len(), 26 + 12 + 2 + 2 * 64 * 64);
+    let planned = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+    let files = fx.render(&options);
 
-    let mut gray_alpha = roughness();
-    gray_alpha.push((Dest::A, SourceRef::Constant(0.5)));
-    let f16 = &fx.render(&one_map(FileFormat::Psd, 16, gray_alpha))[0];
-    let parsed = craft_psd::PsdFile::from_bytes(&f16.bytes).unwrap();
-    assert!(!parsed.merged_has_alpha());
-    assert_eq!(parsed.alpha_channel_names(), ["Alpha"]);
-    let samples = parsed.decode_merged().unwrap();
-    assert_eq!(samples.len(), 2 * 2 * 64 * 64);
-    assert!(samples[2 * 64 * 64..].as_chunks::<2>().0.iter().all(|sample| *sample == [128, 0]));
+    assert_eq!(planned.len(), 1, "one PSD for the texture set: {planned:?}");
+    assert_eq!(planned[0].layers.len(), pngs.len());
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].name, "sphere_Body_Set.psd");
+    let parsed = craft_psd::PsdFile::from_bytes(&files[0].bytes).unwrap();
+    let layers: Vec<_> = parsed.iter_layers().collect();
+    assert_eq!(layers.len(), pngs.len());
+
+    // The file stacks bottom up, so the first map is the top layer
+    for (layer, png) in layers.iter().rev().zip(&pngs) {
+        assert_eq!(format!("{}.png", layer.name()), png.name);
+        assert_eq!(layer.rgba8().unwrap().data, decode(png).to_rgba8().into_raw(), "{}: the layer holds the map's texels", png.name);
+    }
+    let top = layers.last().unwrap().rgba8().unwrap().data;
+    assert!(top.as_chunks::<4>().0.iter().all(|texel| texel[3] == u8::MAX), "the base colour is opaque");
+    assert_eq!(parsed.composite_rgba8().unwrap().data, top, "the merged image shows the opaque top layer");
+
+    options.bit_depth_override = Some(16);
+    let deep = &fx.render(&options)[0];
+    assert_eq!(craft_psd::PsdFile::from_bytes(&deep.bytes).unwrap().header.depth, 16);
+}
+
+#[test]
+fn psd_folder_templates_become_layer_groups_of_one_file_not_folders() {
+    let fx = Fx::new(&default_channels());
+    let rough = |file: &str| gray_map(file, SourceRef::Channel { channel: Channel::Roughness, component: 0 });
+    let preset = ExportPreset { name: "t".into(), maps: vec![rough("Body/$textureSet_Rough"), rough("Top/Inner/Leaf"), rough("Mask")] };
+    let mut options = ExportOptions::new(preset);
+    options.format_override = Some(FileFormat::Psd);
+
+    let files = fx.render(&options);
+
+    assert_eq!(files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["sphere_Body_Set.psd"], "no folder for a PSD's layers");
+    let parsed = craft_psd::PsdFile::from_bytes(&files[0].bytes).unwrap();
+    let name = |node: &craft_psd::tree::LayerNode| parsed.layer(node.index()).unwrap().name();
+    let tree = parsed.layer_tree();
+
+    // The tree lists bottom up and the first map is the top layer
+    let groups: Vec<_> = tree.iter().rev().filter(|node| node.is_group()).map(name).collect();
+    assert_eq!(groups, ["Body", "Top"]);
+    let body = tree.iter().find(|node| node.is_group() && name(node) == "Body").unwrap();
+    assert_eq!(body.children().iter().map(name).collect::<Vec<_>>(), ["Body_Set_Rough"], "$textureSet is filled in inside a layer name");
+    assert!(tree.iter().any(|node| !node.is_group() && name(node) == "Mask"));
+}
+
+#[test]
+fn psd_layer_groups_follow_the_slashes_of_their_names() {
+    let pixel = || craft_psd::PixelData::Rgba8(vec![10, 20, 30, 255]);
+    let layers = vec![("Mask", pixel()), ("Body/Rough", pixel()), ("Body/Color", pixel()), ("Top/Inner/Leaf", pixel())];
+
+    let bytes = layered_psd::write_layers((1, 1), 8, layers, pixel()).unwrap();
+
+    let parsed = craft_psd::PsdFile::from_bytes(&bytes).unwrap();
+    let name = |node: &craft_psd::tree::LayerNode| parsed.layer(node.index()).unwrap().name();
+    let tree = parsed.layer_tree();
+    assert_eq!(
+        tree.iter().map(|node| (name(node), node.is_group())).collect::<Vec<_>>(),
+        [("Mask".to_string(), false), ("Body".to_string(), true), ("Top".to_string(), true)]
+    );
+    assert_eq!(tree[1].children().iter().map(name).collect::<Vec<_>>(), ["Rough", "Color"]);
+    let inner = &tree[2].children()[0];
+    assert!(inner.is_group() && name(inner) == "Inner");
+    assert_eq!(inner.children().iter().map(name).collect::<Vec<_>>(), ["Leaf"]);
 }
 
 #[test]
 fn psd_plan_rejects_a_version_one_atlas_over_its_dimension_limit() {
     let mut fx = Fx::new(&default_channels());
-    fx.project.texture_sets[0].uv_tiles = vec![1001, 1002];
+    // Four tile columns: the atlas is 32768 wide, each tile's layer and merged image well under 2 GiB
+    fx.project.texture_sets[0].uv_tiles = vec![1001, 1004];
     let mut options = one_map(FileFormat::Psd, 8, roughness());
-    options.size = Some(16_384);
+    options.size = Some(8192);
     options.atlas = true;
 
     let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
@@ -1171,7 +1215,7 @@ fn psd_plan_rejects_a_version_one_atlas_over_its_dimension_limit() {
 }
 
 #[test]
-fn psd_plan_rejects_a_file_over_the_version_one_byte_limit() {
+fn psd_plan_counts_every_layer_against_the_version_one_byte_limit() {
     let fx = Fx::new(&default_channels());
     let mut options = one_map(FileFormat::Psd, 16, rgba_half_alpha());
     options.size = Some(16_384);
@@ -1179,19 +1223,23 @@ fn psd_plan_rejects_a_file_over_the_version_one_byte_limit() {
     let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
 
     assert!(error.to_string().contains("PSD") && error.to_string().contains("2 GiB"), "{error}");
-    options.bit_depth_override = Some(8);
-    assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 1);
-    options.bit_depth_override = None;
-    options.preset.maps[0].channels.pop();
-    assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 1);
+    options.size = Some(8192);
+    for copy in ["second", "third"] {
+        assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 1);
+        let mut map = options.preset.maps[0].clone();
+        map.file = copy.into();
+        options.preset.maps.push(map);
+    }
+    let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
+    assert!(error.to_string().contains("3 maps") && error.to_string().contains("2 GiB"), "{error}");
 }
 
 #[test]
-fn psd_byte_limit_includes_resources_and_keeps_separate_tiles_valid() {
-    // These RGBA16 planes are 32 bytes below 2 GiB before headers and the alpha name
-    let (width, height) = (10_924, 24_573);
-    assert!(check_psd_size((width, height), 4, 16).is_err());
-    assert!(check_psd_size((width, height - 1), 4, 16).is_ok());
+fn psd_byte_limit_includes_the_merged_image_and_keeps_separate_tiles_valid() {
+    // One RGBA16 layer and the merged image: 87360 bytes over 2 GiB, a row less 87424 bytes below
+    let (width, height) = (10_924, 12_287);
+    assert!(check_psd_size((width, height), 1, 0, 16).is_err());
+    assert!(check_psd_size((width, height - 1), 1, 0, 16).is_ok());
 
     let mut fx = Fx::new(&default_channels());
     fx.project.texture_sets[0].uv_tiles = vec![1001, 1003, 1011];
