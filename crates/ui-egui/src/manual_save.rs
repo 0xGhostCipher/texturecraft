@@ -90,7 +90,7 @@ impl TextureCraftApp {
         // A close that the save could not finish asks about the changes it left, once an open stroke ends
         if job.quit_after_save && !quitting {
             if self.session.stroke_active() {
-                self.quit_after_stroke = true;
+                self.quit_after_stroke = Some(self.session.project_id);
             } else {
                 crate::windows::ask_to_save(self, Unsaved::Quit);
             }
@@ -295,6 +295,19 @@ mod tests {
 
         assert!(closed, "nothing is left to save, so the close goes on");
         assert!(h.state().ui.windows.unsaved.is_none());
+    }
+
+    #[test]
+    fn opening_another_project_drops_the_close_that_waited_for_a_stroke() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut h = stroke_open_when_the_save_returns("stroke-replaced");
+
+        h.state_mut().session = texturecraft_engine::sample_session(256, 64).unwrap();
+        let closed = sends_close(&mut h);
+
+        assert!(!closed, "the old project's close does not quit the new one");
+        assert!(h.state().ui.windows.unsaved.is_none());
+        assert!(h.state().quit_after_stroke.is_none());
     }
 
     #[test]

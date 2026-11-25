@@ -95,9 +95,13 @@ pub(crate) fn close_request(app: &mut TextureCraftApp, ctx: &egui::Context) {
         app.toast(error.to_string(), true);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if app.quit_after_stroke && !app.session.stroke_active() {
-        app.quit_after_stroke = false;
-        if !ask_to_save(app, crate::state::Unsaved::Quit) {
+    if let Some(project_id) = app.quit_after_stroke
+        && (project_id != app.session.project_id || !app.session.stroke_active())
+    {
+        app.quit_after_stroke = None;
+
+        // A close that belonged to a replaced project is gone with it
+        if project_id == app.session.project_id && !ask_to_save(app, crate::state::Unsaved::Quit) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }

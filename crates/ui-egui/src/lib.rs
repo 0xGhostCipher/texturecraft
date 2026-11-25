@@ -332,9 +332,10 @@ pub struct TextureCraftApp {
     /// The unsaved-changes dialog's Save is waiting for a path or a save result.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) saving_for_prompt: bool,
-    /// A close the finished save left waiting for an open stroke; decided once the stroke ends.
+    /// A close the finished save left waiting for an open stroke, with the id of the project it
+    /// belongs to; decided once the stroke ends, dropped when another project replaced that one.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) quit_after_stroke: bool,
+    pub(crate) quit_after_stroke: Option<u64>,
     /// The requested save completed; the prompt goes on at its next frame.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) prompt_saved: bool,
@@ -456,7 +457,7 @@ impl TextureCraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             saving_for_prompt: false,
             #[cfg(not(target_arch = "wasm32"))]
-            quit_after_stroke: false,
+            quit_after_stroke: None,
             #[cfg(not(target_arch = "wasm32"))]
             prompt_saved: false,
             bindings: keymap::Bindings::default(),
