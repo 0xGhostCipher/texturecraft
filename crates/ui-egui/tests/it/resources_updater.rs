@@ -186,3 +186,27 @@ fn a_file_changed_while_the_window_stays_open_shows_without_refresh() {
 
     assert!(shows(&h, "(1 resources, 1 outdated)"), "no document change, no focus change and no Refresh");
 }
+
+#[test]
+fn the_keyboard_focus_stays_with_its_resource_when_the_rows_reorder() {
+    /// Steps of the harness's quarter second: over the window's half-second check
+    const FRAMES: usize = 4;
+    const SELECT_LATER: &str = "Select new resource zz_later.png";
+
+    let dir = TempDir::new("resources-updater-focus");
+    let (earlier, later) = (png(&dir, "aa_earlier.png", 4), png(&dir, "zz_later.png", 4));
+    let mut h = app();
+    import(&mut h, &earlier);
+    import(&mut h, &later);
+    activate(&mut h, "Resources Updater");
+    h.get_by_role_and_label(Role::Button, SELECT_LATER).focus();
+    h.run_steps(2);
+
+    // The changed file moves to the top of the list
+    png(&dir, "zz_later.png", 8);
+    h.run_steps(FRAMES);
+
+    let rows = &h.state().ui.windows.resources_updater.as_ref().unwrap().rows;
+    assert_eq!(rows[0].name, "zz_later.png", "the outdated resource moved up");
+    assert!(h.get_by_role_and_label(Role::Button, SELECT_LATER).accesskit_node().is_focused(), "the focus moved with it");
+}

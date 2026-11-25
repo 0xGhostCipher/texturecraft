@@ -254,7 +254,10 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                             ui.label(tr("No resources match the filters"));
                         }
                         for (index, row) in visible.into_iter().enumerate() {
-                            if let Some(asked) = row_ui(app, ui, &tokens, index + 1, row) {
+                            // Ids from the name alone, so the keyboard focus stays with its resource when a check reorders the rows
+                            let row_scope = egui::UiBuilder::new().scope_id(ui.scope_id().with(("resources_updater_row", &row.name)));
+                            let asked = ui.scope_builder(row_scope, |ui| row_ui(app, ui, &tokens, index + 1, row)).inner;
+                            if let Some(asked) = asked {
                                 request = Some(asked);
                             }
                         }
