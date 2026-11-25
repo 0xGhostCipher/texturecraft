@@ -746,19 +746,14 @@ fn updated_settings(session: &Session, params: &Value, command: &str) -> Result<
 fn set_settings(session: &mut Session, params: &Value, command: &str) -> Result<Vec<usize>> {
     let targets = updated_settings(session, params, command)?;
     let sets = targets.iter().map(|(index, _)| *index).collect();
-    let next = with_sync_partners(&session.doc.project, targets, command, boolp(params, "preset") == Some(true))?;
+    let next = with_sync_partners(&session.doc.project, targets, command)?;
 
     super::sync_command::store(session, "Bake Settings", next)?;
     Ok(sets)
 }
 
-/// `targets` plus every set sharing a sync group with a target, which takes the fields the target changed in that group; fails when a set's settings come out invalid (`from_preset`: preset limits apply)
-fn with_sync_partners(
-    project: &texturecraft_core::Project,
-    targets: Vec<(usize, BakeSettings)>,
-    command: &str,
-    from_preset: bool,
-) -> Result<Vec<(usize, BakeSettings)>> {
+/// `targets` plus every set sharing a sync group with a target, which takes the fields the target changed in that group; fails when a set's values come out inconsistent
+fn with_sync_partners(project: &texturecraft_core::Project, targets: Vec<(usize, BakeSettings)>, command: &str) -> Result<Vec<(usize, BakeSettings)>> {
     let mut next: BTreeMap<usize, BakeSettings> = BTreeMap::new();
     for (target, settings) in &targets {
         let Some(before) = project.texture_sets.get(*target).map(|set| &set.bake) else { continue };
@@ -769,6 +764,7 @@ fn with_sync_partners(
             for partner in project.bake_synced_sets(*target, group).into_iter().filter(|partner| partner != target) {
                 let Some(set) = project.texture_sets.get(partner) else { continue };
                 let entry = next.entry(partner).or_insert_with(|| set.bake.clone());
+
                 let mut model = json!(entry);
                 model_patch::apply_patch(&mut model, &changed, command)?;
                 let patched: BakeSettings = serde_json::from_value(model).map_err(|error| bad(command, error.to_string()))?;
@@ -777,9 +773,9 @@ fn with_sync_partners(
         }
     }
 
-    // A field valid beside the target's other values can be invalid beside a partner's: min above the partner's max
-    for (partner, settings) in next.iter().filter(|(partner, _)| targets.iter().all(|(target, _)| target != *partner)) {
-        validate_model_settings(settings, command, from_preset, project.texture_sets.get(*partner).map(|set| &set.bake))?;
+    // The target's checks already bound each value it changed, but beside a partner's other values one can clash: min above the partner's max
+    for (_, settings) in next.iter().filter(|(partner, _)| targets.iter().all(|(target, _)| target != *partner)) {
+        validate_model_settings(settings, command, false, Some(settings))?;
     }
 
     next.extend(targets);
@@ -897,7 +893,7 @@ mod bake_task_tests {
 
     #[test]
     fn a_map_baked_alone_while_unchecked_still_reads_the_low_polys_colours() {
-        let mut session = crate::sample_session(64, 64).unwrap();
+        let mut session = crate::sample_session(128, 64).unwrap();
         session.doc.project.texture_sets[0].bake.maps.select([BakedMap::Normal]);
         let colours = Arc::new(vec![None]);
         let _ = session.doc.bake_meshes.low_base_color.set(Ok(colours.clone()));

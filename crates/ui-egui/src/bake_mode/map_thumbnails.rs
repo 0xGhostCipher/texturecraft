@@ -67,7 +67,7 @@ mod tests {
         let mut tiled =
             texturecraft_engine::Session::new_project("Tiles", texturecraft_engine::geom::primitives::udim_plane(), "builtin:udim_plane", None, 256).unwrap();
         let tiled_set = &mut tiled.doc.project.texture_sets[0];
-        let tile = *tiled_set.uv_tiles.iter().next().expect("the UDIM plane has UV tiles");
+        let tile = *tiled_set.uv_tiles.first().expect("the UDIM plane has UV tiles");
         tiled_set.tile_resolutions.insert(tile, 128);
         let second = thumbnails.texture(&context, &session, 0, map).unwrap();
         session.caches[0].composite.block_scales = tiled_set.block_scales();
