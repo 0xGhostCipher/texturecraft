@@ -25,6 +25,24 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("resource.list", "List resources", [], None, "{}", always, |s, _| Ok(list(s))),
         cmd!("resource.remove", "Remove resource", [], None, "{name}", always, remove),
         cmd!("resource.export", "Export resource", [], None, "{name, path} — the resource's file as it was imported", always, export),
+        cmd!(
+            "resource.rename",
+            "Rename resource",
+            [],
+            None,
+            "{name, to} — everything that uses the image follows it; `to` keeps the old extension when it has none",
+            always,
+            rename
+        ),
+        cmd!(
+            "resource.reload",
+            "Reload resource",
+            [],
+            None,
+            "{name} — read the image again from the file it was imported from in this session",
+            always,
+            reload
+        ),
         cmd!("file.removeUnused", "Remove unused resources...", ["File"], None, "{}", always, remove_unused),
         cmd!(
             "layer.add.image",
@@ -97,7 +115,15 @@ impl Session {
         self.doc.resources.insert(name.clone(), Arc::new(bytes));
         self.images.insert(name.clone(), decoded(image));
 
+        // A new resource under a removed one's name has no file of its own until an import says so
+        self.resource_sources.remove(&name);
+
         Ok(name)
+    }
+
+    /// Whether image resource `name` was imported from a file in this session, so `resource.reload` can read it again
+    pub fn reloadable(&self, name: &str) -> bool {
+        self.resource_sources.contains_key(name)
     }
 
     /// Decode resources that are not decoded yet and forget removed ones (after undo, redo, load).
@@ -175,6 +201,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = strp(p, "path").ok_or_else(|| bad("resource.import", "`path` is required"))?;
     let bytes = read_image_file("resource.import", path, MAX_BYTES as u64)?;
     let name = s.import_resource_bytes_prefixed(strp(p, "prefix").unwrap_or(""), path, bytes)?;
+    s.resource_sources.insert(name.clone(), path.into());
     Ok(json!({ "name": name }))
 }
 
@@ -280,18 +307,143 @@ fn export(_: &mut Session, _: &Value) -> Result<Value> {
     Err(bad("resource.export", "file paths are not available in the browser"))
 }
 
-/// Drop resources no layer, mask effect, the brush alpha, the projection stencil, the mask brush or the environment uses (one undo step)
-fn remove_unused(s: &mut Session, _: &Value) -> Result<Value> {
-    let mut used = Vec::new();
-    for set in &s.doc.project.texture_sets {
-        for root in &set.stack {
-            crate::material_lib::images_used(&s.doc.project, *root, &mut used, 0);
+/// Renames image resource `name` to `to` and every reference to it, in one undo step
+fn rename(s: &mut Session, p: &Value) -> Result<Value> {
+    let command = "resource.rename";
+    let name = strp(p, "name").ok_or_else(|| bad(command, "`name` is required"))?.to_string();
+    let to = strp(p, "to").ok_or_else(|| bad(command, "`to` is required"))?.trim();
+    if !s.doc.resources.contains_key(&name) {
+        return Err(bad(command, format!("no resource `{name}`")));
+    }
+
+    let mut to = sanitize_resource_name(to);
+    if std::path::Path::new(&to).extension().is_none()
+        && let Some(extension) = std::path::Path::new(&name).extension().and_then(|extension| extension.to_str())
+    {
+        // The stem gives way, so a long name keeps its extension
+        let stem_room = MAX_RESOURCE_NAME_LEN.saturating_sub(extension.len() + 1);
+        to.truncate(stem_room);
+        to = format!("{to}.{extension}");
+    }
+    if to == name {
+        return Ok(json!({ "name": name }));
+    }
+    if s.doc.resources.contains_key(&to) || crate::fill_alpha::library_alpha_of(&to).is_some() {
+        return Err(bad(command, format!("a resource named `{to}` exists already")));
+    }
+
+    s.edit("Rename resource", |s| {
+        let bytes = s.doc.resources.remove(&name).ok_or_else(|| bad(command, format!("no resource `{name}`")))?;
+        s.doc.resources.insert(to.clone(), bytes);
+        rename_references(&mut s.doc.project, &name, &to);
+
+        // Refuse rather than leave a reference this rename does not know about pointing at nothing
+        if project_images(&s.doc.project).contains(&name) {
+            return Err(bad(command, format!("`{name}` is used somewhere it can't be renamed")));
+        }
+
+        Ok(())
+    })?;
+
+    for tool_image in s.tool_images_mut().filter(|tool_image| **tool_image == name) {
+        tool_image.clone_from(&to);
+    }
+
+    // The decoded pixels are the same: they move instead of decoding again
+    if let Some(image) = s.images.remove(&name) {
+        s.images.insert(to.clone(), image);
+    }
+    if s.library_alphas.remove(&name) {
+        s.library_alphas.insert(to.clone());
+    }
+    if let Some(source) = s.resource_sources.remove(&name) {
+        s.resource_sources.insert(to.clone(), source);
+    }
+    s.path_cache = None;
+    s.sync_images();
+    Ok(json!({ "name": to }))
+}
+
+/// Points every layer, effect, stored path and the environment that read image resource `from` at `to`
+fn rename_references(project: &mut texturecraft_core::Project, from: &str, to: &str) {
+    for layer in project.layers.values_mut() {
+        let fill_images: Vec<&mut String> = match &mut layer.kind {
+            LayerKind::Fill(fill) => fill.images_mut().collect(),
+            _ => Vec::new(),
+        };
+        let effects = layer.mask.iter_mut().flat_map(|mask| mask.effects.iter_mut()).chain(&mut layer.content_effects);
+        let mut images = fill_images;
+        for effect in effects {
+            crate::path_tool::rename_path_images(&mut effect.kind, from, to);
+            images.extend(effect.images_mut());
+        }
+
+        for image in images.into_iter().filter(|image| *image == from) {
+            *image = to.to_string();
         }
     }
+
+    if project.display.environment_resource() == Some(from) {
+        project.display.environment = format!("{}{to}", texturecraft_core::project::ENV_RESOURCE_PREFIX);
+    }
+}
+
+/// Reads image resource `name` again from the file this session imported it from (one undo step)
+#[cfg(not(target_arch = "wasm32"))]
+fn reload(s: &mut Session, p: &Value) -> Result<Value> {
+    let command = "resource.reload";
+    let name = strp(p, "name").ok_or_else(|| bad(command, "`name` is required"))?.to_string();
+    if !s.doc.resources.contains_key(&name) {
+        return Err(bad(command, format!("no resource `{name}`")));
+    }
+
+    let path =
+        s.resource_sources.get(&name).cloned().ok_or_else(|| bad(command, format!("`{name}` was imported before this session: no file to reload from")))?;
+    let bytes = read_resource_file(command, &path, MAX_BYTES as u64)?;
+    let image = texturecraft_formats::decode_image_within(&bytes, texturecraft_formats::MAX_RESOURCE_TEXELS)
+        .map_err(|error| bad(command, format!("{}: {error}", path.display())))?;
+    s.edit("Reload resource", |s| {
+        s.doc.resources.insert(name.clone(), Arc::new(bytes));
+        Ok(())
+    })?;
+
+    s.library_alphas.remove(&name);
+    if crate::fill_alpha::matches_saved_picture(&name, &image) {
+        s.library_alphas.insert(name.clone());
+    }
+    s.images.insert(name.clone(), decoded(image));
+    Ok(json!({ "name": name }))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reload(_: &mut Session, _: &Value) -> Result<Value> {
+    Err(bad("resource.reload", "file paths are not available in the browser"))
+}
+
+/// Every image resource a layer, mask effect, stored path or the environment of `project` uses
+fn project_images(project: &texturecraft_core::Project) -> Vec<String> {
+    let mut used = Vec::new();
+    for set in &project.texture_sets {
+        for root in &set.stack {
+            crate::material_lib::images_used(project, *root, &mut used, 0);
+        }
+    }
+    used.extend(project.display.environment_resource().map(str::to_string));
+    used
+}
+
+/// [`project_images`] and the images the brush alpha, the projection stencil and the mask brush use
+fn images_in_use(s: &Session) -> Vec<String> {
+    let mut used = project_images(&s.doc.project);
     used.extend(s.tool.stencil.as_ref().map(|st| st.image.clone()));
     used.extend(s.tool.brush.alpha_image.clone());
     used.extend(s.tool.mask_image.clone());
-    used.extend(s.doc.project.display.environment_resource().map(str::to_string));
+    used
+}
+
+/// Drop resources no layer, mask effect, the brush alpha, the projection stencil, the mask brush or the environment uses (one undo step)
+fn remove_unused(s: &mut Session, _: &Value) -> Result<Value> {
+    let used = images_in_use(s);
     let unused: Vec<String> = s.doc.resources.keys().filter(|k| !used.contains(k)).cloned().collect();
     if !unused.is_empty() {
         s.edit("Remove unused resources", |s| {
@@ -361,6 +513,66 @@ mod tests {
 
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "the file is the resource as imported");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_renamed_image_stays_in_use_everywhere_it_was() {
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let png = texturecraft_formats::gray16_png(1, 1, [0.5].into_iter()).unwrap();
+        let name = session.import_resource_bytes("photo.png", png).unwrap();
+        crate::execute(&mut session, "layer.add.image", &json!({"name": name})).unwrap();
+        session.tool.brush.alpha_image = Some(name.clone());
+
+        let renamed = crate::execute(&mut session, "resource.rename", &json!({"name": name, "to": "stone"})).unwrap()["name"].as_str().unwrap().to_string();
+
+        assert_ne!(renamed, name);
+        assert!(renamed.ends_with(".png"), "the extension stays: {renamed}");
+        let used = images_in_use(&session);
+        assert!(used.contains(&renamed) && !used.contains(&name), "every use follows the rename: {used:?}");
+        assert!(session.images.contains_key(&renamed) && !session.images.contains_key(&name));
+
+        session.undo().unwrap();
+
+        assert!(project_images(&session.doc.project).contains(&name), "undo brings the old name back");
+        assert!(session.images.contains_key(&name));
+        assert_eq!(session.tool.brush.alpha_image.as_ref(), Some(&name), "the brush alpha follows the undo");
+
+        session.redo().unwrap();
+
+        assert_eq!(session.tool.brush.alpha_image.as_ref(), Some(&renamed), "the brush alpha follows the redo");
+    }
+
+    #[test]
+    fn reloading_reads_the_file_again_and_undo_restores_the_pixels() {
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let path = std::env::temp_dir().join(format!("texturecraft-reload-resource-{}.png", std::process::id()));
+        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.2].into_iter()).unwrap()).unwrap();
+        let name = crate::execute(&mut session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+        let before = session.images[&name].rgba.clone();
+        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.8].into_iter()).unwrap()).unwrap();
+
+        crate::execute(&mut session, "resource.reload", &json!({"name": name})).unwrap();
+        let reloaded = session.images[&name].rgba.clone();
+        session.undo().unwrap();
+
+        assert_ne!(reloaded, before, "reload decodes the file's new pixels");
+        assert_eq!(session.images[&name].rgba, before, "undo shows the old pixels again");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_new_image_under_a_removed_ones_name_does_not_reload_its_file() {
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let path = std::env::temp_dir().join(format!("texturecraft-reused-name-{}.png", std::process::id()));
+        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.2].into_iter()).unwrap()).unwrap();
+        let name = crate::execute(&mut session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+        crate::execute(&mut session, "resource.remove", &json!({"name": name})).unwrap();
+
+        let reused = session.import_resource_bytes(&name, texturecraft_formats::gray16_png(1, 1, [0.6].into_iter()).unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+
+        assert_eq!(reused, name, "the name is free again");
+        assert!(session.resource_source(&reused).is_none(), "the new image has no file to reload from");
     }
 
     #[test]

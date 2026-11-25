@@ -462,6 +462,8 @@ pub struct Session {
     pub images: texturecraft_compose::ImageStore,
     /// Resource names whose decoded pixels match a library alpha.
     pub(crate) library_alphas: BTreeSet<String>,
+    /// The file each image resource imported in this session came from, for Reload (not saved)
+    pub(crate) resource_sources: BTreeMap<String, std::path::PathBuf>,
     /// Temporary texel mask limiting paint strokes (not saved, not in the history).
     pub quick_mask: crate::quick_mask::QuickMask,
     /// A path sublayer is being repainted from its paths (the only way to paint into one).
@@ -547,6 +549,7 @@ impl Session {
             blending_clipboard: None,
             images: Default::default(),
             library_alphas: BTreeSet::new(),
+            resource_sources: BTreeMap::new(),
             quick_mask: Default::default(),
             painting_paths: false,
             path_cache: None,
@@ -983,6 +986,13 @@ impl Session {
     }
 
     fn after_history(&mut self, other: &Document) {
+        // A resource whose bytes the step changed (a reload) decodes again
+        self.images.retain(|name, _| match (other.resources.get(name), self.doc.resources.get(name)) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            _ => true,
+        });
+        self.follow_renamed_resources(other);
+
         // Pending operations may still hold layer IDs from the discarded snapshot
         self.doc.project.next_id = self.doc.project.next_id.max(other.project.next_id);
         self.modified = true;
@@ -1003,6 +1013,42 @@ impl Session {
         let has_mask = self.selected_layer().and_then(|lid| self.doc.project.layer(self.doc.project.mask_owner(lid)).ok()).is_some_and(|l| l.mask.is_some());
         if self.target == StackTarget::Mask && !has_mask {
             self.target = StackTarget::Content;
+        }
+    }
+
+    /// The image names the tools and the 2D view read, which a resource rename follows
+    pub(crate) fn tool_images_mut(&mut self) -> impl Iterator<Item = &mut String> {
+        [
+            self.tool.stencil.as_mut().map(|stencil| &mut stencil.image),
+            self.tool.brush.alpha_image.as_mut(),
+            self.tool.mask_image.as_mut(),
+            self.view_image.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// Points tool images and reload sources at a resource's name on this side of an undone or redone rename
+    fn follow_renamed_resources(&mut self, other: &Document) {
+        let mut names: Vec<String> = self.tool_images_mut().map(|name| name.clone()).collect();
+        names.extend(self.resource_sources.keys().cloned());
+        let renames: Vec<(String, String)> = names
+            .into_iter()
+            .filter(|name| !self.doc.resources.contains_key(name))
+            .filter_map(|name| {
+                let bytes = other.resources.get(&name)?;
+                let to = self.doc.resources.iter().find(|(_, here)| Arc::ptr_eq(here, bytes)).map(|(here, _)| here.clone())?;
+                Some((name, to))
+            })
+            .collect();
+
+        for (name, to) in renames {
+            for tool_image in self.tool_images_mut().filter(|tool_image| **tool_image == name) {
+                tool_image.clone_from(&to);
+            }
+            if let Some(source) = self.resource_sources.remove(&name) {
+                self.resource_sources.insert(to, source);
+            }
         }
     }
 

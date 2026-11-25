@@ -41,15 +41,20 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
         ui.set_width(width);
         let column = label_column(ui, &info);
 
-        // A saved brush is the user's own: its Name row is a field that renames it
+        // A saved brush or a project image is the user's own: its Name row is a field that renames it
         let mut shown_info = info.as_slice();
-        if let ShelfEntry::SavedBrush { name, .. } = entry
+        let rename = match entry {
+            ShelfEntry::SavedBrush { name, .. } => Some((name.as_str(), "brush.preset.rename")),
+            ShelfEntry::Image(name) => Some((name.as_str(), "resource.rename")),
+            _ => None,
+        };
+        if let Some((name, command)) = rename
             && let Some((_, rest)) = info.split_first()
         {
             shown_info = rest;
             let field_id = ui.make_persistent_id(("asset_name", entry.identity()));
             if let Some(renamed) = name_field(ui, width, column, field_id, name, &tokens) {
-                app.run("brush.preset.rename", json!({"name": name, "to": renamed}));
+                app.run(command, json!({"name": name, "to": renamed}));
             }
         }
         info_block(ui, width, column, shown_info, &tokens);
@@ -57,6 +62,15 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
 
         match entry {
             ShelfEntry::Image(name) => {
+                let reloadable = app.session.reloadable(name);
+                let reload = row(ui, width, tr("Reload"), reloadable, &tokens);
+                if reload.clicked() {
+                    app.run("resource.reload", json!({"name": name}));
+                    ui.close();
+                }
+                if !reloadable {
+                    reload.on_hover_text(tr("Imported before this session: no file to reload from"));
+                }
                 if row(ui, width, tr("Delete"), true, &tokens).clicked() {
                     app.run("resource.remove", json!({"name": name}));
                     ui.close();
@@ -115,7 +129,7 @@ fn info_rows(entry: &ShelfEntry) -> Vec<(&'static str, String)> {
 fn row_labels(entry: &ShelfEntry) -> Vec<&'static str> {
     let mut labels = vec![tr("Export resource..."), tr("Close")];
     match entry {
-        ShelfEntry::Image(_) => labels.extend([tr("Delete"), tr("Add as decal (view center)")]),
+        ShelfEntry::Image(_) => labels.extend([tr("Reload"), tr("Delete"), tr("Add as decal (view center)")]),
         ShelfEntry::SavedBrush { .. } => labels.extend([tr("Replace with the current brush"), tr("Delete")]),
         _ => {}
     }

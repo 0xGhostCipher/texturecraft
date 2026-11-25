@@ -127,3 +127,21 @@ fn delete_removes_a_project_image() {
 
     assert!(!harness.state().session.doc.resources.contains_key(&name));
 }
+
+#[test]
+fn a_project_image_menu_renames_it_and_reloads_only_a_file_from_this_session() {
+    let mut harness = shelf(TEXTURES_TYPE);
+    let mut bytes = Vec::new();
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([180, 90, 40, 255])).write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    let name = harness.state_mut().session.import_resource_bytes("plate.png", bytes).unwrap();
+    harness.run_steps(3);
+
+    right_click(&mut harness, &name);
+    assert!(harness.get_by_label("Reload").accesskit_node().is_disabled(), "an image without a file from this session can't reload");
+    type_name(&mut harness, "stone");
+    harness.key_press(Key::Enter);
+    harness.run_steps(3);
+
+    let resources = &harness.state().session.doc.resources;
+    assert!(resources.contains_key("stone.png") && !resources.contains_key(&name), "Enter renames the image, keeping its extension");
+}
