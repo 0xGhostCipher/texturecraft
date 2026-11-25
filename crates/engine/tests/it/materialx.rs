@@ -187,7 +187,7 @@ fn per_map_overrides_of_the_template_do_not_reach_the_openpbr_maps() {
 #[test]
 fn a_file_type_a_material_cannot_use_falls_back_to_png() {
     let mut session = Session::new_project("t", primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
-    for (format, bit_depth, ext) in [("psd", 16, "psd"), ("pgm", 8, "pgm"), ("jng", 8, "jng"), ("j2k", 8, "j2k"), ("jp2", 8, "jp2"), ("tiff", 16, "tif")] {
+    for (format, bit_depth, ext) in [("psd", 16, "psd"), ("pgm", 8, "pgm"), ("jng", 8, "jng"), ("tiff", 16, "tif")] {
         let dir = temp(format);
 
         let result = execute(

@@ -26,7 +26,6 @@ use texturecraft_texel::{ColorSpace, linear_to_srgb};
 use crate::{FormatError, MAX_IMAGE_SIZE, Result};
 
 mod encoding;
-mod jpeg2000;
 mod layered_psd;
 mod map_override;
 mod map_preview;
@@ -106,19 +105,15 @@ pub enum FileFormat {
     Pgm,
     /// Photoshop document: every output map of a texture set in this format as a layer of one file
     Psd,
-    /// JPEG 2000 codestream, lossless
-    J2k,
-    /// JPEG 2000 in a JP2 file, lossless
-    Jp2,
 }
 
 impl FileFormat {
     /// Whether the texture can be referenced by the USD asset exporter.
     pub fn usable_by_usd_asset(self) -> bool {
-        !matches!(self, Self::Psd | Self::J2k | Self::Jp2)
+        self != Self::Psd
     }
 
-    pub const ALL: [FileFormat; 13] = [
+    pub const ALL: [FileFormat; 11] = [
         FileFormat::Png,
         FileFormat::Jpeg,
         FileFormat::Tga,
@@ -130,8 +125,6 @@ impl FileFormat {
         FileFormat::Jng,
         FileFormat::Pgm,
         FileFormat::Psd,
-        FileFormat::J2k,
-        FileFormat::Jp2,
     ];
 
     pub fn extension(self) -> &'static str {
@@ -147,8 +140,6 @@ impl FileFormat {
             FileFormat::Jng => "jng",
             FileFormat::Pgm => "pgm",
             FileFormat::Psd => "psd",
-            FileFormat::J2k => "j2k",
-            FileFormat::Jp2 => "jp2",
         }
     }
 
@@ -176,7 +167,7 @@ impl FileFormat {
     /// float for TIFF and HDR).
     pub fn bit_depths(self) -> &'static [u8] {
         match self {
-            FileFormat::Png | FileFormat::Pgm | FileFormat::Psd | FileFormat::J2k | FileFormat::Jp2 => &[8, 16],
+            FileFormat::Png | FileFormat::Pgm | FileFormat::Psd => &[8, 16],
             FileFormat::Tiff => &[8, 16, 32],
             FileFormat::Exr => &[16, 32],
             FileFormat::Hdr => &[32],
@@ -1402,7 +1393,7 @@ fn encode(
 
     // Embed ICC or EXR chromaticities only where the format supports them
     if let Some(space) = embed
-        && matches!(format, FileFormat::Tga | FileFormat::Bmp | FileFormat::Hdr | FileFormat::Jng | FileFormat::J2k)
+        && matches!(format, FileFormat::Tga | FileFormat::Bmp | FileFormat::Hdr | FileFormat::Jng)
     {
         warnings.push(format!("{} export does not embed a colour space; the colours are in {}", format.extension().to_ascii_uppercase(), space.name()));
     }
@@ -1504,20 +1495,6 @@ fn encode(
         FileFormat::Webp => CodecFormat::WebP,
         FileFormat::Pgm => CodecFormat::Pnm,
         FileFormat::Jng => return jng(&bytes, size, component_count).map_err(|error| encoding_error(&error)),
-        FileFormat::J2k | FileFormat::Jp2 => {
-            let jp2 = format == FileFormat::Jp2;
-            let gray = component_count <= 2;
-            let profile = if jp2 && !gray {
-                let linear_rgb = srgb.iter().take(3).all(|encoded| !encoded);
-                embed.or(linear_rgb.then_some(ColorSpace::LinearRec709)).and_then(crate::icc::profile)
-            } else {
-                None
-            };
-            let linear_gray = jp2 && gray && !srgb.first().copied().unwrap_or(false);
-            let icc = profile.as_deref().or(linear_gray.then_some(jpeg2000::LINEAR_GRAY_PROFILE));
-
-            return jpeg2000::write_jpeg2000(bytes, size, component_count, depth, jp2, icc).map_err(|error| encoding_error(&error));
-        }
         FileFormat::Exr | FileFormat::Hdr => return Err(encoding_error(&"unexpected float raster format")),
         FileFormat::Psd => return Err(encoding_error(&"a PSD holds the layers of several maps (`layered_psd`)")),
     };

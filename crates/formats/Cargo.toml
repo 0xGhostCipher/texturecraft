@@ -31,8 +31,6 @@ flate2 = { workspace = true }
 half = { workspace = true }
 zip = { workspace = true }
 exr = { workspace = true }
-j2k = { workspace = true }
-j2k-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -366,9 +366,8 @@ fn every_format_encodes_and_decodes() {
     let mut preset = builtin_preset("glTF PBR Metal Roughness").unwrap();
     preset.maps.push(gray_alpha);
 
-    // JNG, PGM, PSD and JPEG 2000 have tests of their own (the image crate reads none of them)
-    let own_tests = |format: &FileFormat| matches!(format, FileFormat::Jng | FileFormat::Pgm | FileFormat::Psd | FileFormat::J2k | FileFormat::Jp2);
-    for format in FileFormat::ALL.into_iter().filter(|format| !own_tests(format)) {
+    // JNG, PGM and PSD have tests of their own (the image crate reads none of them)
+    for format in FileFormat::ALL.into_iter().filter(|f| !matches!(f, FileFormat::Jng | FileFormat::Pgm | FileFormat::Psd)) {
         for &depth in format.bit_depths() {
             let mut opts = ExportOptions::new(preset.clone());
             opts.format_override = Some(format);
@@ -948,7 +947,7 @@ fn exr_carries_the_chromaticities_of_the_space() {
 #[test]
 fn formats_without_a_place_for_a_colour_space_say_so() {
     let data = vec![0.25f32; 4 * 4 * 3];
-    for format in [FileFormat::Tga, FileFormat::Bmp, FileFormat::Hdr, FileFormat::J2k] {
+    for format in [FileFormat::Tga, FileFormat::Bmp, FileFormat::Hdr] {
         let mut warnings = Vec::new();
         encode(Encoding { format, depth: 8, dither: false }, (4, 4), 3, data.clone(), &[false; 3], Some(ColorSpace::AcesCg), &mut warnings).unwrap();
         assert!(warnings.iter().any(|w| w.contains("colour space") && w.contains("ACEScg")), "{format:?}: {warnings:?}");
@@ -1454,154 +1453,6 @@ fn jng_has_jpeg_colour_and_lossless_alpha() {
     let gray = &fx.render(&one_map(FileFormat::Jng, 8, roughness()))[0];
     assert_eq!(gray.bytes[8 + 8 + 8], 8, "gray colour type");
     assert!(!gray.bytes.windows(4).any(|w| w == b"IDAT"));
-}
-
-/// A JPEG 2000 file's component planes
-fn jpeg2000_planes(bytes: &[u8]) -> Vec<Vec<u16>> {
-    let mut decoder = j2k::J2kDecoder::new(bytes).unwrap();
-    let decoded = decoder.decode_native_components().unwrap();
-    decoded
-        .planes()
-        .iter()
-        .map(|plane| match plane.bytes_per_sample() {
-            1 => plane.data().iter().map(|byte| u16::from(*byte)).collect(),
-            _ => plane.data().chunks(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect(),
-        })
-        .collect()
-}
-
-#[test]
-fn jpeg2000_is_lossless_at_8_and_16_bits() {
-    let fx = Fx::new(&[Channel::BaseColor, Channel::Opacity, Channel::Roughness, Channel::Metallic, Channel::Normal]);
-    let preset = builtin_preset("glTF PBR Metal Roughness").unwrap();
-    let jp2_signature = [0, 0, 0, 12, b'j', b'P', b' ', b' '];
-    let codestream_signature = [0xFF, 0x4F, 0xFF, 0x51];
-    for depth in [8u8, 16] {
-        let mut png_options = ExportOptions::new(preset.clone());
-        png_options.bit_depth_override = Some(depth);
-        let png = fx.render(&png_options);
-        for format in [FileFormat::J2k, FileFormat::Jp2] {
-            let mut options = png_options.clone();
-            options.format_override = Some(format);
-            let files = fx.render(&options);
-
-            assert_eq!(files.len(), png.len());
-
-            for (file, reference) in files.iter().zip(&png) {
-                assert!(file.name.ends_with(format.extension()), "{}", file.name);
-                let signature: &[u8] = if format == FileFormat::Jp2 { &jp2_signature } else { &codestream_signature };
-
-                assert!(file.bytes.starts_with(signature), "{}", file.name);
-
-                // Every sample is the PNG's, with alpha the last component
-                let image = decode(reference);
-                let components = usize::from(image.color().channel_count());
-                let expected = image.to_rgba16();
-                let planes = jpeg2000_planes(&file.bytes);
-                let info = j2k::J2kDecoder::inspect_support(&file.bytes).unwrap();
-
-                assert_eq!(info.components.len(), components, "{}", file.name);
-                for (component, declared) in info.components.iter().enumerate() {
-                    assert_eq!(declared.bit_depth, depth, "{} component {component} precision", file.name);
-                }
-                assert_eq!(planes.len(), components, "{}", file.name);
-                for (component, plane) in planes.iter().enumerate() {
-                    assert_eq!(plane.len(), expected.pixels().len(), "{} component {component}", file.name);
-                    let source = if components <= 2 && component == 1 { 3 } else { component };
-                    for (texel, sample) in expected.pixels().zip(plane) {
-                        let want = if depth == 8 { texel[source] / 257 } else { texel[source] };
-
-                        assert_eq!(*sample, want, "{} component {component}", file.name);
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn jp2_declares_linear_storage_for_rgb_data_maps() {
-    let fx = Fx::new(&default_channels());
-    let mut options = ExportOptions::new(builtin_preset("glTF PBR Metal Roughness").unwrap());
-    options.format_override = Some(FileFormat::Jp2);
-    let linear = crate::icc::profile(ColorSpace::LinearRec709).unwrap();
-
-    let files = fx.render(&options);
-    let has_linear_profile = |file: &ExportedFile| file.bytes.windows(linear.len()).any(|bytes| bytes == linear);
-
-    assert!(has_linear_profile(find(&files, "_OcclusionRoughnessMetallic")));
-    assert!(has_linear_profile(find(&files, "_Normal")));
-    assert!(!has_linear_profile(find(&files, "_BaseColor")));
-}
-
-#[test]
-fn feedback_jp2_grayscale_declares_the_transfer_applied_to_samples() {
-    use j2k::{J2kChannelAssociation, J2kChannelType, J2kColorSpec};
-
-    let fx = Fx::new(&default_channels());
-    for format in [FileFormat::J2k, FileFormat::Jp2] {
-        for depth in [8, 16] {
-            for alpha in [false, true] {
-                for linear in [true, false] {
-                    let channel = if linear { Channel::Roughness } else { Channel::BaseColor };
-                    let mut channels = vec![(Dest::L, SourceRef::Channel { channel, component: 0 })];
-                    if alpha {
-                        channels.push((Dest::A, SourceRef::Constant(0.5)));
-                    }
-
-                    let options = one_map(format, depth, channels);
-                    let reference = fx.render(&ExportOptions { format_override: Some(FileFormat::Png), ..options.clone() });
-                    let samples = decode(&reference[0]).to_rgba16();
-                    let exported = fx.render(&options);
-                    let planes = jpeg2000_planes(&exported[0].bytes);
-
-                    assert_eq!(planes.len(), 1 + usize::from(alpha));
-                    for (plane, component) in planes.iter().zip([0, 3]) {
-                        let expected: Vec<_> = samples.pixels().map(|pixel| if depth == 8 { pixel[component] / 257 } else { pixel[component] }).collect();
-                        assert_eq!(plane, &expected);
-                    }
-
-                    let info = j2k::J2kDecoder::inspect_support(&exported[0].bytes).unwrap();
-                    let metadata = info.file_metadata;
-                    if format == FileFormat::J2k {
-                        assert!(metadata.is_none());
-                        continue;
-                    }
-
-                    let metadata = metadata.unwrap();
-                    match (&metadata.color_specs[..], linear) {
-                        ([J2kColorSpec::IccProfile { profile }], true) => {
-                            assert_eq!(&profile[16..24], b"GRAYXYZ ");
-                            let word = |at| u32::from_be_bytes(profile[at..at + 4].try_into().unwrap()) as usize;
-                            let curve_tag = (132..132 + 12 * word(128)).step_by(12).find(|&at| &profile[at..at + 4] == b"kTRC").unwrap();
-                            let curve = word(curve_tag + 4);
-                            assert_eq!(&profile[curve..curve + 4], b"curv");
-                            assert_eq!(word(curve + 8), 1);
-                            assert_eq!(&profile[curve + 12..curve + 14], &0x0100u16.to_be_bytes(), "gamma 1.0");
-                        }
-                        ([J2kColorSpec::Enumerated { value: 17 }], false) => {}
-                        (spec, _) => panic!("wrong grayscale colour declaration for linear={linear}: {spec:?}"),
-                    }
-                    if alpha {
-                        assert!(metadata.channel_definitions.iter().any(|definition| definition.channel_index == 1
-                            && definition.channel_type == J2kChannelType::Opacity
-                            && definition.association == J2kChannelAssociation::WholeImage));
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn jp2_records_a_chosen_colour_space_as_an_icc_profile() {
-    let data = vec![0.25f32; 8 * 8 * 3];
-    let profile = crate::icc::profile(ColorSpace::AcesCg).unwrap();
-    let mut warnings = Vec::new();
-    let bytes =
-        encode(Encoding { format: FileFormat::Jp2, depth: 8, dither: false }, (8, 8), 3, data, &[false; 3], Some(ColorSpace::AcesCg), &mut warnings).unwrap();
-    assert!(bytes.windows(profile.len()).any(|window| window == profile.as_slice()), "the profile is in the file");
-    assert!(warnings.is_empty(), "{warnings:?}");
 }
 
 #[test]
@@ -2381,30 +2232,4 @@ fn feedback_psd_batch_rejects_large_retained_output_before_rendering() {
     assert!(list_set_outputs(&fx.project, &[0], "sphere", &options).is_ok());
     assert!(list_set_outputs(&fx.project, &[1], "sphere", &options).is_ok());
     assert!(list_set_outputs(&fx.project, &[0, 1], "sphere", &options).is_err(), "the budget includes all selected sets");
-}
-
-#[test]
-fn feedback_j2k_warns_for_explicit_gray_and_rgb_colour_spaces() {
-    let fx = Fx::new(&default_channels());
-    let base = |component| SourceRef::Channel { channel: Channel::BaseColor, component };
-    let gray = vec![(Dest::L, base(0))];
-    let rgb = vec![(Dest::R, base(0)), (Dest::G, base(1)), (Dest::B, base(2))];
-
-    for (channels, selected, expected) in [
-        (gray.clone(), Some(ColorSpace::LinearRec709), Some(ColorSpace::LinearRec709)),
-        (gray, Some(ColorSpace::AcesCg), Some(ColorSpace::LinearRec709)),
-        (rgb, Some(ColorSpace::Srgb), Some(ColorSpace::Srgb)),
-        (roughness(), None, None),
-    ] {
-        let mut options = one_map(FileFormat::J2k, 8, channels);
-        options.color_space = selected;
-
-        let files = fx.render(&options);
-        let warnings: Vec<_> = files[0].warnings.iter().filter(|warning| warning.contains("J2K export does not embed")).collect();
-
-        assert_eq!(warnings.len(), usize::from(expected.is_some()), "warnings: {:?}", files[0].warnings);
-        if let Some(space) = expected {
-            assert!(warnings[0].ends_with(space.name()));
-        }
-    }
 }

@@ -80,7 +80,7 @@ and names it in `warnings`. Materials omit any map with incomplete tiles or a UD
 shared by different sets.
 
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
-`hdr`, `exr`, `j2k`, `jp2`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
+`hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and
 `export.plan` reports the effective setting and per-file dimensions (`size` and `sourceSize`, both in pixels).
 `export.preview` takes the same parameters plus `map` (an index into the template's maps) and
@@ -93,8 +93,8 @@ channel defaults.
 `padding: "diffusion"` dilates by
 `dilation` texels and fills the remaining space with a smooth blend of the island colours.
 
-Layered PSD and JPEG 2000 maps are written as requested. MaterialX uses compatible companion
-maps for these formats. USD omits their texture bindings and returns a warning.
+Layered PSD maps are written as requested. MaterialX uses compatible companion maps for this
+format. USD omits their texture bindings and returns a warning.
 
 `effect.set {effect, filter: "blur", radius: 5}` replaces a filter in place, preserving its
 stack position, blend, opacity and visibility. Replacement filters start from defaults plus

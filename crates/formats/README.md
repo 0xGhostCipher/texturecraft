@@ -106,7 +106,7 @@ pub fn preset_to_json(preset: &ExportPreset) -> Result<String>;
   collisions get `_2`, `_3`, … plus a warning.
 - A map is written only when one of its sources has data in the texture set (channel present,
   map baked, …); alpha from a missing channel is dropped.
-- Formats: PNG 8/16, JPEG 8 (q 95), J2K and JP2 8/16 (lossless), JNG 8 (JPEG colour,
+- Formats: PNG 8/16, JPEG 8 (q 95), JNG 8 (JPEG colour,
   deflate alpha), PGM 8/16 (gray; colour becomes luminance), TGA 8, TIFF 8/16/32f, BMP 8,
   WebP 8 (lossless), PSD 8/16, EXR 16f/32f (`Y`, `YA`, `RGB`, `RGBA`, ZIP), HDR 32f.
   PSD writes one file per texture set or UV tile, with each output map stored as a layer.

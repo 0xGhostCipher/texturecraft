@@ -27,7 +27,6 @@ licensed and keep their license file next to them.
 | `assets/hdr/studio_small_09_512.hdr` | Studio Small 09: a small photo studio with octaboxes on a white infinity cyc, equirect HDR reduced to 512×256 (2×2 box filter, Radiance RLE); lights the Properties panel's material orbs | Sergej Majboroda (Poly Haven) | [Poly Haven release](https://polyhaven.com/a/studio_small_09), [1K Radiance HDR](https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_09_1k.hdr) (MD5 `d5d7eb9d26d341d6aa4d11c1a54fd97c`) | [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) |
 | `docs/brand/artcraft-*.svg`, `docs/brand/artcraft-*.png` | ArtCraft logo and mark | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms, not open source ([`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt)) |
 | `crates/formats/src/mesh_import/usd/fixtures/crafted-references.usdc` | Synthetic USDC class/reference/time-sample acceptance fixture | ArtCraft Team and craft-libs contributors | [Pinned generator and provenance](crates/formats/src/mesh_import/usd/fixtures/README.md) | MIT (`crates/formats/src/mesh_import/usd/fixtures/LICENSE-MIT`) |
-| `crates/formats/src/export/linear_gray.icc` | TextureCraft Linear Gray (D50) | TextureCraft contributors | Original ICC v2.1 monochrome display profile generated with Little CMS 2.14 from D50 and gamma 1.0, with a fixed creation date of 2026-01-01 | MIT OR Apache-2.0 |
 
 ## Third-party assets compiled into the binary
 
@@ -53,13 +52,6 @@ time (nothing is bundled); see [docs/localization-parity.md](docs/localization-p
 | `widestring` | Windows string handling through `xcap` | https://github.com/VoidStarKat/widestring-rs | MIT OR Apache-2.0 |
 | `x11rb` | X11 pointer and pixel capture | https://github.com/psychon/x11rb | MIT OR Apache-2.0 |
 | `zbus` | Wayland desktop color-picker portal | https://github.com/z-galaxy/zbus | MIT |
-
-## JPEG 2000 export dependencies
-
-| Crate | Use | Upstream | License |
-|---|---|---|---|
-| `j2k`, `j2k-core`, `j2k-native`, `j2k-types`, `j2k-profile`, `j2k-codec-math` 0.11.3 | JPEG 2000 codestream and JP2 export | [frames-sg contributors](https://github.com/frames-sg/j2k/tree/c708d2fda9f2672472b9e06aa2e66bf1f191dc3d) | MIT OR Apache-2.0 |
-| `fearless_simd` 1.3.0 | SIMD support used by `j2k-native` | [Raph Levien and contributors](https://github.com/linebender/fearless_simd/tree/2ac6acdd13efb7689a6e80049a4933516a57ec20) | Apache-2.0 OR MIT |
 
 ## Procedural content (no asset files)
 
