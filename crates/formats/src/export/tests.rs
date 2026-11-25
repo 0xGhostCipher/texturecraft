@@ -1488,3 +1488,56 @@ fn a_slash_in_a_project_or_texture_set_name_does_not_make_a_folder() {
 
     assert_eq!(names, ["Wood_Oak_Body_Hull.png"]);
 }
+
+#[test]
+fn file_and_folder_ancestor_conflicts_are_rejected_before_writing() {
+    let fx = Fx::new(&default_channels());
+    let rough = |file: &str| gray_map(file, SourceRef::Channel { channel: Channel::Roughness, component: 0 });
+    for maps in [vec![rough("a"), rough("a.png/b")], vec![rough("a.png/b"), rough("A")]] {
+        let preset = ExportPreset { name: "t".into(), maps };
+        assert!(list_outputs(&fx.project, 0, "sphere", &ExportOptions::new(preset)).is_err());
+    }
+
+    let ok = ExportPreset { name: "t".into(), maps: vec![rough("a/x"), rough("b/x")] };
+    let valid_files = fx.render(&ExportOptions::new(ok));
+    assert_eq!(valid_files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["a/x.png", "b/x.png"]);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = std::env::temp_dir().join(format!("tc-formats-conflict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_a = ExportedFile { name: "a.png".into(), ..valid_files[0].clone() };
+        let nested_b = ExportedFile { name: "a.png/b.png".into(), ..valid_files[1].clone() };
+        let upper_a = ExportedFile { name: "A.PNG".into(), ..valid_files[0].clone() };
+        for pair in [[file_a, nested_b.clone()], [nested_b, upper_a]] {
+            assert!(write_files(&pair, &dir).is_err());
+            assert!(std::fs::read_dir(&dir).unwrap().next().is_none(), "conflict must not create folders or files");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[test]
+fn folder_templates_reject_symlink_escapes_before_creating_subfolders() {
+    let fx = Fx::new(&default_channels());
+    let files = fx.render_preset("Unreal Engine (Packed)");
+    let base = std::env::temp_dir().join(format!("tc-formats-symlink-escape-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let dir = base.join("out");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("link")).unwrap();
+
+    let nested = ExportedFile { name: "link/new/map.png".into(), ..files[0].clone() };
+    assert!(write_files(&[nested], &dir).is_err());
+    assert!(!outside.join("new").exists(), "must not create directories through an escaping symlink");
+
+    let direct = ExportedFile { name: "link/map.png".into(), ..files[0].clone() };
+    assert!(write_files(&[direct], &dir).is_err());
+    assert!(!outside.join("map.png").exists());
+
+    std::fs::remove_dir_all(&base).unwrap();
+}

@@ -595,6 +595,8 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
     }
 
     let mut used = BTreeSet::new();
+    let mut active_files = BTreeSet::new();
+    let mut active_dirs = BTreeSet::new();
     let mut out = Vec::new();
     let tiles: Vec<Option<u32>> = if set.uv_tiles.is_empty() || opts.atlas { vec![None] } else { set.uv_tiles.iter().copied().map(Some).collect() };
     let grid = set.tile_grid();
@@ -697,10 +699,24 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
             if k > 2 {
                 warnings.push(format!("\"{stem}.{ext}\" is produced by more than one map; this one was renamed to \"{name}\""));
             }
-            used.insert(name.to_ascii_lowercase());
+            let lower = name.to_ascii_lowercase();
+            used.insert(lower.clone());
             if !enabled {
                 continue;
             }
+
+            if active_dirs.contains(&lower) {
+                return Err(FormatError::Invalid(format!("\"{name}\" cannot be both an exported file and a folder")));
+            }
+            let mut prefix = lower.as_str();
+            while let Some((folder, _)) = prefix.rsplit_once('/') {
+                if active_files.contains(folder) {
+                    return Err(FormatError::Invalid(format!("\"{name}\" cannot use \"{folder}\" as a folder because another map exports that file")));
+                }
+                active_dirs.insert(folder.to_owned());
+                prefix = folder;
+            }
+            active_files.insert(lower);
 
             if color_map && requested_space != space {
                 warnings.push(format!("\"{name}\" packs colour into one channel (L), so it is written in linear Rec.709, not {}", requested_space.name()));
@@ -1559,9 +1575,9 @@ fn keep_first_names<T>(files: Vec<T>, name: impl Fn(&T) -> &str, warnings: impl 
 /// names; the folders are created inside `dir`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_files(files: &[ExportedFile], dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
-    std::fs::create_dir_all(dir)?;
-    let root = dir.canonicalize()?;
-    let mut targets = Vec::with_capacity(files.len());
+    let mut seen_files = BTreeSet::new();
+    let mut seen_dirs = BTreeSet::new();
+    let mut rel_targets = Vec::with_capacity(files.len());
     for f in files {
         // Cap the sanitized stem before adding the extension
         let (stem, ext) = f.name.rsplit_once('.').unwrap_or((&f.name, ""));
@@ -1569,18 +1585,32 @@ pub fn write_files(files: &[ExportedFile], dir: &std::path::Path) -> Result<Vec<
             return Err(FormatError::Invalid(format!("\"{}\" is not a file name or a relative path", f.name)));
         }
 
-        // A folder that links elsewhere must not take the file out of `dir`
-        let target = dir.join(&f.name);
-        if let Some(parent) = target.parent().filter(|parent| *parent != dir) {
-            std::fs::create_dir_all(parent)?;
-            if !parent.canonicalize()?.starts_with(&root) {
-                return Err(FormatError::Invalid(format!("\"{}\" leads out of the output folder", f.name)));
-            }
+        let lower = f.name.to_ascii_lowercase();
+        if seen_dirs.contains(&lower) {
+            return Err(FormatError::Invalid(format!("\"{}\" cannot be both an exported file and a folder", f.name)));
         }
-        targets.push((target, f.bytes.as_slice()));
+        let mut prefix = lower.as_str();
+        while let Some((folder, _)) = prefix.rsplit_once('/') {
+            if seen_files.contains(folder) {
+                return Err(FormatError::Invalid(format!("\"{}\" cannot use \"{folder}\" as a folder because another exported file has that name", f.name)));
+            }
+            seen_dirs.insert(folder.to_owned());
+            prefix = folder;
+        }
+        seen_files.insert(lower);
+        rel_targets.push((std::path::Path::new(&f.name), f.bytes.as_slice()));
     }
-    crate::write_batch_atomic(targets.iter().map(|(path, bytes)| (path.as_path(), *bytes)))?;
-    Ok(targets.into_iter().map(|(path, _)| path).collect())
+
+    // Open the output directory once and keep every subfolder creation, staging temp file and rename inside that handle
+    std::fs::create_dir_all(dir)?;
+    let root_dir = cap_std::fs::Dir::open_ambient_dir(dir, cap_std::ambient_authority())?;
+    for (rel, _) in &rel_targets {
+        if let Some(parent) = rel.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            root_dir.create_dir_all(parent)?;
+        }
+    }
+    crate::write_batch_atomic_in_dir(&root_dir, rel_targets)?;
+    Ok(files.iter().map(|f| dir.join(&f.name)).collect())
 }
 
 #[cfg(test)]

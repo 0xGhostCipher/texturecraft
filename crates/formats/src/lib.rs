@@ -123,15 +123,199 @@ pub(crate) fn read_capped(path: &std::path::Path, cap: u64) -> Result<Vec<u8>> {
 /// Create a new temporary file beside `path`, refusing to reuse an existing (possibly symlinked) name.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn create_temp(path: &std::path::Path) -> Result<(std::path::PathBuf, std::fs::File)> {
-    create_temp_with_mode(path, &std::collections::HashSet::new(), None)
+    let (tmp, file) = create_temp_with_mode(BatchRoot::Ambient, path, &std::collections::HashSet::new(), None)?;
+    match file {
+        BatchFile::Std(file) => Ok((tmp, file)),
+        BatchFile::Cap(_) => Err(FormatError::Io(std::io::Error::other("unexpected capability handle"))),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+enum BatchRoot<'a> {
+    Ambient,
+    Dir(&'a cap_std::fs::Dir),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum BatchFile {
+    Std(std::fs::File),
+    Cap(cap_std::fs::File),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BatchFile {
+    fn write_and_sync(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        match self {
+            Self::Std(file) => file.write_all(bytes).and_then(|()| file.sync_all()),
+            Self::Cap(file) => file.write_all(bytes).and_then(|()| file.sync_all()),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BatchRoot<'_> {
+    fn is_dir(self, path: &std::path::Path) -> bool {
+        match self {
+            Self::Ambient => path.is_dir(),
+            Self::Dir(dir) => dir.is_dir(path),
+        }
+    }
+
+    fn open_create_new(self, path: &std::path::Path, #[cfg_attr(not(unix), allow(unused_variables))] unix_mode: Option<u32>) -> std::io::Result<BatchFile> {
+        match self {
+            Self::Ambient => {
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                if let Some(mode) = unix_mode {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(mode);
+                }
+                options.open(path).map(BatchFile::Std)
+            }
+            Self::Dir(dir) => {
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                if let Some(mode) = unix_mode {
+                    use cap_std::fs::OpenOptionsExt;
+                    options.mode(mode);
+                }
+                dir.open_with(path, &options).map(BatchFile::Cap)
+            }
+        }
+    }
+
+    fn remove_file(self, path: &std::path::Path) -> std::io::Result<()> {
+        match self {
+            Self::Ambient => std::fs::remove_file(path),
+            Self::Dir(dir) => dir.remove_file(path),
+        }
+    }
+
+    fn rename(self, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+        match self {
+            Self::Ambient => std::fs::rename(from, to),
+            Self::Dir(dir) => dir.rename(from, dir, to),
+        }
+    }
+
+    #[cfg(unix)]
+    fn restore_symlink(self, link_target: &std::path::Path, target_path: &std::path::Path) -> std::io::Result<()> {
+        match self {
+            Self::Ambient => std::fs::remove_file(target_path).and_then(|()| std::os::unix::fs::symlink(link_target, target_path)),
+            Self::Dir(dir) => dir.remove_file(target_path).and_then(|()| dir.symlink_contents(link_target, target_path)),
+        }
+    }
+
+    fn target_matches_bytes(self, target_path: &std::path::Path, expected_bytes: &[u8]) -> bool {
+        use std::io::Read;
+
+        let mut buf = Vec::with_capacity(expected_bytes.len().min(4096));
+        let ok = match self {
+            Self::Ambient => {
+                let Ok(meta) = std::fs::symlink_metadata(target_path) else { return false };
+                if !meta.file_type().is_file() {
+                    return false;
+                }
+                let Ok(file) = std::fs::File::open(target_path) else { return false };
+                let Ok(handle_meta) = file.metadata() else { return false };
+                handle_meta.file_type().is_file() && file.take(expected_bytes.len() as u64 + 1).read_to_end(&mut buf).is_ok()
+            }
+            Self::Dir(dir) => {
+                let Ok(meta) = dir.symlink_metadata(target_path) else { return false };
+                if !meta.file_type().is_file() {
+                    return false;
+                }
+                let Ok(file) = dir.open(target_path) else { return false };
+                let Ok(handle_meta) = file.metadata() else { return false };
+                handle_meta.file_type().is_file() && file.take(expected_bytes.len() as u64 + 1).read_to_end(&mut buf).is_ok()
+            }
+        };
+        ok && buf.as_slice() == expected_bytes
+    }
+
+    fn prepare_backup(
+        self,
+        target_path: &std::path::Path,
+        reserved: &mut std::collections::HashSet<std::path::PathBuf>,
+    ) -> std::io::Result<Option<RollbackBackup>> {
+        match self {
+            Self::Ambient => match std::fs::symlink_metadata(target_path) {
+                Ok(meta) => {
+                    #[cfg(unix)]
+                    if meta.file_type().is_symlink() {
+                        return std::fs::read_link(target_path).map(|t| Some(RollbackBackup::Symlink(t)));
+                    }
+                    if !meta.file_type().is_file() {
+                        return Err(std::io::Error::other(format!("{} is not a regular file", target_path.display())));
+                    }
+                    let (backup_path, backup_file) =
+                        create_temp_with_mode(self, target_path, reserved, Some(0o600)).map_err(|e| std::io::Error::other(e.to_string()))?;
+                    reserved.insert(backup_path.clone());
+                    let copy_result = (|| -> std::io::Result<()> {
+                        let mut src = std::fs::File::open(target_path)?;
+                        let BatchFile::Std(mut dst) = backup_file else {
+                            return Err(std::io::Error::other("unexpected capability handle"));
+                        };
+                        std::io::copy(&mut src, &mut dst)?;
+                        dst.set_permissions(meta.permissions())?;
+                        dst.sync_all()?;
+                        Ok(())
+                    })();
+                    if let Err(error) = copy_result {
+                        let _ = std::fs::remove_file(&backup_path);
+                        return Err(error);
+                    }
+                    Ok(Some(RollbackBackup::File(backup_path)))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error),
+            },
+            Self::Dir(dir) => match dir.symlink_metadata(target_path) {
+                Ok(meta) => {
+                    #[cfg(unix)]
+                    if meta.file_type().is_symlink() {
+                        return dir.read_link_contents(target_path).map(|t| Some(RollbackBackup::Symlink(t)));
+                    }
+                    if !meta.file_type().is_file() {
+                        return Err(std::io::Error::other(format!("{} is not a regular file", target_path.display())));
+                    }
+                    let (backup_path, backup_file) =
+                        create_temp_with_mode(self, target_path, reserved, Some(0o600)).map_err(|e| std::io::Error::other(e.to_string()))?;
+                    reserved.insert(backup_path.clone());
+                    let copy_result = (|| -> std::io::Result<()> {
+                        let mut src = dir.open(target_path)?;
+                        let BatchFile::Cap(mut dst) = backup_file else {
+                            return Err(std::io::Error::other("unexpected std file handle"));
+                        };
+                        std::io::copy(&mut src, &mut dst)?;
+                        dst.set_permissions(meta.permissions())?;
+                        dst.sync_all()?;
+                        Ok(())
+                    })();
+                    if let Err(error) = copy_result {
+                        let _ = dir.remove_file(&backup_path);
+                        return Err(error);
+                    }
+                    Ok(Some(RollbackBackup::File(backup_path)))
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error),
+            },
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn create_temp_with_mode(
+    root: BatchRoot<'_>,
     path: &std::path::Path,
     excluded: &std::collections::HashSet<std::path::PathBuf>,
-    #[cfg_attr(not(unix), allow(unused_variables))] unix_mode: Option<u32>,
-) -> Result<(std::path::PathBuf, std::fs::File)> {
+    unix_mode: Option<u32>,
+) -> Result<(std::path::PathBuf, BatchFile)> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("out");
 
@@ -143,14 +327,7 @@ fn create_temp_with_mode(
         if excluded.contains(&temporary_path) {
             continue;
         }
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        if let Some(mode) = unix_mode {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(mode);
-        }
-        match options.open(&temporary_path) {
+        match root.open_create_new(&temporary_path, unix_mode) {
             Ok(file) => return Ok((temporary_path, file)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.into()),
@@ -177,6 +354,13 @@ pub fn write_batch_atomic<'a>(entries: impl IntoIterator<Item = (&'a std::path::
     write_batch_atomic_with_hook(entries, |_, _| Ok(()))
 }
 
+/// [`write_batch_atomic`] confined to `root` so nested targets and temporary files cannot follow
+/// symlink escapes out of the output directory.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn write_batch_atomic_in_dir<'a>(root: &cap_std::fs::Dir, entries: impl IntoIterator<Item = (&'a std::path::Path, &'a [u8])>) -> Result<()> {
+    write_batch_atomic_with_root(BatchRoot::Dir(root), entries, |_, _| Ok(()))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 enum RollbackBackup {
     File(std::path::PathBuf),
@@ -185,32 +369,28 @@ enum RollbackBackup {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn target_matches_bytes(target_path: &std::path::Path, expected_bytes: &[u8]) -> bool {
-    use std::io::Read;
+fn write_batch_atomic_with_hook<'a>(
+    entries: impl IntoIterator<Item = (&'a std::path::Path, &'a [u8])>,
+    before_rename: impl FnMut(usize, &std::path::Path) -> std::io::Result<()>,
+) -> Result<()> {
+    write_batch_atomic_with_root(BatchRoot::Ambient, entries, before_rename)
+}
 
-    let Ok(meta) = std::fs::symlink_metadata(target_path) else { return false };
-    if !meta.file_type().is_file() {
-        return false;
-    }
-    let Ok(file) = std::fs::File::open(target_path) else { return false };
-    let Ok(handle_meta) = file.metadata() else { return false };
-    if !handle_meta.file_type().is_file() {
-        return false;
-    }
-    let mut buf = Vec::with_capacity(expected_bytes.len().min(4096));
-    if file.take(expected_bytes.len() as u64 + 1).read_to_end(&mut buf).is_err() {
-        return false;
-    }
-    buf.as_slice() == expected_bytes
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn write_batch_atomic_in_dir_with_hook<'a>(
+    root: &cap_std::fs::Dir,
+    entries: impl IntoIterator<Item = (&'a std::path::Path, &'a [u8])>,
+    before_rename: impl FnMut(usize, &std::path::Path) -> std::io::Result<()>,
+) -> Result<()> {
+    write_batch_atomic_with_root(BatchRoot::Dir(root), entries, before_rename)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write_batch_atomic_with_hook<'a>(
+fn write_batch_atomic_with_root<'a>(
+    root: BatchRoot<'_>,
     entries: impl IntoIterator<Item = (&'a std::path::Path, &'a [u8])>,
     mut before_rename: impl FnMut(usize, &std::path::Path) -> std::io::Result<()>,
 ) -> Result<()> {
-    use std::io::Write;
-
     // Serialize in-process batch publications so concurrent tasks cannot interleave backups/rollbacks.
     static BATCH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = BATCH_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -223,16 +403,16 @@ fn write_batch_atomic_with_hook<'a>(
     let mut staged: Vec<(std::path::PathBuf, &std::path::Path, &[u8])> = Vec::with_capacity(entries.len());
     let cleanup_staged = |staged: &[(std::path::PathBuf, &std::path::Path, &[u8])]| {
         for (temp_path, _, _) in staged {
-            let _ = std::fs::remove_file(temp_path);
+            let _ = root.remove_file(temp_path);
         }
     };
 
     for (path, bytes) in entries {
-        if path.is_dir() {
+        if root.is_dir(path) {
             cleanup_staged(&staged);
             return Err(FormatError::Io(std::io::Error::other(format!("{} is a directory", path.display()))));
         }
-        let (temporary_path, mut file) = match create_temp_with_mode(path, &reserved, None) {
+        let (temporary_path, mut file) = match create_temp_with_mode(root, path, &reserved, None) {
             Ok(pair) => pair,
             Err(error) => {
                 cleanup_staged(&staged);
@@ -240,10 +420,10 @@ fn write_batch_atomic_with_hook<'a>(
             }
         };
         reserved.insert(temporary_path.clone());
-        let write_result = file.write_all(bytes).and_then(|_| file.sync_all());
+        let write_result = file.write_and_sync(bytes);
         drop(file);
         if let Err(error) = write_result {
-            let _ = std::fs::remove_file(&temporary_path);
+            let _ = root.remove_file(&temporary_path);
             cleanup_staged(&staged);
             return Err(error.into());
         }
@@ -253,8 +433,8 @@ fn write_batch_atomic_with_hook<'a>(
     // Single-file writes have no earlier publications to roll back, so rename directly.
     if staged.len() == 1 {
         let (ref temporary_path, target_path, _) = staged[0];
-        if let Err(error) = before_rename(0, target_path).and_then(|()| std::fs::rename(temporary_path, target_path)) {
-            let _ = std::fs::remove_file(temporary_path);
+        if let Err(error) = before_rename(0, target_path).and_then(|()| root.rename(temporary_path, target_path)) {
+            let _ = root.remove_file(temporary_path);
             return Err(error.into());
         }
         return Ok(());
@@ -268,7 +448,7 @@ fn write_batch_atomic_with_hook<'a>(
         let mut incomplete = Vec::new();
         for (target_path, expected_bytes, backup) in published.drain(..).rev() {
             // Do not overwrite if an external writer modified the target after we published it.
-            if !target_matches_bytes(target_path, expected_bytes) {
+            if !root.target_matches_bytes(target_path, expected_bytes) {
                 if let Some(RollbackBackup::File(backup_path)) = backup {
                     incomplete.push(format!("{} (modified by another writer; backup at {})", target_path.display(), backup_path.display()));
                 } else {
@@ -278,18 +458,18 @@ fn write_batch_atomic_with_hook<'a>(
             }
             match backup {
                 Some(RollbackBackup::File(backup_path)) => {
-                    if let Err(err) = std::fs::rename(&backup_path, target_path) {
+                    if let Err(err) = root.rename(&backup_path, target_path) {
                         incomplete.push(format!("{} (backup at {}): {err}", target_path.display(), backup_path.display()));
                     }
                 }
                 #[cfg(unix)]
                 Some(RollbackBackup::Symlink(link_target)) => {
-                    if let Err(err) = std::fs::remove_file(target_path).and_then(|()| std::os::unix::fs::symlink(&link_target, target_path)) {
+                    if let Err(err) = root.restore_symlink(&link_target, target_path) {
                         incomplete.push(format!("{} (symlink -> {}): {err}", target_path.display(), link_target.display()));
                     }
                 }
                 None => {
-                    if let Err(err) = std::fs::remove_file(target_path) {
+                    if let Err(err) = root.remove_file(target_path) {
                         incomplete.push(format!("{}: {err}", target_path.display()));
                     }
                 }
@@ -309,44 +489,14 @@ fn write_batch_atomic_with_hook<'a>(
         if let Err(error) = before_rename(index, target_path) {
             return Err(rollback(&mut published, &staged[index..], error));
         }
-        let backup = match std::fs::symlink_metadata(target_path) {
-            Ok(meta) => {
-                #[cfg(unix)]
-                if meta.file_type().is_symlink() {
-                    match std::fs::read_link(target_path) {
-                        Ok(link_target) => Some(RollbackBackup::Symlink(link_target)),
-                        Err(error) => return Err(rollback(&mut published, &staged[index..], error)),
-                    }
-                } else if !meta.file_type().is_file() {
-                    return Err(rollback(&mut published, &staged[index..], std::io::Error::other(format!("{} is not a regular file", target_path.display()))));
-                } else {
-                    match stage_file_backup(target_path, &meta, &mut reserved) {
-                        Ok(path) => Some(RollbackBackup::File(path)),
-                        Err(error) => return Err(rollback(&mut published, &staged[index..], error)),
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    if !meta.file_type().is_file() {
-                        return Err(rollback(
-                            &mut published,
-                            &staged[index..],
-                            std::io::Error::other(format!("{} is not a regular file", target_path.display())),
-                        ));
-                    }
-                    match stage_file_backup(target_path, &meta, &mut reserved) {
-                        Ok(path) => Some(RollbackBackup::File(path)),
-                        Err(error) => return Err(rollback(&mut published, &staged[index..], error)),
-                    }
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        let backup = match root.prepare_backup(target_path, &mut reserved) {
+            Ok(backup) => backup,
             Err(error) => return Err(rollback(&mut published, &staged[index..], error)),
         };
 
-        if let Err(error) = std::fs::rename(&staged[index].0, target_path) {
+        if let Err(error) = root.rename(&staged[index].0, target_path) {
             if let Some(RollbackBackup::File(ref backup_path)) = backup {
-                let _ = std::fs::remove_file(backup_path);
+                let _ = root.remove_file(backup_path);
             }
             return Err(rollback(&mut published, &staged[index..], error));
         }
@@ -355,34 +505,11 @@ fn write_batch_atomic_with_hook<'a>(
 
     for (_, _, backup) in published {
         if let Some(RollbackBackup::File(backup_path)) = backup {
-            let _ = std::fs::remove_file(backup_path);
+            let _ = root.remove_file(&backup_path);
         }
     }
 
     Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn stage_file_backup(
-    target_path: &std::path::Path,
-    meta: &std::fs::Metadata,
-    reserved: &mut std::collections::HashSet<std::path::PathBuf>,
-) -> std::io::Result<std::path::PathBuf> {
-    let (backup_path, mut backup_file) = create_temp_with_mode(target_path, reserved, Some(0o600)).map_err(|e| std::io::Error::other(e.to_string()))?;
-    reserved.insert(backup_path.clone());
-    let copy_result = (|| -> std::io::Result<()> {
-        let mut src = std::fs::File::open(target_path)?;
-        std::io::copy(&mut src, &mut backup_file)?;
-        backup_file.set_permissions(meta.permissions())?;
-        backup_file.sync_all()?;
-        Ok(())
-    })();
-    drop(backup_file);
-    if let Err(error) = copy_result {
-        let _ = std::fs::remove_file(&backup_path);
-        return Err(error);
-    }
-    Ok(backup_path)
 }
 
 #[cfg(test)]
@@ -458,7 +585,7 @@ mod batch_atomic_tests {
 
 #[cfg(all(test, unix))]
 mod atomic_tests {
-    use super::{write_atomic, write_batch_atomic_with_hook};
+    use super::{write_atomic, write_batch_atomic_in_dir_with_hook, write_batch_atomic_with_hook};
 
     #[test]
     fn write_atomic_does_not_follow_a_planted_temp_symlink() -> std::io::Result<()> {
@@ -502,6 +629,36 @@ mod atomic_tests {
         assert_eq!(std::fs::read(&referent)?, b"referent-bytes");
 
         let _ = std::fs::remove_dir_all(&directory);
+        Ok(())
+    }
+
+    #[test]
+    fn write_batch_atomic_in_dir_rejects_parent_replaced_with_symlink_mid_batch() -> std::io::Result<()> {
+        let base = std::env::temp_dir().join(format!("tc-dir-symlink-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("out");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(dir.join("sub"))?;
+        std::fs::create_dir_all(&outside)?;
+
+        let root_dir = cap_std::fs::Dir::open_ambient_dir(&dir, cap_std::ambient_authority())?;
+        let result = write_batch_atomic_in_dir_with_hook(
+            &root_dir,
+            [(std::path::Path::new("first.png"), b"first".as_slice()), (std::path::Path::new("sub/second.png"), b"second".as_slice())],
+            |index, _target| {
+                if index == 1 {
+                    std::fs::remove_dir(dir.join("sub"))?;
+                    std::os::unix::fs::symlink(&outside, dir.join("sub"))?;
+                }
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(!dir.join("first.png").exists());
+        assert!(!outside.join("second.png").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
 }
