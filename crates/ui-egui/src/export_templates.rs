@@ -893,15 +893,19 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui, column: Rect, top: f32) {
         (Some(d), _) => (d.clone(), true),
         (None, Some(b)) => (b, false),
         (None, None) => {
+            MapPreviewCache::clear(ui.ctx());
             drawn::label_at(ui, column.left(), top + CURRENT_PRESET_Y, tr("Select an output template"), look.text_dim, false);
             return;
         }
     };
     let params = plan_params(app, &preset);
-    let preview = params.as_ref().map_err(String::clone).and_then(|params| planned_outputs(app, params));
-    if let Ok(params) = &params {
-        MapPreviewCache::keep_current(app, ui.ctx(), params);
-    }
+    let preview = match &params {
+        Ok(params) => MapPreviewCache::plan(app, ui.ctx(), params),
+        Err(error) => {
+            MapPreviewCache::clear(ui.ctx());
+            Err(error.clone())
+        }
+    };
     let mut edit = RowEdit::default();
 
     // "Current preset:" in bold, the template's name, a lock on a built-in one
@@ -963,7 +967,9 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui, column: Rect, top: f32) {
     });
 
     // The hovered output's pictures show from the next frame on
-    if let (Some(index), Ok(params)) = (edit.hovered_output, &params) {
+    if let (Some(index), Ok(params), Ok(plan)) = (edit.hovered_output, &params, &preview)
+        && plan.get(index).is_some_and(Option::is_some)
+    {
         MapPreviewCache::fill(app, ui.ctx(), params, index);
     }
 
@@ -1492,12 +1498,18 @@ fn preview_pictures(ui: &mut Ui, map: &MapSpec, pictures: &MapPreviewPictures) {
         ui.vertical(|ui| {
             for (dest, texture) in &pictures.channels {
                 let target = ChannelTarget::One(*dest);
-                let source = source_of(map, target).cloned().unwrap_or(SourceRef::Constant(CLEARED_VALUE));
-                let inverted = map.inverted.contains(dest);
+                let gray = ChannelTarget::One(Dest::L);
+                let source_target = match dest {
+                    Dest::R | Dest::G | Dest::B if source_of(map, gray).is_some() => gray,
+                    _ => target,
+                };
+                let source = source_of(map, source_target).unwrap_or(&SourceRef::Constant(CLEARED_VALUE));
+                let inverted = source_target.dests().iter().any(|dest| map.inverted.contains(dest));
+
                 ui.horizontal(|ui| {
                     ui.add(picture(texture, PREVIEW_CHANNEL_WIDTH_POINTS));
                     ui.label(RichText::new(target_label(target)).color(tokens.text_strong));
-                    ui.label(RichText::new(swatch_tooltip(map, &source, target, inverted)).color(tokens.text_dim));
+                    ui.label(RichText::new(swatch_tooltip(map, source, source_target, inverted)).color(tokens.text_dim));
                 });
             }
         });

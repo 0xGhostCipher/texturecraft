@@ -1263,10 +1263,10 @@ fn psd_layer_groups_follow_the_slashes_of_their_names() {
 fn psd_plan_rejects_a_version_one_atlas_over_its_dimension_limit() {
     let mut fx = Fx::new(&default_channels());
 
-    // Four tile columns: the atlas is 32768 wide, each tile's layer and merged image well under 2 GiB
-    fx.project.texture_sets[0].uv_tiles = vec![1001, 1004];
+    // Eight tile columns make a 32768-wide atlas while the individual PSDs stay within budget
+    fx.project.texture_sets[0].uv_tiles = vec![1001, 1008];
     let mut options = one_map(FileFormat::Psd, 8, roughness());
-    options.size = Some(8192);
+    options.size = Some(4096);
     options.atlas = true;
 
     let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
@@ -1293,6 +1293,72 @@ fn psd_plan_preserves_each_udim_suffix_after_truncating_the_stem() {
 }
 
 #[test]
+fn feedback_psd_long_mesh_names_keep_distinct_texture_sets_and_tiles() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.texture_sets[0].uv_tiles = vec![1001, 1002];
+    let mut trim = fx.project.texture_sets[0].clone();
+    trim.name = "Trim".into();
+    fx.project.texture_sets.push(trim);
+    let options = one_map(FileFormat::Psd, 8, roughness());
+
+    let plan = list_set_outputs(&fx.project, &[0, 1], &"m".repeat(MAX_STEM), &options).unwrap();
+
+    assert_eq!(plan.len(), 4, "both tiles of both sets must survive deduplication");
+    for (set, file) in plan {
+        let tile = file.tile.unwrap();
+        let set_name = sanitize_file_stem(&fx.project.texture_sets[set].name);
+        assert!(file.name.contains(&set_name), "{}", file.name);
+        assert!(file.name.ends_with(&format!(".{tile}.psd")), "{}", file.name);
+        assert_eq!(file.udim_name.unwrap().replace("<UDIM>", &tile.to_string()), file.name);
+    }
+}
+
+#[test]
+fn feedback_reserved_export_stem_remains_bounded_and_idempotent() {
+    let raw = format!("CON.{}", "x".repeat(MAX_STEM));
+
+    let sanitized = sanitize_file_stem(&raw);
+
+    assert!(sanitized.starts_with("_CON."));
+    assert!(sanitized.len() <= MAX_STEM, "{} bytes", sanitized.len());
+    assert_eq!(sanitize_file_stem(&sanitized), sanitized);
+}
+
+#[test]
+fn feedback_psd_dithering_tracks_the_document_depth() {
+    let fx = Fx::new(&default_channels());
+    let mut options = one_map(FileFormat::Psd, 8, roughness());
+    options.dither = true;
+    let mut second = options.preset.maps[0].clone();
+    second.file = "second".into();
+    options.preset.maps.push(second);
+    options.maps.insert(1, MapOverride { dither: Some(false), ..MapOverride::default() });
+
+    let plan = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+    assert!(plan[0].dither && plan[0].layers[0].dither && !plan[0].layers[1].dither);
+
+    options.preset.maps[1].bit_depth = 16;
+    let plan = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+
+    assert_eq!(plan[0].bit_depth, 16);
+    assert!(!plan[0].dither && plan[0].layers.iter().all(|layer| !layer.dither));
+    assert!(plan[0].warnings.iter().any(|warning| warning.contains("dithering") && warning.contains("16-bit")));
+}
+
+#[test]
+fn feedback_psd_rejects_large_working_set_during_planning() {
+    let fx = Fx::new(&default_channels());
+    let mut options = one_map(FileFormat::Psd, 8, rgba_half_alpha());
+    options.size = Some(8192);
+
+    let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
+
+    assert!(error.to_string().contains("working memory"), "{error}");
+    options.size = Some(4096);
+    assert!(list_outputs(&fx.project, 0, "sphere", &options).is_ok());
+}
+
+#[test]
 fn psd_plan_counts_every_layer_against_the_version_one_byte_limit() {
     let fx = Fx::new(&default_channels());
     let mut options = one_map(FileFormat::Psd, 16, rgba_half_alpha());
@@ -1302,8 +1368,9 @@ fn psd_plan_counts_every_layer_against_the_version_one_byte_limit() {
 
     assert!(error.to_string().contains("PSD") && error.to_string().contains("2 GiB"), "{error}");
     options.size = Some(8192);
+    let layer_size = (8192, 8192);
     for copy in ["second", "third"] {
-        assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 1);
+        assert!(check_psd_size(std::iter::repeat_n(layer_size, options.preset.maps.len()), 0, 16).is_ok());
         let mut map = options.preset.maps[0].clone();
         map.file = copy.into();
         options.preset.maps.push(map);
@@ -1330,6 +1397,8 @@ fn psd_byte_limit_includes_the_merged_image_and_keeps_separate_tiles_valid() {
     let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
 
     assert!(error.to_string().contains("2 GiB"), "{error}");
+    options.size = Some(4096);
+    assert!(list_outputs(&fx.project, 0, "sphere", &options).unwrap_err().to_string().contains("working memory"));
     options.atlas = false;
     assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 3);
 }
@@ -1458,6 +1527,65 @@ fn jp2_declares_linear_storage_for_rgb_data_maps() {
     assert!(has_linear_profile(find(&files, "_OcclusionRoughnessMetallic")));
     assert!(has_linear_profile(find(&files, "_Normal")));
     assert!(!has_linear_profile(find(&files, "_BaseColor")));
+}
+
+#[test]
+fn feedback_jp2_grayscale_declares_the_transfer_applied_to_samples() {
+    use j2k::{J2kChannelAssociation, J2kChannelType, J2kColorSpec};
+
+    let fx = Fx::new(&default_channels());
+    for format in [FileFormat::J2k, FileFormat::Jp2] {
+        for depth in [8, 16] {
+            for alpha in [false, true] {
+                for linear in [true, false] {
+                    let channel = if linear { Channel::Roughness } else { Channel::BaseColor };
+                    let mut channels = vec![(Dest::L, SourceRef::Channel { channel, component: 0 })];
+                    if alpha {
+                        channels.push((Dest::A, SourceRef::Constant(0.5)));
+                    }
+
+                    let options = one_map(format, depth, channels);
+                    let reference = fx.render(&ExportOptions { format_override: Some(FileFormat::Png), ..options.clone() });
+                    let samples = decode(&reference[0]).to_rgba16();
+                    let exported = fx.render(&options);
+                    let planes = jpeg2000_planes(&exported[0].bytes);
+
+                    assert_eq!(planes.len(), 1 + usize::from(alpha));
+                    for (plane, component) in planes.iter().zip([0, 3]) {
+                        let expected: Vec<_> = samples.pixels().map(|pixel| if depth == 8 { pixel[component] / 257 } else { pixel[component] }).collect();
+                        assert_eq!(plane, &expected);
+                    }
+
+                    let info = j2k::J2kDecoder::inspect_support(&exported[0].bytes).unwrap();
+                    let metadata = info.file_metadata;
+                    if format == FileFormat::J2k {
+                        assert!(metadata.is_none());
+                        continue;
+                    }
+
+                    let metadata = metadata.unwrap();
+                    match (&metadata.color_specs[..], linear) {
+                        ([J2kColorSpec::IccProfile { profile }], true) => {
+                            assert_eq!(&profile[16..24], b"GRAYXYZ ");
+                            let word = |at| u32::from_be_bytes(profile[at..at + 4].try_into().unwrap()) as usize;
+                            let curve_tag = (132..132 + 12 * word(128)).step_by(12).find(|&at| &profile[at..at + 4] == b"kTRC").unwrap();
+                            let curve = word(curve_tag + 4);
+                            assert_eq!(&profile[curve..curve + 4], b"curv");
+                            assert_eq!(word(curve + 8), 1);
+                            assert_eq!(&profile[curve + 12..curve + 14], &0x0100u16.to_be_bytes(), "gamma 1.0");
+                        }
+                        ([J2kColorSpec::Enumerated { value: 17 }], false) => {}
+                        (spec, _) => panic!("wrong grayscale colour declaration for linear={linear}: {spec:?}"),
+                    }
+                    if alpha {
+                        assert!(metadata.channel_definitions.iter().any(|definition| definition.channel_index == 1
+                            && definition.channel_type == J2kChannelType::Opacity
+                            && definition.association == J2kChannelAssociation::WholeImage));
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -1843,6 +1971,82 @@ fn a_map_preview_holds_the_values_its_file_stores() {
 
     assert!(small.width < RES && small.pixels.len() == (small.width * small.height) as usize * 4, "a smaller preview samples the same map");
     assert!(MapPreview::sample(&fx.input(), &options, options.preset.maps.len(), 8).is_err(), "a map the template doesn't have is an error");
+}
+
+#[test]
+fn feedback_jpeg_previews_omit_the_alpha_channel() {
+    let fx = Fx::new(&default_channels());
+    let mut la = roughness();
+    la.push((Dest::A, SourceRef::Constant(0.5)));
+    for (channels, expected) in [(la, vec![Dest::L]), (rgba_half_alpha(), vec![Dest::R, Dest::G, Dest::B])] {
+        let mut options = one_map(FileFormat::Png, 8, channels);
+        let png_preview = MapPreview::sample(&fx.input(), &options, 0, 16).unwrap().unwrap();
+        options.maps.insert(0, MapOverride { format: Some(FileFormat::Jpeg), ..MapOverride::default() });
+
+        let jpeg_preview = MapPreview::sample(&fx.input(), &options, 0, 16).unwrap().unwrap();
+        let jpeg = decode(&fx.render(&options)[0]);
+
+        assert_eq!(jpeg_preview.channels, expected);
+        assert_eq!(jpeg_preview.channels.len(), usize::from(jpeg.color().channel_count()));
+        let colors: Vec<_> = png_preview.pixels.chunks_exact(png_preview.channels.len()).flat_map(|pixel| pixel[..expected.len()].iter().copied()).collect();
+        assert_eq!(jpeg_preview.pixels, colors);
+    }
+}
+
+#[test]
+fn pgm_preview_shows_exported_luminance_without_alpha() {
+    let fx = Fx::new(&default_channels());
+    let mut gray_with_alpha = roughness();
+    gray_with_alpha.push((Dest::A, SourceRef::Constant(0.5)));
+
+    for channels in [gray_with_alpha, rgba_half_alpha()] {
+        let mut options = one_map(FileFormat::Png, 8, channels);
+        options.maps.insert(0, MapOverride { format: Some(FileFormat::Pgm), ..MapOverride::default() });
+
+        let preview = MapPreview::sample(&fx.input(), &options, 0, RES).unwrap().unwrap();
+        let files = fx.render(&options);
+        let pgm_samples = files[0].bytes.strip_prefix(b"P5\n64 64\n255\n").unwrap();
+
+        assert_eq!(preview.channels, [Dest::L]);
+        assert_eq!(preview.pixels, pgm_samples);
+    }
+}
+
+#[test]
+fn hdr_and_tiff_previews_show_channels_written_by_the_encoder() {
+    let fx = Fx::new(&default_channels());
+    let mut gray_with_alpha = roughness();
+    gray_with_alpha.push((Dest::A, SourceRef::Constant(0.5)));
+    let rgb = [Dest::R, Dest::G, Dest::B];
+    let rgba = [Dest::R, Dest::G, Dest::B, Dest::A];
+
+    for (format, depth, layout, expected) in [
+        (FileFormat::Hdr, 32, &gray_with_alpha, rgb.as_slice()),
+        (FileFormat::Hdr, 32, &rgba_half_alpha(), rgb.as_slice()),
+        (FileFormat::Tiff, 8, &gray_with_alpha, rgba.as_slice()),
+        (FileFormat::Tiff, 32, &gray_with_alpha, rgba.as_slice()),
+        (FileFormat::Tiff, 32, &roughness(), rgb.as_slice()),
+    ] {
+        let mut options = one_map(format, depth, layout.clone());
+        if layout[0].0 == Dest::L {
+            options.preset.maps[0].inverted.push(Dest::L);
+        }
+
+        let preview = MapPreview::sample(&fx.input(), &options, 0, RES).unwrap().unwrap();
+        let file = decode(&fx.render(&options)[0]);
+        let components = usize::from(file.color().channel_count());
+
+        assert_eq!(preview.channels, expected, "{format:?} at {depth} bits");
+        assert_eq!(preview.channels.len(), components);
+        assert_eq!(preview.pixels.len(), (file.width() * file.height()) as usize * components);
+        let decoded_pixels = file.to_rgba32f();
+        for (preview_pixel, decoded) in preview.pixels.chunks_exact(components).zip(decoded_pixels.pixels()) {
+            for (actual, sample) in preview_pixel.iter().zip(decoded.0) {
+                let value = if options.preset.maps[0].is_color() && format == FileFormat::Hdr { linear_to_srgb(sample) } else { sample };
+                assert!((i32::from(*actual) - byte(value)).abs() <= 2, "{format:?} at {depth} bits: {actual} vs {value}");
+            }
+        }
+    }
 }
 
 #[test]

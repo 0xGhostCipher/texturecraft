@@ -19,25 +19,29 @@ impl MapPreviewPictures {
         let value = |pixel: usize, channel: usize| preview.pixels.get(pixel * count + channel).copied().unwrap_or(0);
         let load = |name: String, image: ColorImage| ctx.load_texture(name, image, TextureOptions::LINEAR);
 
-        // The file as a viewer shows it: its colour, or its first channel in grey; alpha left out
+        // Keep alpha separate so the file preview shows the stored colour
         let color = preview.channels.starts_with(&[Dest::R, Dest::G, Dest::B]);
-        let file = (0..pixel_count)
+        let pixels: Vec<_> = (0..pixel_count)
             .map(|pixel| if color { Color32::from_rgb(value(pixel, 0), value(pixel, 1), value(pixel, 2)) } else { Color32::from_gray(value(pixel, 0)) })
             .collect();
+        let grayscale = !color || pixels.iter().all(|pixel| pixel.r() == pixel.g() && pixel.g() == pixel.b());
+        let file = load(format!("export_map_preview_{index}"), ColorImage::new(size, pixels));
+
+        // A gray file texture can also draw each of its colour channels
         let channels = if preview.channels.len() > 1 {
-            let channel = |(k, dest): (usize, &Dest)| {
-                let image = ColorImage::from_gray_iter(size, (0..pixel_count).map(|pixel| value(pixel, k)));
-                (*dest, load(format!("export_map_preview_{index}_{k}"), image))
+            let channel = |(channel_index, dest): (usize, &Dest)| {
+                if grayscale && *dest != Dest::A {
+                    return (*dest, file.clone());
+                }
+
+                let image = ColorImage::from_gray_iter(size, (0..pixel_count).map(|pixel| value(pixel, channel_index)));
+                (*dest, load(format!("export_map_preview_{index}_{channel_index}"), image))
             };
             preview.channels.iter().enumerate().map(channel).collect()
         } else {
             Vec::new()
         };
 
-        MapPreviewPictures {
-            file: load(format!("export_map_preview_{index}"), ColorImage::new(size, file)),
-            channels,
-            aspect: preview.height as f32 / preview.width.max(1) as f32,
-        }
+        MapPreviewPictures { file, channels, aspect: preview.height as f32 / preview.width.max(1) as f32 }
     }
 }

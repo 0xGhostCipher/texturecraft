@@ -29,7 +29,6 @@ craft-image-codecs = { workspace = true }
 craft-psd = { git = "https://github.com/storytold/craft-libs", rev = "b130ac1fa44f923c3024884ab8ceb5ccdb88f15f" }
 flate2 = { workspace = true }
 half = { workspace = true }
-quick-xml = { workspace = true }
 zip = { workspace = true }
 exr = { workspace = true }
 j2k = { workspace = true }

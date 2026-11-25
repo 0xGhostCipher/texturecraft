@@ -77,6 +77,32 @@ fn the_rows_show_each_map_with_its_pattern_and_file_type() {
 }
 
 #[test]
+fn feedback_psd_preflight_keeps_map_controls_available() {
+    let mut h = harness();
+    let available = plan(&mut h).len();
+    assert!(available >= 3);
+    let preset = h.state().ui.export.preset.clone();
+    let settings = &mut h.state_mut().ui.export;
+    settings.format = "psd".into();
+    settings.bit_depth = 16;
+    settings.size = 8192;
+    let params = serde_json::json!({"ts": 0, "preset": preset, "format": "psd", "bitDepth": 16, "size": 8192});
+
+    let error = texturecraft_engine::execute(&mut h.state_mut().session, "export.plan", &params).unwrap_err();
+    assert!(error.to_string().contains("2 GiB"), "{error}");
+    h.run_steps(4);
+
+    assert_eq!(h.get_all_by_label_contains("Enable override for map ").count(), available);
+    let size = h.get_all_by_role(egui::Role::ComboBox).find(|combo| combo.value().as_deref() == Some("Export size")).expect("a map's size list");
+    size.click();
+    h.run_steps(4);
+    click(&mut h, "128x128");
+
+    assert!(maps(&h).values().any(|map| map.size == Some(128)));
+    assert_eq!(h.state().ui.export.size, 8192);
+}
+
+#[test]
 fn unticking_a_map_leaves_it_out_and_the_menu_ticks_all() {
     let mut h = harness();
     let before = selected(&h);

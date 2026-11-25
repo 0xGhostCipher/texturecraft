@@ -6,6 +6,9 @@ use j2k::{
 };
 use j2k_core::Colorspace;
 
+/// Original ICC v2 profile with a D50 white point and gamma 1.0 (ITU-T T.800, I.5.3.3)
+pub(super) const LINEAR_GRAY_PROFILE: &[u8] = include_bytes!("linear_gray.icc");
+
 /// Encode `bytes` (8-bit or native-endian 16-bit L, LA, RGB or RGBA samples) of a `width`×`height` image; `jp2` wraps it in a JP2 file that records `icc`
 pub(super) fn write_jpeg2000(
     bytes: Vec<u8>,
@@ -52,9 +55,9 @@ pub(super) fn write_jpeg2000(
         .collect();
     let mut options = J2kFileWrapOptions::jp2();
     options.color = match icc {
-        Some(profile) if color_count == 3 => J2kFileColorSpec::IccProfile(profile),
-        _ if color_count == 3 => J2kFileColorSpec::Enumerated(Colorspace::SRgb),
-        _ => J2kFileColorSpec::Enumerated(Colorspace::Grayscale),
+        Some(profile) => J2kFileColorSpec::IccProfile(profile),
+        None if color_count == 3 => J2kFileColorSpec::Enumerated(Colorspace::SRgb),
+        None => J2kFileColorSpec::Enumerated(Colorspace::Grayscale),
     };
     if component_count.is_multiple_of(2) {
         options.metadata = J2kFileBoxMetadata { palette: None, component_mappings: &[], channel_definitions: &definitions };

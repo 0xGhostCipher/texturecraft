@@ -5,14 +5,15 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 use texturecraft_ui_egui::TextureCraftApp;
 
+use super::temp_dir::TempDir;
+
 #[test]
 fn ticking_export_shader_settings_writes_the_json_listing_every_exported_set() {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
-    let dir = std::env::temp_dir().join(format!("tc-export-shader-parameters-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = TempDir::new("export-shader-parameters");
     h.state_mut().ui.export.dir = dir.display().to_string();
     h.state_mut().ui.windows.export = true;
     h.run_steps(4);
@@ -37,5 +38,4 @@ fn ticking_export_shader_settings_writes_the_json_listing_every_exported_set() {
 
     assert_eq!(json["shaders"][0]["textureSets"], serde_json::json!(names), "every texture set of the export, written once: {json}");
     assert!(json["shaders"][0]["parameters"]["ior"].is_number());
-    let _ = std::fs::remove_dir_all(&dir);
 }

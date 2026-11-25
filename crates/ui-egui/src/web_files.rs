@@ -104,16 +104,17 @@ fn apply_picked(app: &mut TextureCraftApp, picked: Vec<(String, Vec<u8>, Pick)>)
     }
 }
 
-/// Bake mode: add high-definition meshes (or load the cage) with the native file dialog. The
-/// meshes load on a later frame, when the dialog answers.
+/// Bake mode: add high polys (they load on a worker) or load the cage with the native file dialog, once it answers
 #[cfg(not(target_arch = "wasm32"))]
 pub fn import_bake_mesh(app: &mut TextureCraftApp, _ctx: &egui::Context, cage: bool) {
     use crate::file_dialogs::{Bound, FileDialog};
     let dialog = if cage { FileDialog::open() } else { FileDialog::open_many() };
     app.ask_file(dialog.filter(tr("Meshes"), &MESH_EXTENSIONS), Bound::Project, move |app, paths| {
-        for p in paths {
-            let cmd = if cage { "bake.cage.set" } else { "bake.highPoly.add" };
-            app.run(cmd, serde_json::json!({ "path": p.display().to_string() }));
+        let mut paths = paths.iter().map(|path| path.display().to_string());
+        if !cage {
+            app.load_high_polys(paths);
+        } else if let Some(path) = paths.next() {
+            app.run("bake.cage.set", serde_json::json!({ "path": path }));
         }
     });
 }
@@ -233,26 +234,14 @@ pub fn project_file_name(app: &TextureCraftApp) -> String {
 fn zip_files(files: Vec<ExportedFile>) -> Result<Vec<u8>, String> {
     let mut zip = craft_zip::Writer::new();
     for f in files {
-        // add_with reserves ZIP64 headers up front, even for small entries.
+        // Reserve ZIP64 headers up front, even for small entries
         zip.add_with(&f.name, craft_zip::Compression::Deflated, |out| out.write_all(&f.bytes)).map_err(|e| e.to_string())?;
     }
     zip.finish().map_err(|e| e.to_string())
 }
 
-/// Add the shader sidecar only when its root name is free in the download.
 #[cfg(any(target_arch = "wasm32", test))]
-fn append_shader_parameters(files: &mut Vec<ExportedFile>, project: &texturecraft_engine::core::Project, sets: &[usize]) -> Result<(), String> {
-    use texturecraft_engine::shader_parameters::{shader_parameters, shader_parameters_file};
-
-    let name = shader_parameters_file(&project.name);
-    if files.iter().any(|file| file.name.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case(&name))) {
-        return Err(format!("\"{name}\" is already used by a texture file or folder"));
-    }
-
-    let bytes = serde_json::to_vec_pretty(&shader_parameters(project, sets)).map_err(|error| error.to_string())?;
-    files.push(ExportedFile { name, bytes, width: 0, height: 0, warnings: Vec::new() });
-    Ok(())
-}
+use texturecraft_engine::shader_parameters::shader_parameters_sidecar;
 
 #[cfg(target_arch = "wasm32")]
 pub use web::{
@@ -381,9 +370,12 @@ mod web {
         texturecraft_engine::formats::skip_repeated_names(&mut files);
         if app.ui.export.shader_parameters {
             let sets: Vec<usize> = jobs.iter().map(|(set_index, _)| *set_index).collect();
-            if let Err(error) = append_shader_parameters(&mut files, &app.session.doc.project, &sets) {
-                app.session.log.warnings("MapExporter", [format!("The shader settings file was not written: {error}")]);
-                app.toast(trf("The shader settings file was not written: {error}", &[("error", &error)]), true);
+            match shader_parameters_sidecar(&app.session.doc.project, &sets, &files) {
+                Ok(sidecar) => files.push(sidecar),
+                Err(error) => {
+                    app.session.log.warnings("MapExporter", [format!("The shader settings file was not written: {error}")]);
+                    app.toast(trf("The shader settings file was not written: {error}", &[("error", &error)]), true);
+                }
             }
         }
         app.session.log.warnings("MapExporter", files.iter().flat_map(|file| file.warnings.iter().cloned()));
@@ -529,8 +521,8 @@ mod tests {
             vec![("high.obj".into(), cage.clone(), Pick::HighPoly(old_project_id)), ("cage.obj".into(), cage, Pick::Cage(old_project_id))],
         );
 
-        assert!(harness.state().session.bake_meshes.high.is_empty());
-        assert!(harness.state().session.bake_meshes.cage.is_none());
+        assert!(harness.state().session.doc.bake_meshes.high.is_empty());
+        assert!(harness.state().session.doc.bake_meshes.cage.is_none());
         assert!(!harness.state().session.modified);
         assert_eq!(harness.state().toasts.iter().filter(|toast| toast.error).count(), 2);
 
@@ -543,8 +535,8 @@ mod tests {
             vec![("high.obj".into(), mesh.clone(), Pick::HighPoly(project_id)), ("cage.obj".into(), mesh, Pick::Cage(project_id))],
         );
 
-        assert_eq!(harness.state().session.bake_meshes.high.len(), 1);
-        assert!(harness.state().session.bake_meshes.cage.is_some());
+        assert_eq!(harness.state().session.doc.bake_meshes.high.len(), 1);
+        assert!(harness.state().session.doc.bake_meshes.cage.is_some());
     }
 
     #[test]
@@ -553,15 +545,17 @@ mod tests {
         let name = "chair_SHADERS.json/Color.png";
         let mut files = vec![ExportedFile { name: name.into(), bytes: vec![1, 2, 3], width: 1, height: 1, warnings: Vec::new() }];
 
-        let error = append_shader_parameters(&mut files, &project, &[]).unwrap_err();
+        let error = shader_parameters_sidecar(&project, &[], &files).unwrap_err();
 
         assert!(error.contains("Chair_shaders.json"));
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].name, name);
+
         files[0].name = "Chair_shaders.json_backup/Color.png".into();
-        append_shader_parameters(&mut files, &project, &[]).unwrap();
+        files.push(shader_parameters_sidecar(&project, &[], &files).unwrap());
         let bytes = zip_files(files).unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+
         assert_eq!(archive.len(), 2);
         assert!(archive.by_name("Chair_shaders.json_backup/Color.png").is_ok());
         assert!(archive.by_name("Chair_shaders.json").is_ok());

@@ -410,6 +410,7 @@ pub fn usd_texture_bindings(set: &TextureSet, opts: &ExportOptions, project_norm
             (None, None) => file.name.clone(),
             (None, Some(_)) => continue,
         };
+
         let srgb = opts.space_for_map(map, file.format, file.bit_depth) == ColorSpace::Srgb;
         for slot in 0..SLOTS.len() {
             if out.iter().any(|binding| binding.slot == slot) {

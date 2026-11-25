@@ -41,11 +41,17 @@ file runs it; Copy mask to clipboard puts the same mask on the system clipboard 
 grayscale image (the whole tile atlas for a UV-tiled set).
 
 `file.exportTextures`, `export.plan`, the automation `textures.export` method and the MCP
-`textures_export` tool accept `maps: [{map, enabled?, format?, bitDepth?, dithering?}]`.
+`textures_export` tool accept `maps: [{map, enabled?, format?, bitDepth?, dithering?, size?}]`.
 Each entry overrides that map's export settings. The `map` field is its index in the selected
-template. `enabled: false` suppresses that file while reserving its name. When several texture
+template. A map’s `size` in pixels overrides the export size. `enabled: false` suppresses that file while reserving its name. When several texture
 sets produce the same name (ignoring case), programmatic and browser exports keep the first file
 and warn about later duplicates. The desktop export window reports the collision before writing.
+
+`shaderParameters: true` writes `<project>_shaders.json` beside the textures with the shader
+model, its settings and the names of the exported texture sets. An array of texture set
+indexes selects which sets to list. The desktop command, headless `textures.export` and MCP
+`textures_export` include a written sidecar in `files` and report a sidecar write failure in
+`warnings` after writing the textures.
 
 `file.exportTextures` with `usdAsset` also writes `<mesh>.usd` (binary USD, Crate) next to the textures: the whole mesh
 (every texture set, whatever `ts` selects) with one UsdPreviewSurface material per texture set. A
@@ -80,8 +86,10 @@ TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordere
 `export.preview` takes the same parameters plus `map` (an index into the template's maps) and
 `side` (the maximum width or height, in pixels, capped at 512). It returns
 `{width, height, channels, pixels}` for the first texture set named by `ts`, or null when the
-set writes no file for that map. The preview uses 8-bit values, with sRGB colour channels and
-linear data channels. Texels outside the UV islands use the channel defaults.
+set writes no file for that map. HDR previews list RGB without alpha. TIFF previews list RGB
+or RGBA when the encoder stores luminance in three channels. The preview uses 8-bit values,
+with sRGB colour channels and linear data channels. Texels outside the UV islands use the
+channel defaults.
 `padding: "diffusion"` dilates by
 `dilation` texels and fills the remaining space with a smooth blend of the island colours.
 
@@ -144,9 +152,20 @@ alone) and `alphaInvert` (swaps paint and no paint inside the stamp square). The
 procedural, library and imported alphas alike and are returned by `tool.brush` with the other
 values. The alpha's rotation is the brush `angle`.
 
-Bake mode applies edits in Common Settings and Mesh Map Settings to every texture set. Each
-set keeps its own enabled mesh-map checkboxes and Include in Bake flag. Edits update only the
-changed fields; Restore Defaults resets the whole parameter section across all sets.
+Bake mode applies an edit in Common Settings or Mesh Map Settings to the texture sets sharing that
+group's settings: Common Settings, and each map's settings, are shared by any set of texture sets
+(at first every set shares them). Each set keeps its own enabled mesh-map checkboxes and Include in
+Bake flag. An edit reaches the sets sharing its group with only the fields it changed, so values
+that differ elsewhere stay; Restore Defaults resets the whole parameter section across those sets.
+
+`bake.sync {group: "common" | <map id>, ts: [indices] | "all"}` makes exactly these sets share the
+group from now on; sets joining take the settings the group shares. `bake.copy {what: "settings" |
+"checked" | "check", map?, from?, ts}` copies once: every setting with which maps are checked (or
+one map's settings), which maps are checked, or checks one map; settings also reach the sets sharing a group with a target, while
+checkboxes stay per set. Each is one undo step. `bake.settings` with `model` keeps each set's sync
+membership. A `patch` containing `sync` is rejected. Use `bake.sync` to change membership.
+For `bake.copy`, `from` takes a texture set index and `map` takes a mesh map ID. Omit either field
+or pass `null` to use its default.
 
 `bake.settings {ts: "all", patch: {maps: {ao: {parameters: {rays: {rays: 128}}}}}}` changes
 only AO secondary rays. A `patch` uses the nested `BakeSettings` field names and named enum
@@ -154,7 +173,8 @@ values returned in the command's `model` result; omitted fields retain each set'
 `null` clears optional fields such as `common.resolution_height`. All targeted sets are validated
 before the edit is applied as one undo step. `model` still replaces the complete settings;
 when combined, `patch` follows `model`, then the flat command parameters apply. Omitting `ts`
-still targets the active set for scripts that need individual control.
+still targets the active set. Settings passed to `bake.run` follow the same sync rules, while only
+the requested texture sets bake. The settings and baked maps share one undo step.
 
 Bake presets are saved settings in the UI state (Mesh Map Bakers > Presets). Loading one is
 `bake.settings {ts: <index>, model: <the preset's settings>, preserveEnabled: true, preset: true}`; Apply to All

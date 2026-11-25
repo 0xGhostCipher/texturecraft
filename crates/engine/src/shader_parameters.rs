@@ -2,6 +2,7 @@
 
 use serde_json::{Value, json};
 use texturecraft_core::Project;
+use texturecraft_formats::ExportedFile;
 
 use crate::Result;
 use crate::commands::bad;
@@ -31,6 +32,17 @@ pub fn shader_parameters(project: &Project, sets: &[usize]) -> Value {
 /// The JSON file's name for project `name`
 pub fn shader_parameters_file(name: &str) -> String {
     format!("{}_shaders.json", texturecraft_formats::export::sanitize_file_stem(name))
+}
+
+/// Build the download or headless sidecar after checking its name against every texture path.
+pub fn shader_parameters_sidecar(project: &Project, sets: &[usize], textures: &[ExportedFile]) -> std::result::Result<ExportedFile, String> {
+    let name = shader_parameters_file(&project.name);
+    if textures.iter().any(|texture| texture.name.split('/').next().is_some_and(|root| root.eq_ignore_ascii_case(&name))) {
+        return Err(format!("\"{name}\" is already used by a texture file or folder"));
+    }
+
+    let bytes = serde_json::to_vec_pretty(&shader_parameters(project, sets)).map_err(|error| error.to_string())?;
+    Ok(ExportedFile { name, bytes, width: 0, height: 0, warnings: Vec::new() })
 }
 
 /// The texture sets `shaderParameters` asks to list: `true` takes the command's own `sets`, a list gives them all; None when it asks for no file
@@ -65,6 +77,7 @@ mod tests {
         let value = shader_parameters(&session.doc.project, &[1]);
 
         let shader = &value["shaders"][0];
+
         assert_eq!(shader["model"], "metallicRoughness");
         assert!((shader["parameters"]["ior"].as_f64().unwrap() - 1.33).abs() < 1e-6);
         assert_eq!(shader["textureSets"], json!([session.doc.project.texture_sets[1].name]));

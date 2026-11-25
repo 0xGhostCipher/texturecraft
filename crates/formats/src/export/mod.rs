@@ -339,6 +339,11 @@ pub struct MapSpec {
 }
 
 impl MapSpec {
+    /// Whether this set supplies at least one source used by the output map.
+    pub fn is_available_for(&self, set: &TextureSet) -> bool {
+        self.channels.iter().any(|(_, source)| source_present(set, source))
+    }
+
     /// Whether a non-alpha destination draws from a color source.
     pub fn is_color(&self) -> bool {
         self.channels.iter().any(|(dest, source)| {
@@ -451,6 +456,15 @@ impl ExportOptions {
     /// The output size of the preset's map `map`: its own, else the export's (None: the texture set's)
     pub fn map_size(&self, map: usize) -> Option<u32> {
         self.maps.get(&map).and_then(|own| own.size).or(self.size)
+    }
+
+    /// The format, depth and dithering of a map before any PSD document-wide promotion.
+    pub fn map_file_type(&self, map_index: usize, map: &MapSpec) -> (FileFormat, u8, bool) {
+        let own = self.maps.get(&map_index);
+        let format = own.and_then(|o| o.format).or(self.format_override).unwrap_or(map.format);
+        let depth = format.depth(own.and_then(|o| o.bit_depth).or(self.bit_depth_override).unwrap_or(map.bit_depth));
+        let dither = depth == 8 && !format.holds_float(depth) && own.and_then(|o| o.dither).unwrap_or(self.dither);
+        (format, depth, dither)
     }
 
     /// The colour space colour maps use at this format's default depth.
@@ -604,7 +618,11 @@ pub fn channel_label(map: &MapSpec) -> &'static str {
 
 /// Keep `[A-Za-z0-9_.-]`, replace everything else with `_`; never empty or a reserved device name.
 pub fn sanitize_file_stem(s: &str) -> String {
-    let mut out: String = s.chars().take(MAX_STEM).map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') { c } else { '_' }).collect();
+    sanitize_stem_with_limit(s, MAX_STEM)
+}
+
+fn sanitize_stem_with_limit(s: &str, limit: usize) -> String {
+    let mut out: String = s.chars().take(limit).map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') { c } else { '_' }).collect();
     if out.trim_matches('.').is_empty() {
         out = "texture".into();
     }
@@ -614,7 +632,23 @@ pub fn sanitize_file_stem(s: &str) -> String {
     if reserved {
         out.insert(0, '_');
     }
+
+    out.truncate(limit);
     out
+}
+
+/// Leave room for the set's name, a set index if shortened, and the eventual tile suffix.
+fn psd_stem(mesh_name: &str, set_name: &str, set_index: usize, max_len: usize) -> String {
+    let full = sanitize_stem_with_limit(&format!("{mesh_name}_{set_name}"), max_len + 1);
+    if full.len() <= max_len {
+        return full;
+    }
+
+    let set_index = set_index.to_string();
+    let set_budget = max_len / 2 - set_index.len() - 2;
+    let set = sanitize_stem_with_limit(set_name, set_budget);
+    let mesh = sanitize_stem_with_limit(mesh_name, max_len - set.len() - set_index.len() - 2);
+    format!("{mesh}_{set}_{set_index}")
 }
 
 /// [`sanitize_file_stem`] for each `/`-separated folder name and the file stem.
@@ -644,15 +678,13 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
     let set_stem = set.name.replace('/', "_");
     let tiles: Vec<Option<u32>> = if set.uv_tiles.is_empty() || opts.atlas { vec![None] } else { set.uv_tiles.iter().copied().map(Some).collect() };
     for (map_index, map) in opts.preset.maps.iter().enumerate() {
-        if !map.channels.iter().any(|(_, s)| source_present(set, s)) {
+        if !map.is_available_for(set) {
             continue;
         }
 
         let own = opts.maps.get(&map_index);
-        let format = own.and_then(|o| o.format).or(opts.format_override).unwrap_or(map.format);
-        let bit_depth = format.depth(own.and_then(|o| o.bit_depth).or(opts.bit_depth_override).unwrap_or(map.bit_depth));
+        let (format, bit_depth, dither) = opts.map_file_type(map_index, map);
         let enabled = own.is_none_or(|o| o.enabled);
-        let dither = bit_depth == 8 && !format.holds_float(bit_depth) && own.and_then(|o| o.dither).unwrap_or(opts.dither);
         let space = opts.space_for_map(map, format, bit_depth);
         let requested_space = opts.space_for_depth(format, bit_depth);
         let color_map = map.is_color();
@@ -738,19 +770,19 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
     }
 
     // Each tile's PSD maps are the layers of one file named after the texture set
-    let psd_stem = sanitize_file_stem(&format!("{mesh_name}_{}", set.name));
     for (&tile, in_tile) in tiles.iter().zip(psd_layers) {
         let Some((first_layer, ..)) = in_tile.first() else { continue };
 
         let first_map = first_layer.map;
         let bit_depth = in_tile.iter().map(|(_, depth, _)| *depth).max().unwrap_or(8);
-        let folder_count = in_tile.iter().map(|(layer, ..)| layer.name.matches('/').count()).sum();
-        let sizes = in_tile.iter().map(|(layer, ..)| psd_size(set, tile, opts.map_size(layer.map)));
-        check_psd_size(sizes, folder_count, bit_depth)?;
+        layered_psd::preflight(set, opts, tile, bit_depth, in_tile.iter().map(|(layer, ..)| layer))?;
 
         let mut warnings = Vec::new();
         let mut layers = Vec::with_capacity(in_tile.len());
-        for (layer, _, layer_warnings) in in_tile {
+        let mut dither_requested = false;
+        for (mut layer, _, layer_warnings) in in_tile {
+            dither_requested |= layer.dither;
+            layer.dither &= bit_depth == 8;
             layers.push(layer);
             for warning in layer_warnings {
                 if !warnings.contains(&warning) {
@@ -758,19 +790,22 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
                 }
             }
         }
+        if bit_depth == 16 && dither_requested {
+            warnings.push("PSD layers use the 16-bit document depth; 8-bit dithering was skipped".into());
+        }
 
         let ext = FileFormat::Psd.extension();
         let (stem, udim_stem) = if let Some(number) = tile {
             let suffix = format!(".{number}");
-            let base = &psd_stem[..psd_stem.len().min(MAX_STEM.saturating_sub(suffix.len()))];
+            let base = psd_stem(mesh_name, &set.name, ts, MAX_STEM - suffix.len());
             (format!("{base}{suffix}"), Some(format!("{base}.<UDIM>")))
         } else {
-            (psd_stem.clone(), None)
+            (psd_stem(mesh_name, &set.name, ts, MAX_STEM), None)
         };
         let (name, renamed) = unique_name(&mut used, &stem, ext, &mut warnings);
         claim_path(&mut active_files, &mut active_dirs, &name)?;
         let udim_name = udim_stem.map(|stem| format!("{stem}{renamed}.{ext}"));
-        let dither = layers.iter().any(|layer| layer.dither);
+        let dither = bit_depth == 8 && dither_requested;
         out.push(PlannedFile { name, map: first_map, format: FileFormat::Psd, bit_depth, dither, tile, udim_name, warnings, layers });
     }
     Ok(out)
@@ -1019,8 +1054,10 @@ pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned
         return Ok(Vec::new());
     }
 
+    let mut psd_sizes = Vec::new();
     if planned.iter().any(|file| file.format == FileFormat::Psd) {
-        let expected = input.project.texture_set(input.ts)?.size();
+        let set = input.project.texture_set(input.ts)?;
+        let expected = set.size();
         let actual = (input.composite.resolution, input.composite.height);
         if actual != expected {
             return Err(FormatError::Invalid(format!(
@@ -1028,14 +1065,21 @@ pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned
                 actual.0, actual.1, expected.0, expected.1
             )));
         }
+
+        for file in &planned {
+            let size =
+                (file.format == FileFormat::Psd).then(|| layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter())).transpose()?;
+            psd_sizes.push(size);
+        }
     }
 
     let renderer = MapRenderer::new(input, options)?;
     planned
         .into_iter()
-        .map(|planned_file| {
-            if planned_file.format == FileFormat::Psd {
-                return layered_psd::render_psd(&renderer, planned_file);
+        .zip(psd_sizes.into_iter().chain(std::iter::repeat(None)))
+        .map(|(planned_file, psd_size)| {
+            if let Some(size) = psd_size {
+                return layered_psd::render_psd(&renderer, planned_file, size);
             }
 
             let map = renderer.render(planned_file.map, planned_file.tile, planned_file.format, planned_file.bit_depth)?;
@@ -1230,6 +1274,13 @@ const BAYER8: [u8; 64] = [
     19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
 ];
 
+fn rec709_luminance(red: f32, green: f32, blue: f32) -> f32 {
+    // Rec.709 luminance weights apply before the display transfer
+    const WEIGHTS: [f32; 3] = [0.2126, 0.7152, 0.0722];
+    let [red_weight, green_weight, blue_weight] = WEIGHTS;
+    red_weight * red + green_weight * green + blue_weight * blue
+}
+
 /// Encode a linear image as L, LA, RGB or RGBA at the requested width and height.
 fn encode(
     encoding: Encoding,
@@ -1285,8 +1336,6 @@ fn encode(
         _ => {}
     }
 
-    // Rec.709 luminance weights convert linear RGB to PGM's single gray channel
-    const REC709_LUMINANCE_WEIGHTS: [f32; 3] = [0.2126, 0.7152, 0.0722];
     let gray_srgb: [bool; 1];
     let (integer_data, srgb, component_count): (Vec<f32>, &[bool], usize) = if format == FileFormat::Pgm && component_count > 1 {
         if component_count != 3 {
@@ -1300,10 +1349,7 @@ fn encode(
             .chunks_exact(component_count)
             .map(|pixel| match pixel {
                 [l, _] => *l,
-                [red, green, blue, ..] => {
-                    let [red_weight, green_weight, blue_weight] = REC709_LUMINANCE_WEIGHTS;
-                    red_weight * red + green_weight * green + blue_weight * blue
-                }
+                [red, green, blue, ..] => rec709_luminance(*red, *green, *blue),
                 _ => 0.0,
             })
             .collect();
@@ -1324,21 +1370,22 @@ fn encode(
     };
 
     let transferred = integer_data
-        .iter()
+        .into_iter()
         .enumerate()
-        .map(|(index, value)| if srgb.get(index % component_count).copied().unwrap_or(false) { linear_to_srgb(*value) } else { value.clamp(0.0, 1.0) });
+        .map(|(index, value)| if srgb.get(index % component_count).copied().unwrap_or(false) { linear_to_srgb(value) } else { value.clamp(0.0, 1.0) });
     let (bytes, component_count) = if let Some(indices) = channel_indices {
-        // Transfer luminance once before TIFF repeats it across RGB
+        // Transfer each source sample once, then quantize directly in destination order
         let transferred: Vec<f32> = transferred.collect();
-        drop(integer_data);
-        let remapped = remap(&transferred, component_count, indices);
-        drop(transferred);
-        (quantize_integer(encoding, size.0, indices.len(), remapped.into_iter())?, indices.len())
+        let output_channels = indices.len();
+        let sample_count =
+            (transferred.len() / component_count).checked_mul(output_channels).ok_or_else(|| encoding_error(&"remapped sample count overflows"))?;
+        let remapped = (0..sample_count).map(|sample| {
+            let pixel_start = sample / output_channels * component_count;
+            transferred[pixel_start + indices[sample % output_channels]]
+        });
+        (quantize_integer(encoding, size.0, output_channels, remapped)?, output_channels)
     } else {
-        // Stream native-order samples directly into the integer buffer
-        let bytes = quantize_integer(encoding, size.0, component_count, transferred)?;
-        drop(integer_data);
-        (bytes, component_count)
+        (quantize_integer(encoding, size.0, component_count, transferred)?, component_count)
     };
     let sample_type = if depth == 16 { SampleType::U16 } else { SampleType::U8 };
 
@@ -1353,13 +1400,17 @@ fn encode(
         FileFormat::Jng => return jng(&bytes, size, component_count).map_err(|error| encoding_error(&error)),
         FileFormat::J2k | FileFormat::Jp2 => {
             let jp2 = format == FileFormat::Jp2;
-            let profile = if jp2 {
-                let linear_rgb = component_count >= 3 && srgb.iter().take(3).all(|encoded| !encoded);
+            let gray = component_count <= 2;
+            let profile = if jp2 && !gray {
+                let linear_rgb = srgb.iter().take(3).all(|encoded| !encoded);
                 embed.or(linear_rgb.then_some(ColorSpace::LinearRec709)).and_then(crate::icc::profile)
             } else {
                 None
             };
-            return jpeg2000::write_jpeg2000(bytes, size, component_count, depth, jp2, profile.as_deref()).map_err(|error| encoding_error(&error));
+            let linear_gray = jp2 && gray && !srgb.first().copied().unwrap_or(false);
+            let icc = profile.as_deref().or(linear_gray.then_some(jpeg2000::LINEAR_GRAY_PROFILE));
+
+            return jpeg2000::write_jpeg2000(bytes, size, component_count, depth, jp2, icc).map_err(|error| encoding_error(&error));
         }
         FileFormat::Exr | FileFormat::Hdr => return Err(encoding_error(&"unexpected float raster format")),
         FileFormat::Psd => return Err(encoding_error(&"a PSD holds the layers of several maps (`layered_psd`)")),
@@ -1378,6 +1429,10 @@ fn encode(
     write_raster(&image, codec_format).map_err(|error| encoding_error(&error))
 }
 
+fn quantize_u16(value: f32) -> u16 {
+    (value * f32::from(u16::MAX) + 0.5) as u16
+}
+
 fn quantize_integer(encoding: Encoding, width: u32, component_count: usize, samples: impl ExactSizeIterator<Item = f32>) -> Result<Vec<u8>> {
     let Encoding { format, depth, dither } = encoding;
     let byte_count = samples
@@ -1388,7 +1443,7 @@ fn quantize_integer(encoding: Encoding, width: u32, component_count: usize, samp
     bytes.try_reserve_exact(byte_count).map_err(|error| FormatError::Invalid(format!("{} sample buffer allocation failed: {error}", format.extension())))?;
 
     if depth == 16 {
-        bytes.extend(samples.flat_map(|value| ((value * f32::from(u16::MAX) + 0.5) as u16).to_ne_bytes()));
+        bytes.extend(samples.flat_map(|value| quantize_u16(value).to_ne_bytes()));
     } else {
         let width = width.max(1) as usize;
         let threshold = |sample_index: usize| {
@@ -1409,8 +1464,8 @@ fn quantize_integer(encoding: Encoding, width: u32, component_count: usize, samp
     Ok(bytes)
 }
 
-/// Return the canvas size if its merged image and native-size layers fit the PSD limits.
-fn check_psd_size(sizes: impl IntoIterator<Item = (u32, u32)>, folder_count: usize, depth: u8) -> Result<(u32, u32)> {
+/// Return the canvas size and conservative file size after checking PSD format limits.
+fn check_psd_size(sizes: impl IntoIterator<Item = (u32, u32)>, folder_count: usize, depth: u8) -> Result<((u32, u32), u64)> {
     // A layer record with its names, and each of a group's two records, stays below this
     const PSD_RECORD_BYTES: u64 = 2048;
 
@@ -1433,13 +1488,14 @@ fn check_psd_size(sizes: impl IntoIterator<Item = (u32, u32)>, folder_count: usi
     let records = PSD_RECORD_BYTES * (layer_count + 2 * folder_count as u64);
     let texels = u64::from(width) * u64::from(height) + layer_texels;
     let sample_bytes = texels * PSD_RGBA_PLANES as u64 * u64::from(depth / 8);
-    if merged + records + sample_bytes >= PSD_MAX_FILE_BYTES {
+    let file_bytes = merged + records + sample_bytes;
+    if file_bytes >= PSD_MAX_FILE_BYTES {
         return Err(FormatError::Invalid(format!(
             "a PSD of {layer_count} maps at {width}×{height} would reach the 2 GiB file limit; use a smaller export size, fewer PSD maps or another format"
         )));
     }
 
-    Ok((width, height))
+    Ok(((width, height), file_bytes))
 }
 
 /// A PSD of only an RGBA merged image with no pixels yet, to measure

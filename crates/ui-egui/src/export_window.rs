@@ -713,38 +713,42 @@ fn file_type_parts(t: &FileType) -> (String, String) {
 }
 
 /// The rows of texture set `ts`'s Output maps: the template's maps the set has sources for
-fn map_rows(app: &mut TextureCraftApp, ts: usize) -> Vec<MapRow> {
+fn map_rows(app: &TextureCraftApp, ts: usize) -> Vec<MapRow> {
     let mut params = set_params(app, ts);
+
+    // Discover maps from their sources so invalid output sizes cannot hide the controls that fix them
     if let Some(object) = params.as_object_mut() {
         object.remove("maps");
+        object.remove("size");
     }
-    let preset = app.session.export_preset(&set_template(app, ts));
-    let Ok(plan) = texturecraft_engine::execute(&mut app.session, "export.plan", &params) else { return Vec::new() };
-    let mut rows: Vec<MapRow> = Vec::new();
-    let index = |value: &serde_json::Value| value.get("map").and_then(serde_json::Value::as_u64).map(|map| map as usize);
-    for file in plan.as_array().into_iter().flatten() {
-        // A PSD writes each of its layers' maps
-        let layers = file.get("layers").and_then(serde_json::Value::as_array).filter(|layers| !layers.is_empty());
-        let maps: Vec<usize> = match layers {
-            Some(layers) => layers.iter().filter_map(index).collect(),
-            None => index(file).into_iter().collect(),
-        };
-        for map in maps {
-            if rows.iter().any(|row| row.map == map) {
-                continue;
-            }
 
-            let format = file.get("format").and_then(serde_json::Value::as_str).unwrap_or("png").to_string();
-            let bit_depth = file.get("bitDepth").and_then(serde_json::Value::as_u64).unwrap_or(8) as u8;
-            let dithering = file.get("dithering").and_then(serde_json::Value::as_bool).unwrap_or(false);
-            let pattern = preset
-                .as_ref()
-                .and_then(|preset| preset.maps.get(map))
-                .map(|map_spec| map_spec.file.replace("$channel", texturecraft_engine::formats::export::channel_label(map_spec)))
-                .unwrap_or_default();
-            rows.push(MapRow { map, pattern, inherited: FileType { format: file_type_name(&format), bit_depth, dithering } });
+    let Ok(options) = texturecraft_engine::file_cmds::export_options(&app.session, &params, "export.plan") else { return Vec::new() };
+    let Ok(set) = app.session.doc.project.texture_set(ts) else { return Vec::new() };
+
+    let mut rows = Vec::new();
+    let mut psd_rows = Vec::new();
+    let mut psd_depth = 8;
+    let mut psd_dithering = false;
+    for (map, spec) in options.preset.maps.iter().enumerate().filter(|(_, spec)| spec.is_available_for(set)) {
+        let (format, bit_depth, dithering) = options.map_file_type(map, spec);
+        let pattern = spec.file.replace("$channel", texturecraft_engine::formats::export::channel_label(spec));
+        let row = MapRow { map, pattern, inherited: FileType { format: format.name().to_owned(), bit_depth, dithering } };
+        if format == FileFormat::Psd {
+            psd_depth = psd_depth.max(bit_depth);
+            psd_dithering |= dithering;
+            psd_rows.push(row);
+        } else {
+            rows.push(row);
         }
     }
+
+    // All PSD rows inherit the document's file type and follow the standalone maps
+    for mut row in psd_rows {
+        row.inherited.bit_depth = psd_depth;
+        row.inherited.dithering = psd_depth == 8 && psd_dithering;
+        rows.push(row);
+    }
+
     rows
 }
 
@@ -1740,7 +1744,6 @@ fn footer(app: &mut TextureCraftApp, ui: &mut Ui, window: egui::Rect, y: f32, do
         drawn::label_at(ui, left, y, &count, look.text_dim, false);
     }
 
-    // Only on SETTINGS
     let reset_rect = drawn::control_rect(window.left() + LEFT_MARGIN, window.left() + LEFT_MARGIN + FOOTER_BUTTON_WIDTH, y);
     if app.ui.export.tab == 0
         && drawn::button(ui, reset_rect, tr("Reset all"), false, true).on_hover_text(tr("Restore the export defaults and select every texture")).clicked()
@@ -1825,7 +1828,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let presets = texturecraft_engine::formats::builtin_preset_catalog();
     let look = ExportLook::get(ctx);
 
-    // The reference size where the screen has room, resizable from there; the size counts the frame and title bar
+    // The reference size includes the frame and title bar
     let style = ctx.global_style();
     let title_frame = egui::Frame::window(&style);
     let frame = title_frame.inner_margin(CONTENT_INSET);
