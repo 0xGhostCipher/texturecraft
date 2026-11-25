@@ -1,16 +1,14 @@
-//! The sample projects File > Open Sample Project offers: the ones shipped inside the app, copied
-//! into the Samples folder of the data folder so the file picker can show them.
+//! Installs the bundled projects in the data folder for File > Open Sample Project.
 
+mod shipped_sample;
+
+use std::io::ErrorKind;
 use std::path::Path;
+
+use shipped_sample::ShippedSample;
 
 /// The folder under the data folder that holds the sample projects
 pub(crate) const SAMPLES_FOLDER: &str = "Samples";
-
-/// A sample project that ships inside the app (`assets/samples`)
-struct ShippedSample {
-    file_name: &'static str,
-    bytes: &'static [u8],
-}
 
 const SHIPPED_SAMPLES: &[ShippedSample] =
     &[ShippedSample { file_name: "Material Ball.tcraft", bytes: include_bytes!("../../../assets/samples/Material Ball.tcraft") }];
@@ -21,12 +19,14 @@ pub(crate) fn install(folder: &Path) -> Result<(), String> {
     std::fs::create_dir_all(folder).map_err(|error| format!("{}: {error}", folder.display()))?;
 
     for sample in SHIPPED_SAMPLES {
-        let file = folder.join(sample.file_name);
-        if file.exists() {
-            continue;
+        let destination = folder.join(sample.file_name);
+        match destination.symlink_metadata() {
+            Ok(_) => continue,
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", destination.display())),
         }
 
-        texturecraft_engine::formats::write_atomic(&file, sample.bytes).map_err(|error| format!("{}: {error}", file.display()))?;
+        sample.install_missing(folder, &destination).map_err(|error| format!("{}: {error}", destination.display()))?;
     }
 
     Ok(())

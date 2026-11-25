@@ -74,7 +74,7 @@ fn result_window_shows(status: &Status, prompt_open: bool) -> bool {
 /// Whether an update may install and close the app: the project has no unsaved changes and no
 /// stroke, bake or resize is running.
 fn safe_to_close(app: &TextureCraftApp) -> bool {
-    !app.session.modified && !app.session.stroke_active() && app.bake.is_none() && app.resize.is_none()
+    !app.session.modified && !app.session.stroke_active() && app.bake.is_none() && app.resize.is_none() && app.high_poly_job.is_none()
 }
 
 pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
@@ -263,9 +263,13 @@ mod tests {
         assert!(!safe_to_close(h.state()), "unsaved changes");
         h.state_mut().session.modified = false;
 
-        h.state_mut().bake = Some(crate::BakeJob { queue: Vec::new(), current: None, total: 0, mesh_id: 0 });
+        h.state_mut().bake = Some(crate::BakeJob { queue: Vec::new(), current: None, total: 0, mesh_id: 0, only: None });
         assert!(!safe_to_close(h.state()), "a bake");
         h.state_mut().bake = None;
+
+        h.state_mut().load_high_polys(["missing-high.obj".to_owned()]);
+        assert!(!safe_to_close(h.state()), "an accepted high-poly import is still pending");
+        h.state_mut().high_poly_job = None;
 
         h.state_mut().resize = Some(crate::ResizeJob { progress: Arc::new(Progress::new()), rx: channel().1 });
         assert!(!safe_to_close(h.state()), "a resize");
@@ -275,6 +279,7 @@ mod tests {
         texturecraft_engine::execute(session, "layer.add.paint", &serde_json::Value::Null).unwrap();
         session.modified = false;
         session.begin_stroke_uv(Vec2::new(0.5, 0.5), 1.0).unwrap();
+
         assert!(!safe_to_close(h.state()), "a stroke");
         h.state_mut().session.cancel_stroke();
         assert!(safe_to_close(h.state()));
