@@ -34,9 +34,6 @@ use crate::TextureCraftApp;
 #[cfg(not(target_arch = "wasm32"))]
 pub use craft_ui::shell::embed::before_ui;
 
-/// The id every OS window of the app carries, as the desktop entry and the update app name it.
-const APP_ID: &str = "ai.storyteller.texturecraft";
-
 /// The scripts of the interface languages, for the font stack.
 static SCRIPTS: I18nScripts = I18nScripts;
 
@@ -47,7 +44,7 @@ fn ui_fonts() -> UiFonts<'static> {
 }
 
 fn install_with(ctx: &egui::Context, shell: ShellInfo, windows: Arc<dyn WindowSystem>, frame: Option<Decision>) -> Result<(), String> {
-    let mut spec = craft_ui::InstallSpec::new(shell, windows).app_id(APP_ID);
+    let mut spec = craft_ui::InstallSpec::new(shell, windows).app_id(crate::os_window::app_id());
     if let Some(frame) = frame {
         spec = spec.frame(frame);
     }
