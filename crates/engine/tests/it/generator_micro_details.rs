@@ -117,6 +117,21 @@ fn micro_details_move_an_earlier_generator_onto_the_reference_controls() {
 }
 
 #[test]
+fn malformed_micro_detail_switches_leave_the_saved_model_intact() {
+    let mut session = session();
+    let effect = add(&mut session, json!({"generator": "curvature", "level": 0.8}));
+    let original = generator(&session, effect);
+    assert!(original.on_earlier_model());
+
+    for key in ["microHeight", "microNormal", "useMicroDetails"] {
+        let result = execute(&mut session, "effect.set", &json!({"effect": effect, key: "true"}));
+
+        assert!(result.is_err(), "{key} must be a JSON boolean");
+        assert_eq!(generator(&session, effect), original, "{key} must leave the saved generator intact");
+    }
+}
+
+#[test]
 fn swapping_kinds_keeps_the_micro_images_where_the_kind_has_micro_details() {
     let mut session = session();
     let name = gray_image(&mut session);

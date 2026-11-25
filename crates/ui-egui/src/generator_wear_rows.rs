@@ -31,34 +31,34 @@ pub(crate) fn wear_rows(
     }
 
     let dirt = kind == GeneratorKind::Dirt;
-    let (level_label, contrast_label) = if dirt { (tr("Dirt Level"), tr("Dirt Contrast")) } else { (tr("Wear Level"), tr("Wear Contrast")) };
+    let (level_label, contrast_label) = if dirt { (tr("Dirt Coverage"), tr("Dirt Definition")) } else { (tr("Wear Coverage"), tr("Wear Definition")) };
     let mut edited = wear;
     let mut stack = [
         StackSlider::unit(level_label, &mut edited.level),
         StackSlider::unit(contrast_label, &mut edited.contrast),
-        StackSlider::unit(tr("Grunge Amount"), &mut edited.grunge_amount),
+        StackSlider::unit(tr("Pattern Influence"), &mut edited.grunge_amount),
     ];
     let mut edit = sheet.picture_sliders(picture, &mut stack).into_iter().flatten().next();
     if kind != GeneratorKind::FiberGlassEdgeWear {
-        edit = edit.or(sheet.slider(tr("Grunge Scale"), &mut edited.grunge_scale, WearParameters::GRUNGE_SCALE_RANGE, 0));
+        edit = edit.or(sheet.slider(tr("Pattern Repeats"), &mut edited.grunge_scale, WearParameters::GRUNGE_SCALE_RANGE, 0));
     }
     if dirt {
-        edit = edit.or(sheet.slider(tr("Edges Masking"), &mut edited.edges_masking, 0.0..=1.0, 2));
+        edit = edit.or(sheet.slider(tr("Keep Raised Edges Clean"), &mut edited.edges_masking, 0.0..=1.0, 2));
     } else {
-        edit = edit.or(sheet.slider(tr("Edges Smoothness"), &mut edited.edges_smoothness, WearParameters::EDGES_SMOOTHNESS_RANGE, 2));
-        edit = edit.or(sheet.slider(tr("Ambient Occlusion Masking"), &mut edited.ao_masking, 0.0..=1.0, 2));
-        edit = edit.or(sheet.slider(tr("Curvature Weight"), &mut edited.curvature_weight, 0.0..=1.0, 2));
+        edit = edit.or(sheet.slider(tr("Edge Falloff"), &mut edited.edges_smoothness, WearParameters::EDGES_SMOOTHNESS_RANGE, 2));
+        edit = edit.or(sheet.slider(tr("Keep Recesses Clean"), &mut edited.ao_masking, 0.0..=1.0, 2));
+        edit = edit.or(sheet.slider(tr("Convex Edge Influence"), &mut edited.curvature_weight, 0.0..=1.0, 2));
     }
 
-    if sheet.switch_card(tr("Use Triplanar"), &mut edited.triplanar) {
+    if sheet.switch_card(tr("Project on Three Axes"), &mut edited.triplanar) {
         edit = Some(false);
     }
     if edited.triplanar {
-        edit = edit.or(sheet.slider(tr("Triplanar Blending Contrast"), &mut edited.triplanar_contrast, 0.0..=1.0, 2));
+        edit = edit.or(sheet.slider(tr("Projection Blend Hardness"), &mut edited.triplanar_contrast, 0.0..=1.0, 2));
     }
     sheet.close_card();
 
-    if sheet.switch_card(tr("Use Custom Grunge"), &mut edited.custom_grunge) {
+    if sheet.switch_card(tr("Custom Wear Pattern"), &mut edited.custom_grunge) {
         edit = Some(false);
     }
     if edited.custom_grunge {

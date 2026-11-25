@@ -421,13 +421,14 @@ fn wear_from(command: &str, params: &Value, generator: &mut Generator) -> Result
     let given = |keys: &[&str]| keys.iter().any(|key| params.get(*key).is_some());
     let wear_given = given(&WEAR_KEYS) || strp(params, "input") == Some(GRUNGE_INPUT);
     let Some(defaults) = WearParameters::defaults(generator.kind) else {
-        return if wear_given { Err(bad(command, "only Metal Edge Wear, Fiber Glass Edge Wear and Dirt have wear controls")) } else { Ok(()) };
+        return if wear_given { Err(bad(command, format!("{} has no wear controls", generator.kind.label()))) } else { Ok(()) };
     };
 
     let earlier_model = given(&EARLIER_WEAR_KEYS) || (generator.wear.is_none() && !wear_given && generator.kind != GeneratorKind::FiberGlassEdgeWear);
     if given(&GLOBAL_KEYS) && !earlier_model {
         return Err(bad(command, format!("{} has no global blur, balance or contrast on its wear controls", generator.kind.label())));
     }
+
     if let Some(unused) = WEAR_KEYS.iter().find(|key| params.get(**key).is_some() && !wear_key_applies(generator.kind, key)) {
         return Err(bad(command, format!("{} has no `{unused}`", generator.kind.label())));
     }
@@ -436,12 +437,14 @@ fn wear_from(command: &str, params: &Value, generator: &mut Generator) -> Result
         if wear_given {
             return Err(bad(command, "level, softness, noise and offset drive the earlier wear model: give them or the wear controls, not both"));
         }
+
         if generator.kind == GeneratorKind::FiberGlassEdgeWear {
-            return Err(bad(command, "Fiber Glass Edge Wear has wear controls only (wearLevel, wearContrast…), no level, softness, noise or offset"));
+            return Err(bad(command, format!("{} requires wear controls such as wearLevel or wearContrast", generator.kind.label())));
         }
         generator.wear = None;
         return Ok(());
     }
+
     if !wear_given {
         return Ok(());
     }
@@ -655,6 +658,7 @@ fn texture_from(command: &str, params: &Value, generator: &mut Generator) -> Res
     if !TEXTURE_KEYS.iter().any(|key| params.get(*key).is_some()) {
         return Ok(());
     }
+
     let mut texture = generator.texture.as_deref().cloned().unwrap_or_default();
     if let Some(enabled) = boolp(params, "useTexture") {
         texture.enabled = enabled;
@@ -821,6 +825,7 @@ fn generator_input_param(session: &Session, owner: LayerId, params: &Value) -> R
             if !session.images.contains_key(image) {
                 return Err(bad(CMD, format!("no image resource `{image}`")));
             }
+
             Some(Source::Image { name: image.to_string(), normal_format: Default::default() })
         }
         (None, Some(value), None, false) => Some(Source::Uniform([value.clamp(0.0, 1.0); 3])),
@@ -1139,7 +1144,8 @@ pub(crate) fn set(session: &mut Session, params: &Value) -> Result<Value> {
                             None => generator.inputs.remove(&map),
                         };
                     }
-                    // generator_from refused the texture on kinds without one and moved the generator onto its section controls
+
+                    // The generator parser has validated texture support and migrated the section controls
                     Some((GeneratorInput::Texture, source)) => generator.texture.get_or_insert_default().source = source,
                     // generator_from refused the grunge on kinds without wear controls and moved the generator onto them
                     Some((GeneratorInput::Grunge, source)) => generator.grunge = source,
@@ -1153,6 +1159,7 @@ pub(crate) fn set(session: &mut Session, params: &Value) -> Result<Value> {
                         if generator.kind != GeneratorKind::GrayscaleConversion {
                             return Err(bad(CMD, "only Grayscale Conversion reads an `image` input"));
                         }
+
                         let mut grayscale = generator.grayscale_controls().unwrap_or_default();
                         grayscale.source = source;
                         generator.controls = Some(Box::new(KindControls::Grayscale(grayscale)));

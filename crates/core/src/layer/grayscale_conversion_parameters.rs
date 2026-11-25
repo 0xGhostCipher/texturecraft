@@ -33,6 +33,7 @@ impl GrayscaleConversionParameters {
         let within = |value: f32, default: f32, range: std::ops::RangeInclusive<f32>| {
             if value.is_finite() { value.clamp(*range.start(), *range.end()) } else { default }
         };
+
         GrayscaleConversionParameters {
             balance: within(self.balance, defaults.balance, 0.0..=1.0),
             contrast: within(self.contrast, defaults.contrast, 0.0..=1.0),

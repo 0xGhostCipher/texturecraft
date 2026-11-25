@@ -56,6 +56,20 @@ fn picking_from_the_slot_swaps_the_generator_kind() {
 }
 
 #[test]
+fn a_former_generator_name_finds_the_reworded_picker_option() {
+    let (mut harness, effect) = app_with_dirt();
+    open_picker(&mut harness);
+    harness.event(egui::Event::Text("fiber glass edge wear".into()));
+    harness.run_steps(3);
+
+    harness.get_by_role_and_label(Role::ListBoxOption, "Exposed Glass Fibers").click();
+    harness.run_steps(3);
+
+    assert_eq!(kind(&harness, effect), Some(GeneratorKind::FiberGlassEdgeWear));
+    assert!(harness.query_all_by_role_and_label(Role::ComboBox, "Exposed Glass Fibers").next().is_some());
+}
+
+#[test]
 fn the_picker_leaves_thin_areas_out() {
     let (mut harness, _) = app_with_dirt();
     open_picker(&mut harness);
@@ -80,7 +94,7 @@ fn generator_picker_snapshots() {
     session.target = StackTarget::Effect(LayerId(effect["effect"].as_u64().unwrap()));
     let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).wgpu().build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.run_steps(20);
-    harness.get_by_role_and_label(Role::ComboBox, "Metal Edge Wear").click();
+    harness.get_by_role_and_label(Role::ComboBox, "Worn Metal Edges").click();
 
     // The orbs render on the preview worker: give it time to bake and answer
     for _ in 0..60 {
@@ -93,6 +107,7 @@ fn generator_picker_snapshots() {
         harness.state_mut().ui.prefs.brightness = brightness;
         harness.run_steps(3);
         harness.render().unwrap().save(output.join(format!("{name}.png"))).unwrap();
+        std::fs::write(output.join(format!("{name}.txt")), format!("{:#?}", harness.root())).unwrap();
     }
 
     // The picker's tile is the list option named Dirt
@@ -102,4 +117,5 @@ fn generator_picker_snapshots() {
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
     harness.render().unwrap().save(output.join("generator-picker-hover.png")).unwrap();
+    std::fs::write(output.join("generator-picker-hover.txt"), format!("{:#?}", harness.root())).unwrap();
 }

@@ -34,7 +34,7 @@ mod held_fields;
 mod histogram_scan;
 mod image_identity;
 mod mask_gray;
-mod micro_details;
+mod micro_detail;
 pub mod mip_level;
 mod organic;
 pub mod pattern;

@@ -50,24 +50,31 @@ pub fn distance_from(command: &str, params: &Value, generator: &mut Generator) -
     if !kind.has_no_earlier_model() || kind == GeneratorKind::FiberGlassEdgeWear {
         return Ok(());
     }
+
     if let Some(key) = first_given(params, &OTHER_MODEL_KEYS) {
         return Err(bad(command, format!("{} has no `{key}`: it has its own controls only", kind.label())));
     }
+
     if kind == GeneratorKind::ThreeDLinearGradient {
         return linear_gradient_from(command, params, generator);
     }
+
     if kind == GeneratorKind::GrayscaleConversion {
         return grayscale_from(command, params, generator);
     }
+
     if kind == GeneratorKind::DrippingRust {
         return dripping_rust_from(command, params, generator);
     }
+
     if kind == GeneratorKind::UvRandomColor {
         return uv_random_color_from(command, params, generator);
     }
+
     if kind == GeneratorKind::UvChecker {
         return uv_checker_from(command, params, generator);
     }
+
     if kind == GeneratorKind::UvBorderDistance {
         let mut border = generator.border_distance_controls().unwrap_or_default();
         for (key, value) in [

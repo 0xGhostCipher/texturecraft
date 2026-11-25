@@ -6,6 +6,7 @@ pub(crate) fn histogram_scan(value: f32, position: f32, contrast: f32) -> f32 {
     if position <= 0.0 {
         return 0.0;
     }
+
     if position >= 1.0 {
         return 1.0;
     }

@@ -162,11 +162,13 @@ fn rows(
         crate::generator_kind_rows::kind_rows(app, sheet, id, generator, controls, picture);
         return;
     }
+
     if let Some(defaults) = WearParameters::defaults(kind) {
         // A wear generator saved before its wear controls shows them at their defaults: editing one moves it onto them
         wear_rows(app, sheet, (layer, id), generator, generator.wear.unwrap_or(defaults), picture);
         return;
     }
+
     if let Some(light) = generator.light {
         light_rows(app, sheet, id, Some(generator.invert), light, picture);
         return;

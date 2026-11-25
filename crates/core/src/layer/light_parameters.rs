@@ -39,6 +39,7 @@ impl LightParameters {
         let within = |value: f32, default: f32, range: std::ops::RangeInclusive<f32>| {
             if value.is_finite() { value.clamp(*range.start(), *range.end()) } else { default }
         };
+
         LightParameters {
             horizontal: within(self.horizontal, defaults.horizontal, LightParameters::ANGLE_RANGE),
             vertical: within(self.vertical, defaults.vertical, LightParameters::ANGLE_RANGE),

@@ -7,7 +7,7 @@ use texturecraft_core::{BakedMap, Generator, KindControls, MicroDetails};
 use crate::curvature_sizes::CurvatureSizes;
 use crate::dripping_rust::rust_field;
 use crate::eval::Inputs;
-use crate::micro_details::{LayoutMap, MicroCurvature, micro_occlusion};
+use crate::micro_detail::{AnchorHeights, LayoutMap, MicroCurvature, micro_occlusion};
 use crate::uv_border_distance::border_gradient;
 use crate::uv_islands::{checker_field, random_color_field};
 
@@ -27,22 +27,24 @@ pub(crate) struct GeneratorMaps {
 }
 
 impl GeneratorMaps {
-    /// The maps `generator` reads, with the detail sizes `needed` marks (one flag per blurred size); `coverage` gives the working layout's coverage identity for whole-map fields
-    pub fn of(inp: &Inputs, generator: &Generator, needed: &[bool], coverage: impl FnOnce() -> u64) -> GeneratorMaps {
+    /// The maps `generator` reads, with the detail sizes `needed` marks (one flag per blurred size); `geometry` fingerprints sampled layout and mesh inputs for whole-map fields
+    pub fn of(inp: &Inputs, generator: &Generator, needed: &[bool], anchor: Option<Arc<AnchorHeights>>, geometry: impl FnOnce() -> u64) -> GeneratorMaps {
         let micro = generator.micro_in_use().map(|micro| micro.clone().clamped(generator.kind));
-        let micro_curvature =
-            micro.as_ref().filter(|_| MicroDetails::has_curvature(generator.kind)).and_then(|micro| MicroCurvature::of(inp, generator.kind, micro));
-        let micro_occlusion = micro.as_ref().filter(|_| MicroDetails::has_occlusion(generator.kind)).and_then(|micro| micro_occlusion(inp, micro));
+        let micro_curvature = micro
+            .as_ref()
+            .filter(|_| MicroDetails::has_curvature(generator.kind))
+            .and_then(|micro| MicroCurvature::of(inp, generator.kind, micro, anchor.clone()));
+        let micro_occlusion = micro.as_ref().filter(|_| MicroDetails::has_occlusion(generator.kind)).and_then(|micro| micro_occlusion(inp, micro, anchor));
         let sizes = match &micro_curvature {
             Some(micro) => CurvatureSizes::of_map(inp, &micro.curvature, needed),
             None => inp.baked.maps.get(&BakedMap::Curvature).and_then(|curvature| CurvatureSizes::of_map(inp, curvature, needed)),
         };
         let controls = generator.kind_controls();
         let field = match &controls {
-            Some(KindControls::BorderDistance(border)) => Some(border_gradient(inp, coverage(), border)),
-            Some(KindControls::DrippingRust(rust)) => Some(rust_field(inp, coverage(), rust, generator.seed)),
-            Some(KindControls::UvRandomColor(random)) => Some(random_color_field(inp, coverage(), random, generator.seed)),
-            Some(KindControls::UvChecker(checker)) => Some(checker_field(inp, coverage(), checker, generator.seed)),
+            Some(KindControls::BorderDistance(border)) => Some(border_gradient(inp, geometry(), border)),
+            Some(KindControls::DrippingRust(rust)) => Some(rust_field(inp, geometry(), rust, generator.seed)),
+            Some(KindControls::UvRandomColor(random)) => Some(random_color_field(inp, geometry(), random, generator.seed)),
+            Some(KindControls::UvChecker(checker)) => Some(checker_field(inp, geometry(), checker, generator.seed)),
             _ => None,
         };
         GeneratorMaps { sizes, micro_curvature, micro_occlusion, field, controls: controls.map(Arc::new) }

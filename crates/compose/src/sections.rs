@@ -96,6 +96,7 @@ fn contrasted(value: f32, contrast: f32) -> f32 {
     if contrast <= 0.0 {
         return value;
     }
+
     let half_range = 0.5 * (1.0 - contrast);
     if 2.0 * half_range < GeneratorGlobal::MIN_RANGE {
         return if value > 0.5 + FULL_CONTRAST_STEP_OFFSET { 1.0 } else { 0.0 };
@@ -234,6 +235,7 @@ mod tests {
         assert_eq!(blur_sigma(GeneratorKind::Position, &section), 0.0);
         assert_eq!(blur_sigma(GeneratorKind::WorldSpaceNormals, &section), 72.0);
         assert_eq!(blur_radius_at(GeneratorKind::AmbientOcclusion, &SectionParameters { blur: 0.0, ..section }, 2048), 0);
+
         // Three boxes of radius 4 spread a texel with variance 4 × 5, the closest to sigma 4.5 squared
         assert_eq!(blur_radius_at(GeneratorKind::AmbientOcclusion, &SectionParameters { blur: 1.0, ..section }, 2048), 4);
     }

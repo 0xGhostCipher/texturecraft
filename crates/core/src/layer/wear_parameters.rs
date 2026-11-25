@@ -76,6 +76,7 @@ impl WearParameters {
         let within = |value: f32, default: f32, range: &std::ops::RangeInclusive<f32>| {
             if value.is_finite() { value.clamp(*range.start(), *range.end()) } else { default }
         };
+
         WearParameters {
             level: unit(self.level, defaults.level),
             contrast: unit(self.contrast, defaults.contrast),

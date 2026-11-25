@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use texturecraft_core::{UvCheckerParameters, UvRandomColorParameters};
+use texturecraft_core::{GeneratorKind, UvCheckerParameters, UvRandomColorParameters};
 use texturecraft_geom::{NO_TRI, TrianglePartition};
 use texturecraft_texel::linear_to_srgb;
 use texturecraft_texel::noise::cell_hash;
@@ -17,12 +17,13 @@ use crate::working_field::REFERENCE_TILE_TEXELS;
 static CACHE: FieldCache = FieldCache::new();
 
 /// UV Random Color at every working texel of `inp`: one value per UV island (0 outside the islands)
-pub(crate) fn random_color_field(inp: &Inputs, coverage: u64, random: &UvRandomColorParameters, seed: u32) -> Arc<Vec<f32>> {
-    let mut settings = vec![seed, u32::from(random.custom_gradient)];
+pub(crate) fn random_color_field(inp: &Inputs, geometry: u64, random: &UvRandomColorParameters, seed: u32) -> Arc<Vec<f32>> {
+    let mut settings = vec![GeneratorKind::UvRandomColor as u32, seed, u32::from(random.custom_gradient)];
     settings.push(random.used_colors().len() as u32);
     settings.extend(random.used_colors().iter().flat_map(|color| color.map(f32::to_bits)));
     settings.extend(random.positions.iter().map(|position| position.to_bits()));
-    CACHE.get_or_build(inp, coverage, &[], settings, |_| {
+
+    CACHE.get_or_build(inp, geometry, &[], settings, |_| {
         let island_values = island_values(inp, |island| random_gray(random, seed, island));
         let gbuf = inp.gbuf;
         gbuf.tri.par_iter().map(|triangle| island_values.get(triangle).copied().unwrap_or(0.0)).collect()
@@ -37,8 +38,10 @@ fn island_values(inp: &Inputs, value_of: impl Fn(u32) -> f32) -> HashMap<u32, f3
         .groups
         .iter()
         .enumerate()
-        .flat_map(|(island, triangles)| triangles.iter().map(move |triangle| (*triangle, island as u32)))
-        .map(|(triangle, island)| (triangle, value_of(island)))
+        .flat_map(|(island, triangles)| {
+            let value = value_of(island as u32);
+            triangles.iter().map(move |triangle| (*triangle, value))
+        })
         .collect()
 }
 
@@ -73,14 +76,23 @@ const RANDOM_SATURATION: std::ops::RangeInclusive<f32> = 0.06..=0.57;
 const RANDOM_VALUE: std::ops::RangeInclusive<f32> = 0.42..=0.80;
 
 /// UV Checker at every working texel of `inp`: the gray of its color, the mean of the sRGB-encoded channels as the reference reads it (0 outside the islands)
-pub(crate) fn checker_field(inp: &Inputs, coverage: u64, checker: &UvCheckerParameters, seed: u32) -> Arc<Vec<f32>> {
-    let mut settings = vec![seed, u32::from(checker.random_colors), checker.grid_tile, checker.grid_opacity.to_bits(), checker.border_width.to_bits()];
+pub(crate) fn checker_field(inp: &Inputs, geometry: u64, checker: &UvCheckerParameters, seed: u32) -> Arc<Vec<f32>> {
+    let mut settings = vec![
+        GeneratorKind::UvChecker as u32,
+        seed,
+        u32::from(checker.random_colors),
+        checker.grid_tile,
+        checker.grid_opacity.to_bits(),
+        checker.border_width.to_bits(),
+    ];
     settings.extend(checker.checker_color.iter().chain(&checker.border_color).map(|value| value.to_bits()));
-    CACHE.get_or_build(inp, coverage, &[], settings, |block| {
+
+    CACHE.get_or_build(inp, geometry, &[], settings, |block| {
         let gbuf = inp.gbuf;
         let (width, height) = (gbuf.width, gbuf.height);
         let island_colors = if checker.random_colors { island_colors(inp, seed) } else { HashMap::new() };
-        let distances = border_distances(gbuf, (width, height), block);
+        let distances = (checker.border_width > 0.0).then(|| border_distances(gbuf, (width, height), block));
+        let border_width_texels_2k = checker.border_width * BORDER_TEXELS_PER_WIDTH_2K;
         let light = checker.checker_color.map(linear_to_srgb);
         let border = checker.border_color.map(linear_to_srgb);
 
@@ -88,11 +100,16 @@ pub(crate) fn checker_field(inp: &Inputs, coverage: u64, checker: &UvCheckerPara
             .into_par_iter()
             .map(|texel| {
                 let Some(triangle) = gbuf.tri.get(texel as usize).copied().filter(|triangle| *triangle != NO_TRI) else { return 0.0 };
+
                 let (x, y) = (texel % width, texel / width);
                 let texels_2k = REFERENCE_TILE_TEXELS / (block.0 as f32 * inp.block_scales.at(x, y));
-                // Measured from the texel's 2K sub-texel nearest the border, so a coarser texel still shows the border it holds
-                let to_border = distances.get(texel as usize).copied().unwrap_or(0.0) * texels_2k - footprint_beyond_one(texels_2k);
-                let color = if checker.border_width > 0.0 && to_border <= checker.border_width * BORDER_TEXELS_PER_WIDTH_2K {
+
+                // Measure from the texel footprint so coarse texels still show the border they cover
+                let on_border = distances.as_ref().is_some_and(|distances| {
+                    let distance = distances.get(texel as usize).copied().unwrap_or(0.0);
+                    distance * texels_2k - footprint_beyond_one(texels_2k) <= border_width_texels_2k
+                });
+                let color = if on_border {
                     border
                 } else {
                     let uv = texel_coords(inp, x, y).uv;
@@ -119,7 +136,8 @@ fn checker_color(checker: &UvCheckerParameters, light: [f32; 3], (x, y): (f32, f
 
     // Line layers in the reference's order, each laid over the last at the grid's opacity
     let minor = square / MINOR_LINES_PER_SQUARE;
-    // A texel is on a line when its footprint overlaps the line's band, so lines stay visible on coarser texels
+
+    // Include the texel footprint so thin grid lines survive coarse sampling
     let reach = LINE_HALF_WIDTH_2K + footprint_beyond_one(texels_2k) / 2.0;
     let on_line = |position: f32, period: f32| (position - (position / period).round() * period).abs() < reach;
     let layers = [

@@ -84,6 +84,7 @@ impl CurvatureSizes {
                 if let Some(existing) = built.and_then(|sizes| sizes.levels.get(level)).and_then(Option::clone) {
                     return Some(existing);
                 }
+
                 if !needed.get(level).copied().unwrap_or(false) {
                     return None;
                 }
@@ -91,6 +92,7 @@ impl CurvatureSizes {
                 // Sizes are texels at 2K; a blur this wide holds nothing finer than half its radius, so it is stored that much coarser
                 let radius = (size * block_width as f32 / 2048.0).round().max(1.0) as u32;
                 let mut step = (radius / 2).max(1).next_power_of_two();
+
                 // A coarse cell must not average curvature from different UV tiles
                 while !block_width.is_multiple_of(step) || !block_height.is_multiple_of(step) {
                     step /= 2;

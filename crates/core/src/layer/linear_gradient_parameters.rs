@@ -19,6 +19,7 @@ impl LinearGradientParameters {
     pub fn clamped(self) -> LinearGradientParameters {
         let defaults = LinearGradientParameters::default();
         let unit = |value: f32, default: f32| if value.is_finite() { value.clamp(0.0, 1.0) } else { default };
+
         LinearGradientParameters {
             start: std::array::from_fn(|axis| unit(self.start[axis], defaults.start[axis])),
             end: std::array::from_fn(|axis| unit(self.end[axis], defaults.end[axis])),

@@ -10,7 +10,7 @@ use texturecraft_engine::core::{
 use crate::TextureCraftApp;
 use crate::fill_material_panel::take_color_pick;
 use crate::generator_params::{DRIPS_AXES, kind_params, merged};
-use crate::generator_point_pick::PointPick;
+use crate::generator_point_pick::GeneratorPointPick;
 use crate::i18n::{tr, trf};
 use crate::property_sheet::{NumberField, PropertySheet, StackSlider};
 use crate::theme::AXIS_COLORS;
@@ -67,7 +67,7 @@ fn sent(merge: Option<bool>, controls: KindControls) -> KindEdit {
 }
 
 /// A point's X, Y and Z (across the mesh's evenly scaled bounds) with its pick-on-mesh button; returns its edit
-fn point_row(sheet: &mut PropertySheet<'_>, label: &str, point: &mut [f32; 3], pick: PointPick) -> Option<bool> {
+fn point_row(sheet: &mut PropertySheet<'_>, label: &str, point: &mut [f32; 3], pick: GeneratorPointPick) -> Option<bool> {
     let mut fields: Vec<NumberField> = ["X", "Y", "Z"]
         .into_iter()
         .zip(AXIS_COLORS)
@@ -103,7 +103,7 @@ fn distance_rows(sheet: &mut PropertySheet<'_>, id: u64, shown: DistanceParamete
     };
     let mut stack = [radius, StackSlider::unit(tr("Offset"), &mut edited.offset), StackSlider::unit(tr("Contrast"), &mut edited.contrast)];
     let mut edit = first_edit(sheet.picture_sliders(picture, &mut stack));
-    edit = edit.or(point_row(sheet, tr("3D Position"), &mut edited.point, PointPick { effect: id, point: "distance" }));
+    edit = edit.or(point_row(sheet, tr("3D Position"), &mut edited.point, GeneratorPointPick { effect: id, point: "distance" }));
     sent(edit, KindControls::Distance(edited))
 }
 
@@ -112,8 +112,8 @@ fn linear_gradient_rows(sheet: &mut PropertySheet<'_>, id: u64, shown: LinearGra
     let mut edited = shown;
     let mut stack = [StackSlider::unit(tr("Balance"), &mut edited.balance), StackSlider::unit(tr("Contrast"), &mut edited.contrast)];
     let mut edit = first_edit(sheet.picture_sliders(picture, &mut stack));
-    edit = edit.or(point_row(sheet, tr("3D Position Start"), &mut edited.start, PointPick { effect: id, point: "start" }));
-    edit = edit.or(point_row(sheet, tr("3D Position End"), &mut edited.end, PointPick { effect: id, point: "end" }));
+    edit = edit.or(point_row(sheet, tr("3D Position Start"), &mut edited.start, GeneratorPointPick { effect: id, point: "start" }));
+    edit = edit.or(point_row(sheet, tr("3D Position End"), &mut edited.end, GeneratorPointPick { effect: id, point: "end" }));
     sent(edit, KindControls::LinearGradient(edited))
 }
 
@@ -153,25 +153,25 @@ fn grayscale_rows(sheet: &mut PropertySheet<'_>, shown: GrayscaleConversionParam
     sent(edit, KindControls::Grayscale(edited))
 }
 
-/// Dripping Rust: Rust Spreading, Rust Contrast and Spreading Smoothness beside the preview, then the drips and the axis they run along
+/// The rust coverage and specks sit beside the preview, with streak controls below
 fn rust_rows(sheet: &mut PropertySheet<'_>, shown: DrippingRustParameters, picture: &dyn Fn(&Painter, Rect)) -> KindEdit {
     let mut edited = shown;
     let mut stack = [
-        StackSlider::unit(tr("Rust Spreading"), &mut edited.spreading),
-        StackSlider::unit(tr("Rust Contrast"), &mut edited.contrast),
-        StackSlider::unit(tr("Spreading Smoothness"), &mut edited.spreading_smoothness),
+        StackSlider::unit(tr("Rust Coverage"), &mut edited.spreading),
+        StackSlider::unit(tr("Speck Definition"), &mut edited.contrast),
+        StackSlider::unit(tr("Speck Softness"), &mut edited.spreading_smoothness),
     ];
     let mut edit = first_edit(sheet.picture_sliders(picture, &mut stack));
-    edit = edit.or(sheet.slider(tr("Drips Intensity"), &mut edited.drips_intensity, 0.0..=1.0, 2));
-    edit = edit.or(sheet.slider(tr("Drips Smoothness"), &mut edited.drips_smoothness, 0.0..=1.0, 2));
+    edit = edit.or(sheet.slider(tr("Streak Reach"), &mut edited.drips_intensity, 0.0..=1.0, 2));
+    edit = edit.or(sheet.slider(tr("Streak Softness"), &mut edited.drips_smoothness, 0.0..=1.0, 2));
     let mut samples = edited.drips_samples as f32;
-    if let Some(merge) = sheet.slider(tr("Drips Samples Amount"), &mut samples, 0.0..=DrippingRustParameters::MAX_SAMPLES as f32, 0) {
+    if let Some(merge) = sheet.slider(tr("Samples per Streak"), &mut samples, 0.0..=DrippingRustParameters::MAX_SAMPLES as f32, 0) {
         edited.drips_samples = samples.round() as u32;
         edit = edit.or(Some(merge));
     }
-    let axes = [tr("X - Red Channel"), tr("Y - Green Channel"), tr("Z - Blue Channel")];
+    let axes = [tr("X"), tr("Y"), tr("Z")];
     let name = |axis: u8| axes.get(usize::from(axis)).copied().unwrap_or_default().to_string();
-    if let (Some(picked), _) = sheet.dropdown(tr("Position Axis"), edited.axis, &[0, 1, 2], name, None) {
+    if let (Some(picked), _) = sheet.dropdown(tr("Flow Axis"), edited.axis, &[0, 1, 2], name, None) {
         edited.axis = picked;
         edit = Some(false);
     }
@@ -187,6 +187,7 @@ fn random_color_rows(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, i
         edited.custom_gradient = picked == 1;
         return sent(Some(false), KindControls::UvRandomColor(edited));
     }
+
     if !edited.custom_gradient {
         return None;
     }

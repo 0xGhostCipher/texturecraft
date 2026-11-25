@@ -27,6 +27,7 @@ impl DrippingRustParameters {
     pub fn clamped(self) -> DrippingRustParameters {
         let defaults = DrippingRustParameters::default();
         let unit = |value: f32, default: f32| if value.is_finite() { value.clamp(0.0, 1.0) } else { default };
+
         DrippingRustParameters {
             spreading: unit(self.spreading, defaults.spreading),
             contrast: unit(self.contrast, defaults.contrast),

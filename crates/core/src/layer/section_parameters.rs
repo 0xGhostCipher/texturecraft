@@ -80,6 +80,7 @@ impl SectionParameters {
             let (axis, default) = (self.axes[index], defaults.axes[index]);
             AxisLayer { weight: within(axis.weight, default.weight, 0.0..=1.0), ..axis }
         });
+
         SectionParameters {
             invert: self.invert,
             blur: within(self.blur, defaults.blur, SectionParameters::BLUR_RANGE),

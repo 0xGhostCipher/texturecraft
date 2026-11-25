@@ -125,6 +125,7 @@ impl MicroDetails {
         let within = |value: f32, default: f32, range: std::ops::RangeInclusive<f32>| {
             if value.is_finite() { value.clamp(*range.start(), *range.end()) } else { default }
         };
+
         MicroDetails {
             curvature_intensity: within(self.curvature_intensity, defaults.curvature_intensity, MicroDetails::curvature_intensity_range(kind)),
             height_intensity: within(self.height_intensity, defaults.height_intensity, MicroDetails::HEIGHT_INTENSITY_RANGE),

@@ -25,6 +25,7 @@ impl UvCheckerParameters {
     pub fn clamped(self) -> UvCheckerParameters {
         let defaults = UvCheckerParameters::default();
         let unit = |value: f32, default: f32| if value.is_finite() { value.clamp(0.0, 1.0) } else { default };
+
         UvCheckerParameters {
             checker_color: std::array::from_fn(|channel| unit(self.checker_color[channel], defaults.checker_color[channel])),
             grid_tile: self.grid_tile.clamp(*UvCheckerParameters::GRID_TILE_RANGE.start(), *UvCheckerParameters::GRID_TILE_RANGE.end()),

@@ -93,7 +93,8 @@ impl OrbPreview {
         }
 
         crate::execute(&mut self.session, "mask.smart.apply", &json!({ "name": id, "layer": self.layer.0 })).ok()?;
-        // Previews need no undo history; retaining snapshots grows memory across presets
+
+        // Discard preview undo snapshots between presets
         self.session.undo.clear();
         self.mask_pixels(size)
     }
@@ -120,7 +121,7 @@ impl OrbPreview {
     /// [`Self::generator_of`] with `images` (the images the generator reads, by name) loaded for this render only
     pub fn generator_reading(&mut self, generator: Generator, images: &[(String, Arc<ImageRes>)], size: usize) -> Option<Vec<Option<MaskPreviewPixel>>> {
         let replaced: Vec<_> = images.iter().map(|(name, image)| (name.clone(), self.session.images.insert(name.clone(), image.clone()))).collect();
-        let pixels = self.generator_of(with_sample_image(generator), size);
+        let pixels = self.generator_of(generator, size);
 
         // Restore in reverse so a name given twice ends as it began
         for (name, previous) in replaced.into_iter().rev() {
@@ -354,6 +355,19 @@ mod tests {
         preview.mask("dirt_cavities", size).unwrap();
         assert_eq!(preview.generator(GeneratorKind::EdgeWear, size).unwrap(), edges);
         assert!(preview.generator(GeneratorKind::EdgeWear, 0).is_none());
+    }
+
+    #[test]
+    fn the_live_grayscale_preview_preserves_an_empty_slot() {
+        let mut preview = OrbPreview::new().unwrap();
+        let generator = Generator::new(GeneratorKind::GrayscaleConversion);
+        let thumbnail = preview.generator(GeneratorKind::GrayscaleConversion, 24).unwrap();
+        let expected = preview.generator_of(generator.clone(), 24).unwrap();
+
+        let live = preview.generator_reading(generator, &[], 24).unwrap();
+
+        assert!(difference(&thumbnail, &expected) > 0.05, "the catalog thumbnail demonstrates the effect on a sample");
+        assert!(live == expected, "the configured generator renders its actual input");
     }
 
     #[test]

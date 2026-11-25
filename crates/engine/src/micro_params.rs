@@ -27,8 +27,8 @@ pub fn micro_key_applies(kind: GeneratorKind, key: &str) -> bool {
 /// The micro details controls in `params` (a micro height or normal input counts as one): they move a generator off its earlier model onto the reference's controls; `earlier_keys` are the keys that keep it there
 pub fn micro_from(command: &str, params: &Value, generator: &mut Generator, earlier_keys: &[&str]) -> Result<()> {
     let input_given = matches!(strp(params, "input"), Some(MICRO_HEIGHT_INPUT | MICRO_NORMAL_INPUT));
-    let mut given = MICRO_KEYS.iter().filter(|key| params.get(**key).is_some()).peekable();
-    if given.peek().is_none() && !input_given {
+    let mut requested_keys = MICRO_KEYS.iter().filter(|key| params.get(**key).is_some()).peekable();
+    if requested_keys.peek().is_none() && !input_given {
         return Ok(());
     }
 
@@ -36,17 +36,26 @@ pub fn micro_from(command: &str, params: &Value, generator: &mut Generator, earl
     let Some(defaults) = MicroDetails::defaults(kind) else {
         return Err(bad(command, format!("{} has no micro details: only Curvature, Ambient Occlusion and the wear kinds have them", kind.label())));
     };
-    if let Some(unused) = given.find(|key| !micro_key_applies(kind, key)) {
+
+    if let Some(unused) = requested_keys.find(|key| !micro_key_applies(kind, key)) {
         return Err(bad(command, format!("{} has no `{unused}`", kind.label())));
     }
+
     if WearParameters::defaults(kind).is_some() && ["blur", "balance", "contrast"].iter().any(|key| params.get(*key).is_some()) {
         return Err(bad(command, format!("{} has no global blur, balance or contrast beside its micro details", kind.label())));
     }
+
     if earlier_keys.iter().any(|key| params.get(*key).is_some()) {
         return Err(bad(command, "level, softness, noise and offset drive the earlier model: give them or the micro details, not both"));
     }
 
-    // Micro details exist on the reference's controls only
+    // Validate the switches before they can change the generator model
+    for key in ["useMicroDetails", "microHeight", "microNormal"] {
+        if params.get(key).is_some_and(|value| !value.is_boolean()) {
+            return Err(bad(command, format!("`{key}` must be a boolean")));
+        }
+    }
+
     if generator.on_earlier_model() {
         generator.offset = 0.0;
         if let Some(wear) = WearParameters::defaults(kind) {
@@ -66,6 +75,7 @@ pub fn micro_from(command: &str, params: &Value, generator: &mut Generator, earl
             *value = given;
         }
     }
+
     for (key, value) in [
         ("microCurvatureIntensity", &mut micro.curvature_intensity),
         ("microHeightIntensity", &mut micro.height_intensity),
@@ -76,10 +86,12 @@ pub fn micro_from(command: &str, params: &Value, generator: &mut Generator, earl
             *value = given;
         }
     }
+
     if let Some(value) = params.get("microCurvatureType") {
         let name = value.as_str().ok_or_else(|| bad(command, "`microCurvatureType` must be a string"))?;
         micro.curvature_type = MicroCurvatureType::parse(name).ok_or_else(|| bad(command, format!("unknown curvature type `{name}`")))?;
     }
+
     **micro = micro.as_ref().clone().clamped(kind);
     Ok(())
 }

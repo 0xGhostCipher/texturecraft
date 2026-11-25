@@ -723,6 +723,44 @@ fn nested_layers_snapshot() {
     save(&mut harness, &output_dir, "panel-layers-narrow-nested");
 }
 
+/// The mask anchor and generator micro controls in the integrated properties panel
+#[test]
+#[ignore]
+fn mask_anchor_micro_detail_snapshot() {
+    use serde_json::{Value, json};
+    use texturecraft_engine::execute;
+
+    let Some(output_dir) = std::env::var_os("TC_UI_SNAPSHOTS").map(PathBuf::from) else { return };
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
+    let lower = execute(&mut session, "layer.add.fill", &Value::Null).unwrap()["layer"].as_u64().unwrap();
+    execute(&mut session, "mask.add.black", &json!({"layer": lower})).unwrap();
+    execute(&mut session, "effect.add.fill", &json!({"layer": lower, "value": 0.4})).unwrap();
+    let anchor = execute(&mut session, "effect.add.anchor", &json!({"layer": lower, "target": "mask", "name": "Wear"})).unwrap()["effect"].as_u64().unwrap();
+    let upper = execute(&mut session, "layer.add.fill", &Value::Null).unwrap()["layer"].as_u64().unwrap();
+    let generator = execute(&mut session, "effect.add.generator", &json!({"layer": upper, "generator": "dirt", "microAnchor": anchor})).unwrap()["effect"]
+        .as_u64()
+        .unwrap();
+    execute(&mut session, "layer.select", &json!({"layer": upper, "target": generator})).unwrap();
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 1200.0))
+        .with_pixels_per_point(1.0)
+        .wgpu()
+        .build_eframe(|context| TextureCraftApp::new(context, session));
+    harness.state_mut().ui.dock.focus(Panel::Properties);
+    harness.run_steps(6);
+    harness.get_by_role_and_label(egui::Role::Button, "Micro Details").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(egui::Role::Button, "Micro Details").click();
+    harness.run_steps(3);
+
+    let height = harness.get_by_role_and_label(egui::Role::ComboBox, "Micro Height");
+    assert!(height.accesskit_node().value().is_some_and(|value| value.contains("Wear")));
+    height.scroll_to_me();
+    save(&mut harness, &output_dir, "mask-anchor-micro-detail");
+}
+
 #[test]
 #[ignore]
 fn path_tool_snapshots() {

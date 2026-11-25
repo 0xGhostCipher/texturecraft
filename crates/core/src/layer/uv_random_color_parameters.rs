@@ -56,7 +56,8 @@ impl UvRandomColorParameters {
     /// Use the first `wanted` colors: an evenly spaced gradient keeps its places from now on, and each added color starts at 1 as the gradient's color there
     pub fn set_quantity(&mut self, wanted: u8) {
         let wanted = wanted.clamp(UvRandomColorParameters::MIN_QUANTITY, UvRandomColorParameters::MAX_GRADIENT_COLORS as u8);
-        // The used colors without a place keep the even place the gradient gave them; hidden colors keep theirs
+
+        // Preserve the implicit positions of visible stops and the stored positions of hidden stops
         let even = self.used_positions();
         let placed = self.positions.len();
         self.positions.extend(even.into_iter().skip(placed));

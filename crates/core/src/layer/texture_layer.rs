@@ -64,6 +64,7 @@ impl TextureLayer {
         let within = |value: f32, default: f32, range: std::ops::RangeInclusive<f32>| {
             if value.is_finite() { value.clamp(*range.start(), *range.end()) } else { default }
         };
+
         TextureLayer {
             opacity: within(self.opacity, defaults.opacity, 0.0..=1.0),
             scale: within(self.scale, defaults.scale, TextureLayer::SCALE_RANGE),

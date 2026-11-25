@@ -22,16 +22,17 @@ pub(crate) fn box_radius(sigma: f32) -> usize {
 pub(crate) fn blur_blocks(data: &mut [f32], (width, height): (u32, u32), block: (u32, u32), radius_at: impl Fn(u32, u32) -> usize) {
     for top in (0..height).step_by(block.1 as usize) {
         for left in (0..width).step_by(block.0 as usize) {
+            let radius = radius_at(left, top);
+            if radius == 0 {
+                continue;
+            }
+
             let (columns, rows) = (block.0.min(width - left) as usize, block.1.min(height - top) as usize);
             let index = |column: usize, row: usize| (top as usize + row) * width as usize + left as usize + column;
             let mut values: Vec<f32> = (0..rows)
                 .flat_map(|row| (0..columns).map(move |column| (column, row)))
                 .map(|(column, row)| data.get(index(column, row)).copied().unwrap_or(0.0))
                 .collect();
-            let radius = radius_at(left, top);
-            if radius == 0 {
-                continue;
-            }
             blur(&mut values, columns, rows, radius);
             for (offset, value) in values.into_iter().enumerate() {
                 if let Some(target) = data.get_mut(index(offset % columns, offset / columns)) {

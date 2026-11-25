@@ -45,13 +45,25 @@ fn generator(harness: &Harness<'_, TextureCraftApp>, effect: LayerId) -> Generat
     }
 }
 
+#[test]
+fn the_runoff_panel_exposes_and_applies_the_reworded_streak_control() {
+    let (mut harness, effect) = harness_with(false, json!({"generator": "Dripping Rust"}));
+    let Some(KindControls::DrippingRust(before)) = generator(&harness, effect).kind_controls() else { panic!("expected runoff controls") };
+
+    drag_slider(&mut harness, "Streak Reach");
+
+    let Some(KindControls::DrippingRust(after)) = generator(&harness, effect).kind_controls() else { panic!("expected runoff controls") };
+    assert!(after.drips_intensity > before.drips_intensity);
+}
+
 /// Drags slider `label` from near its left end to the right
 fn drag_slider(harness: &mut Harness<'_, TextureCraftApp>, label: &str) {
     harness.get_by_role_and_label(Role::Slider, label).scroll_to_me();
     harness.run_steps(3);
     let rect = harness.get_by_role_and_label(Role::Slider, label).rect();
     let start = egui::pos2(rect.left() + 12.0, rect.center().y);
-    // Three quarters along: off a 0.5 default, which a drag ending mid-track would land back on
+
+    // End past the midpoint to distinguish the edit from the default
     let end = egui::pos2(rect.left() + rect.width() * 0.75, rect.center().y);
     harness.drag_at(start);
     harness.run_steps(2);
@@ -127,7 +139,7 @@ fn a_wear_control_moves_an_earlier_wear_generator_onto_the_wear_controls() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "edgeWear", "level": 0.4}));
     assert_eq!(generator(&harness, effect).wear, None, "level keeps it on the earlier model");
 
-    drag_slider(&mut harness, "Wear Level");
+    drag_slider(&mut harness, "Wear Coverage");
 
     let wear = generator(&harness, effect).wear.expect("on the wear controls now");
     let defaults = WearParameters::defaults(GeneratorKind::EdgeWear).unwrap();
@@ -399,6 +411,7 @@ fn full_set_panel_snapshots() {
             harness.state_mut().ui.prefs.brightness = brightness;
             harness.run_steps(3);
             harness.render().unwrap().save(directory.join(format!("generator-{kind}-{name}.png"))).unwrap();
+            std::fs::write(directory.join(format!("generator-{kind}-{name}.txt")), format!("{:#?}", harness.root())).unwrap();
         }
     }
 }
@@ -505,13 +518,23 @@ fn a_point_pick_waits_for_the_view_until_escape() {
 
     assert!(!is_on(&harness, Role::Button, end), "a pick left behind is dropped");
 
-    // A kind without the point drops it too: swapped back, it waits no more
+    // Swapping to a kind without points cancels the pending pick
     click_live(&mut harness, Role::Button, end);
     for kind in ["position", "3dLinearGradient"] {
         execute(&mut harness.state_mut().session, "effect.set", &json!({"effect": effect.0, "generator": kind})).unwrap();
         harness.run_steps(3);
     }
     assert!(!is_on(&harness, Role::Button, end), "a pick on a swapped kind is dropped");
+
+    let (mut next, same_effect) = harness_with(false, json!({"generator": "3dLinearGradient"}));
+    assert_eq!(effect, same_effect);
+    click_live(&mut harness, Role::Button, end);
+    assert!(is_on(&harness, Role::Button, end));
+
+    std::mem::swap(&mut harness.state_mut().session, &mut next.state_mut().session);
+    harness.run_steps(3);
+
+    assert!(!is_on(&harness, Role::Button, end), "a point pick belongs to its document");
 }
 
 #[test]
@@ -591,6 +614,7 @@ fn new_kind_panel_snapshots() {
             harness.state_mut().ui.prefs.brightness = brightness;
             harness.run_steps(3);
             harness.render().unwrap().save(directory.join(format!("generator-{kind}-{name}.png"))).unwrap();
+            std::fs::write(directory.join(format!("generator-{kind}-{name}.txt")), format!("{:#?}", harness.root())).unwrap();
         }
     }
 }
@@ -634,5 +658,6 @@ fn enlarged_preview_snapshots() {
         harness.state_mut().ui.prefs.brightness = brightness;
         harness.run_steps(3);
         harness.render().unwrap().save(directory.join(format!("generator-enlarged-preview-{name}.png"))).unwrap();
+        std::fs::write(directory.join(format!("generator-enlarged-preview-{name}.txt")), format!("{:#?}", harness.root())).unwrap();
     }
 }

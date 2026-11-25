@@ -19,6 +19,7 @@ impl BorderDistanceParameters {
     pub fn clamped(self) -> BorderDistanceParameters {
         let defaults = BorderDistanceParameters::default();
         let unit = |value: f32, default: f32| if value.is_finite() { value.clamp(0.0, 1.0) } else { default };
+
         BorderDistanceParameters {
             distance: unit(self.distance, defaults.distance),
             smoothness: unit(self.smoothness, defaults.smoothness),

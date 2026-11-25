@@ -18,8 +18,8 @@ const SMOOTHNESS_SIGMA_2K: f32 = 45.0;
 static CACHE: FieldCache = FieldCache::new();
 
 /// The gradient before balance, contrast and invert for every working texel of `inp` (0 outside the islands)
-pub(crate) fn border_gradient(inp: &Inputs, coverage: u64, border: &BorderDistanceParameters) -> Arc<Vec<f32>> {
-    CACHE.get_or_build(inp, coverage, &[], vec![border.distance.to_bits(), border.smoothness.to_bits()], |block| build(inp, border, block))
+pub(crate) fn border_gradient(inp: &Inputs, geometry: u64, border: &BorderDistanceParameters) -> Arc<Vec<f32>> {
+    CACHE.get_or_build(inp, geometry, &[], vec![border.distance.to_bits(), border.smoothness.to_bits()], |block| build(inp, border, block))
 }
 
 /// The value at a working texel: the gradient balanced, contrasted and inverted
@@ -40,6 +40,7 @@ fn build(inp: &Inputs, border: &BorderDistanceParameters, block: (u32, u32)) -> 
             if !gbuf.covered(texel as usize) {
                 return 0.0;
             }
+
             let (x, y) = (texel % width, texel / width);
             let tile_texels = block.0 as f32 * inp.block_scales.at(x, y);
             let to_border = distances.get(texel as usize).copied().unwrap_or(0.0);

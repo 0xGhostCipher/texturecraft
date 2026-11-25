@@ -45,6 +45,7 @@ impl TrianglePartition {
             while let Some(triangle) = stack.pop() {
                 members.push(triangle);
                 let triangle_edges = position_of.get(&triangle).and_then(|position| edge_lists.get_mut(*position)).map(std::mem::take).unwrap_or_default();
+
                 // Visit a shared edge once, including when many collapsed faces share the same key
                 for neighbour in triangle_edges.iter().flat_map(|edge| by_edge.remove(edge).into_iter().flatten()) {
                     if let std::collections::hash_map::Entry::Vacant(entry) = group_of.entry(neighbour) {

@@ -23,6 +23,7 @@ impl DistanceParameters {
         let within = |value: f32, default: f32, range: std::ops::RangeInclusive<f32>| {
             if value.is_finite() { value.clamp(*range.start(), *range.end()) } else { default }
         };
+
         DistanceParameters {
             point: std::array::from_fn(|axis| within(self.point[axis], defaults.point[axis], 0.0..=1.0)),
             radius: within(self.radius, defaults.radius, DistanceParameters::RADIUS_RANGE),

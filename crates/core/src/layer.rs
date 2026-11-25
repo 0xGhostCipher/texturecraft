@@ -1003,20 +1003,20 @@ impl GeneratorKind {
     ];
     pub fn label(self) -> &'static str {
         match self {
-            GeneratorKind::EdgeWear => "Metal Edge Wear",
+            GeneratorKind::EdgeWear => "Worn Metal Edges",
             GeneratorKind::Dirt => "Dirt",
             GeneratorKind::ThinAreas => "Thin areas",
             GeneratorKind::Curvature => "Curvature",
             GeneratorKind::AmbientOcclusion => "Ambient Occlusion",
             GeneratorKind::Position => "Position",
             GeneratorKind::Direction => "Light",
-            GeneratorKind::FiberGlassEdgeWear => "Fiber Glass Edge Wear",
+            GeneratorKind::FiberGlassEdgeWear => "Exposed Glass Fibers",
             GeneratorKind::WorldSpaceNormals => "World Space Normals",
             GeneratorKind::ThreeDDistance => "3D Distance",
             GeneratorKind::ThreeDLinearGradient => "3D Linear Gradient",
             GeneratorKind::UvBorderDistance => "UV Border Distance",
             GeneratorKind::GrayscaleConversion => "Grayscale Conversion",
-            GeneratorKind::DrippingRust => "Dripping Rust",
+            GeneratorKind::DrippingRust => "Rust Runoff",
             GeneratorKind::UvRandomColor => "UV Random Color",
             GeneratorKind::UvChecker => "UV Checker",
         }
@@ -1100,16 +1100,21 @@ impl GeneratorKind {
         let normalised = |text: &str| text.to_ascii_lowercase().replace([' ', '_', '-', ':'], "");
         let wanted = normalised(name);
 
-        // The labels before the reference app's names, which agents may still send
-        let earlier = |kind: GeneratorKind| match kind {
-            GeneratorKind::EdgeWear => Some("Mask Editor: Edge wear"),
-            GeneratorKind::Position => Some("Position gradient"),
-            GeneratorKind::Direction => Some("Light / direction"),
-            _ => None,
-        };
         GeneratorKind::ALL.into_iter().find(|kind| {
-            normalised(kind.id()) == wanted || normalised(kind.label()) == wanted || earlier(*kind).is_some_and(|label| normalised(label) == wanted)
+            normalised(kind.id()) == wanted || normalised(kind.label()) == wanted || kind.former_labels().iter().any(|label| normalised(label) == wanted)
         })
+    }
+
+    /// Earlier names accepted by commands and picker search
+    pub fn former_labels(self) -> &'static [&'static str] {
+        match self {
+            GeneratorKind::EdgeWear => &["Mask Editor: Edge wear", "Metal Edge Wear"],
+            GeneratorKind::Position => &["Position gradient"],
+            GeneratorKind::Direction => &["Light / direction"],
+            GeneratorKind::FiberGlassEdgeWear => &["Fiber Glass Edge Wear"],
+            GeneratorKind::DrippingRust => &["Dripping Rust"],
+            _ => &[],
+        }
     }
 }
 
