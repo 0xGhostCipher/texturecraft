@@ -152,6 +152,8 @@ fn the_right_click_menu_renames_and_removes_user_templates_only() {
     assert_eq!(h.state().ui.export.renaming.as_deref(), Some("Mine"));
     h.key_press(egui::Key::Escape);
     h.run_steps(4);
+    assert!(h.state().ui.export.renaming.is_none(), "Escape ends the rename");
+    assert!(h.state().ui.windows.export, "and leaves the window open");
 
     right_click(&mut h, "Mine");
     click(&mut h, "Remove");
@@ -492,6 +494,29 @@ fn a_color_map_dropped_on_the_rgb_swatch_offers_rgb_channels() {
 }
 
 #[test]
+fn escape_in_a_file_name_field_leaves_the_field_and_keeps_the_window() {
+    let library = TemplateLibrary::new("escape-in-a-field");
+    let mut h = harness(&library);
+    let field = name_field(&h, 0).center();
+    h.hover_at(field);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton { pos: field, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.step();
+    }
+    h.run_steps(4);
+    assert!(h.ctx.egui_wants_keyboard_input(), "the field has the keyboard");
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+
+    assert!(h.state().ui.windows.export, "the window stays open");
+    assert!(!h.ctx.egui_wants_keyboard_input(), "the field let go of the keyboard");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(!h.state().ui.windows.export, "a second Escape is Cancel");
+}
+
+#[test]
 fn escape_closes_the_from_popup_without_assigning() {
     let library = TemplateLibrary::new("drop-escape");
     let mut h = harness(&library);
@@ -510,6 +535,7 @@ fn escape_closes_the_from_popup_without_assigning() {
 
     assert!(h.query_by_label("Which part of Metallic?").is_none(), "Escape closes the popup");
     assert!(h.state().ui.export.pending_drop.is_none());
+    assert!(h.state().ui.windows.export, "the window stays open");
     assert_eq!(h.state().session.export_preset("Mine").unwrap(), before, "nothing was assigned");
 }
 

@@ -526,6 +526,9 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
         } else if app.ui.windows.import_resources.is_some() {
             #[cfg(not(target_arch = "wasm32"))]
             crate::import_resources::keys_in(app, input, nothing_focused, popup_open);
+        } else if app.ui.windows.export {
+            // Escape is the window's Cancel; nothing behind the window reads it
+            crate::export_window::keys_in(app, input, !escape_is_free);
         } else if !popup_open && app.picking_color.is_some() && input.consume_key(Modifiers::NONE, Key::Escape) {
             app.picking_color = None;
         } else if escape_is_free && app.properties_popup.is_some() && input.consume_key(Modifiers::NONE, Key::Escape) {

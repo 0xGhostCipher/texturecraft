@@ -73,6 +73,32 @@ fn closing_the_window_is_cancel() {
 }
 
 #[test]
+fn escape_is_cancel() {
+    let mut h = harness();
+    h.state_mut().ui.export.size = 2048;
+    h.run_steps(3);
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+
+    assert!(!h.state().ui.windows.export);
+    assert_eq!(h.state().ui.export.size, 0, "the opening settings are back");
+}
+
+#[test]
+fn escape_in_an_open_dropdown_closes_only_the_dropdown() {
+    let mut h = harness();
+    open_combo(&mut h, "Based on output template");
+    assert!(h.query_by_label("png").is_some());
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+
+    assert!(h.query_by_label("png").is_none(), "the dropdown closed");
+    assert!(h.state().ui.windows.export, "the window stays open");
+}
+
+#[test]
 fn the_lists_hold_the_reference_entries() {
     let mut h = harness();
     open_combo(&mut h, "Based on output template");

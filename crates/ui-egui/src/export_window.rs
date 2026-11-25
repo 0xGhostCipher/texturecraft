@@ -1466,6 +1466,19 @@ fn cancel(app: &mut TextureCraftApp) {
     app.ui.windows.export = false;
 }
 
+/// Escape closes the window as Cancel does, read in `menus::shortcuts`; an open dropdown, channel question, template rename or text field takes it first
+pub(crate) fn keys_in(app: &mut TextureCraftApp, input: &mut egui::InputState, popup_open: bool) {
+    let export = &app.ui.export;
+    if popup_open || export.field_had_keyboard || export.pending_drop.is_some() || export.renaming.is_some() {
+        return;
+    }
+
+    if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+        app.ui.export.job = None;
+        cancel(app);
+    }
+}
+
 pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     if !app.ui.windows.export {
         // The window opens on SETTINGS again; an export stops with it
@@ -1650,6 +1663,9 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         });
     });
     crate::export_templates::ask(app, ctx);
+
+    // egui drops a field's focus on Escape before the next frame's shortcuts run, so keep whether one had the keyboard
+    app.ui.export.field_had_keyboard = ctx.egui_wants_keyboard_input();
 
     // Dismissal must run before the next write
     if canceled || !open {

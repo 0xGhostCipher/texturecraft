@@ -414,6 +414,9 @@ pub struct ExportUi {
     /// Output templates tab: F2 asked to rename the selected preset.
     #[serde(skip)]
     pub rename_key: bool,
+    /// A text field of the window had the keyboard when the last frame ended
+    #[serde(skip)]
+    pub field_had_keyboard: bool,
     /// Output templates tab: the question waiting for an answer (delete, or drop an unsaved edit).
     #[serde(skip)]
     pub ask: Option<crate::export_templates::Ask>,
@@ -460,6 +463,7 @@ impl Default for ExportUi {
             pending_drop: None,
             renaming: None,
             rename_key: false,
+            field_had_keyboard: false,
             ask: None,
             opened_with: None,
             job: None,
