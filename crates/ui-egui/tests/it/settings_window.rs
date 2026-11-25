@@ -281,7 +281,11 @@ fn cancel_drops_the_changes_and_ok_applies_and_keeps_them() {
 
     let prefs = h.state().ui.prefs.clone();
     assert!(!h.state().ui.windows.settings, "OK closes the window");
-    assert_eq!((prefs.autosave_minutes, prefs.work_threads, prefs.project_open_limit_gib), (25, 1, 12));
+
+    // The slider's end stores 0, which is the only step on a one-core machine
+    let (cores, _) = texturecraft_engine::formats::available_save_resources();
+    let expected_work_threads = if cores <= 1 { 0 } else { 1 };
+    assert_eq!((prefs.autosave_minutes, prefs.work_threads, prefs.project_open_limit_gib), (25, expected_work_threads, 12));
     assert!(prefs.zoom_inverse && !prefs.wheel_inverse && !prefs.show_world_axes);
     assert!(prefs.drag_zoom_scale() < 0.0, "inverted zoom runs the other way");
 
