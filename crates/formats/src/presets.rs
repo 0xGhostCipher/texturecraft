@@ -219,6 +219,16 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
                 map("clearcoatRoughness", 8, gray(ch(Channel::CoatRoughness, 0))),
             ],
         ),
+        // Spec: https://dev.epicgames.com/documentation/en-us/unreal-engine/subsurface-profile-shading-model-in-unreal-engine (the Opacity input masks the scattering, so the base color has no alpha)
+        preset(
+            "Unreal Engine Subsurface Profile (Packed)",
+            vec![
+                map("BaseColor", 8, rgb(|k| ch(Channel::BaseColor, k))),
+                map("OcclusionRoughnessMetallic", 8, orm()),
+                map("Normal", 8, normal(VirtualMap::NormalDirectX)),
+                map("SubsurfaceMask", 8, gray(ch(Channel::ScatterWeight, 0))),
+            ],
+        ),
         preset("Separate maps", Channel::ALL.into_iter().map(channel_map).collect()),
         preset(
             "Mesh maps",

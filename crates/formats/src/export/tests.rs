@@ -1740,3 +1740,48 @@ fn a_map_preview_holds_the_values_its_file_stores() {
     assert!(small.width < RES && small.pixels.len() == (small.width * small.height) as usize * 4, "a smaller preview samples the same map");
     assert!(MapPreview::sample(&fx.input(), &options, options.preset.maps.len(), 8).is_err(), "a map the template doesn't have is an error");
 }
+
+/// The 8-bit value of an image position as RGBA
+fn pixel(file: &ExportedFile) -> [i32; 4] {
+    decode(file).to_rgba8().get_pixel(3, 3).0.map(i32::from)
+}
+
+fn byte(value: f32) -> i32 {
+    (value * 255.0).round() as i32
+}
+
+fn assert_close(actual: [i32; 4], expected: [i32; 4], what: &str) {
+    assert!(actual.iter().zip(expected).all(|(a, e)| (a - e).abs() <= 1), "{what}: {actual:?} instead of {expected:?}");
+}
+
+/// Tilts every normal of `fx` and returns the green byte an OpenGL normal map stores for it
+fn tilt_normals(fx: &mut Fx) -> i32 {
+    let tilt = Vec3::new(0.3, 0.4, 0.0);
+    let tilt = Vec3::new(tilt.x, tilt.y, (1.0 - tilt.length_squared()).sqrt());
+    fx.set_all(Channel::Normal, |_, _| (tilt * 0.5 + Vec3::splat(0.5)).to_array());
+    byte(tilt.y * 0.5 + 0.5)
+}
+
+#[test]
+fn the_unreal_subsurface_template_writes_the_scatter_mask_beside_the_packed_maps() {
+    let mut channels = default_channels();
+    channels.extend([Channel::AmbientOcclusion, Channel::Opacity, Channel::ScatterWeight]);
+    let mut fx = Fx::new(&channels);
+    fx.set_all(Channel::AmbientOcclusion, |_, _| [0.6; 3]);
+    fx.set_all(Channel::Roughness, |_, _| [0.4; 3]);
+    fx.set_all(Channel::Metallic, |_, _| [0.8; 3]);
+    fx.set_all(Channel::Opacity, |_, _| [0.9; 3]);
+    fx.set_all(Channel::ScatterWeight, |_, _| [0.7; 3]);
+    let open_gl_green = tilt_normals(&mut fx);
+
+    let files = fx.render_preset("Unreal Engine Subsurface Profile (Packed)");
+
+    let mask = find(&files, "_SubsurfaceMask.png");
+    assert_eq!(decode(mask).color(), image::ColorType::L8, "the mask is one 8-bit channel");
+    assert_close(pixel(mask), [byte(0.7), byte(0.7), byte(0.7), 255], "scatter weight in the mask");
+    let [r, g, b, _] = pixel(find(&files, "_OcclusionRoughnessMetallic.png"));
+    assert_close([r, g, b, 0], [byte(0.6), byte(0.4), byte(0.8), 0], "R occlusion, G roughness, B metallic");
+    assert_eq!(decode(find(&files, "_BaseColor.png")).color(), image::ColorType::Rgb8, "opacity feeds the mask, not the base color's alpha");
+    let green = pixel(find(&files, "_Normal.png"))[1];
+    assert!((green - (255 - open_gl_green)).abs() <= 1, "DirectX normal: green {green}");
+}
