@@ -203,7 +203,7 @@ fn parts_back_to_back_fit_their_cages_along_their_own_normals() {
         for normal in &mut mesh.normals {
             *normal = -*normal;
         }
-        for triangle in mesh.indices.chunks_exact_mut(3) {
+        for triangle in mesh.indices.as_chunks_mut::<3>().0 {
             triangle.swap(1, 2);
         }
         mesh
