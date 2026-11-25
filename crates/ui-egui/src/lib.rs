@@ -50,6 +50,7 @@ mod generator_kind_rows;
 mod generator_panel;
 mod generator_params;
 mod generator_point_pick;
+mod generator_preview_window;
 mod generator_section_rows;
 mod generator_slot;
 mod generator_wear_rows;

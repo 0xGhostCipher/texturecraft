@@ -33,6 +33,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     unsaved(app, ctx);
     reset_ui(app, ctx);
     crate::named_layouts::show(app, ctx);
+    crate::generator_preview_window::show(app, ctx);
 }
 
 /// Window ▸ Reset UI asks first: Escape closes the question, Enter answers Reset.

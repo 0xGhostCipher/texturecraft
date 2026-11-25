@@ -1,6 +1,6 @@
 //! A generator effect's properties, laid out like the reference app's: its slot, Parameters, Image inputs, Resolution, Attributes
 
-use egui::{Painter, Rect, TextureHandle};
+use egui::{CursorIcon, Painter, Rect, Role, Sense, Stroke, StrokeKind, TextureHandle, WidgetInfo};
 use serde_json::json;
 use texturecraft_engine::core::{
     CookResolution, Generator, GeneratorKind, KindControls, LayerId, LightParameters, ResolutionMode, SectionParameters, WearParameters,
@@ -103,7 +103,7 @@ fn parameters(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, (layer, 
 
     // The Curvature size under the pointer shows alone in the preview: the columns are drawn after it, so it is kept from the frame before
     let solo_id = sheet.ui.make_persistent_id(("generator_solo", id));
-    let mut solo: Option<usize> = sheet.ui.data(|data| data.get_temp(solo_id)).flatten();
+    let solo: Option<usize> = sheet.ui.data(|data| data.get_temp(solo_id)).flatten();
     let solo_texture = match (kind, generator.detail_in_use(), solo) {
         (GeneratorKind::Curvature, Some(detail), Some(size)) => {
             app.thumbs.generator_picture(&ctx, ShelfPreview::Curvature { mode: detail.mode, solo: Some(size) }, PREVIEW_ORB_PX)
@@ -116,37 +116,71 @@ fn parameters(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, (layer, 
     let texture = solo_texture
         .or_else(|| app.thumbs.generator_set_picture(&ctx, id, set, PREVIEW_ORB_PX))
         .or_else(|| app.thumbs.generator_picture(&ctx, ShelfPreview::Generator(kind), PREVIEW_ORB_PX));
-    let picture = |painter: &Painter, rect: Rect| orb(painter, rect, texture.as_ref(), &tokens, &ctx);
+    let drawn_at = std::cell::Cell::new(None);
+    let picture = |painter: &Painter, rect: Rect| {
+        drawn_at.set(Some(rect));
+        orb(painter, rect, texture.as_ref(), &tokens, &ctx);
+    };
+    rows(app, sheet, (layer, id), generator, &picture, solo_id);
 
+    if let Some(rect) = drawn_at.get() {
+        enlarge_on_click(app, sheet, id, rect);
+    }
+}
+
+/// The preview opens enlarged in its own window on a click: a grey outline shows it can while the pointer is on it, and that it is open
+fn enlarge_on_click(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, id: u64, rect: Rect) {
+    let response = sheet.ui.interact(rect, sheet.ui.make_persistent_id(("generator_preview_enlarge", id)), Sense::click()).on_hover_cursor(CursorIcon::ZoomIn);
+    let open = app.ui.windows.generator_preview == Some(id);
+    response.widget_info(|| WidgetInfo::selected(Role::Button, true, open, tr("Enlarge preview")));
+    if response.hovered() || response.has_focus() || open {
+        let tokens = Tokens::get(sheet.ui.ctx());
+        sheet.ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, tokens.text_dim), StrokeKind::Inside);
+    }
+    if response.clicked() {
+        crate::generator_preview_window::toggle(app, id);
+    }
+}
+
+/// The kind's rows, `picture` drawing the preview; `solo_id` keeps the Curvature size under the pointer for the next frame's preview
+fn rows(
+    app: &mut TextureCraftApp,
+    sheet: &mut PropertySheet<'_>,
+    (layer, id): (LayerId, u64),
+    generator: &Generator,
+    picture: &dyn Fn(&Painter, Rect),
+    solo_id: egui::Id,
+) {
+    let kind = generator.kind;
     if let Some(controls) = generator.kind_controls() {
-        crate::generator_kind_rows::kind_rows(app, sheet, id, generator, controls, &picture);
+        crate::generator_kind_rows::kind_rows(app, sheet, id, generator, controls, picture);
         return;
     }
     if let Some(defaults) = WearParameters::defaults(kind) {
         // A wear generator saved before its wear controls shows them at their defaults: editing one moves it onto them
-        wear_rows(app, sheet, (layer, id), generator, generator.wear.unwrap_or(defaults), &picture);
+        wear_rows(app, sheet, (layer, id), generator, generator.wear.unwrap_or(defaults), picture);
         return;
     }
     if let Some(light) = generator.light {
-        light_rows(app, sheet, id, Some(generator.invert), light, &picture);
+        light_rows(app, sheet, id, Some(generator.invert), light, picture);
         return;
     }
 
-    global_rows(app, sheet, id, generator, &picture);
+    global_rows(app, sheet, id, generator, picture);
     if generator.on_earlier_model() {
         ramp_rows(app, sheet, id, generator);
     }
 
     // Saved before the section or light controls, a generator shows them at their defaults: editing one moves it onto them
     if let Some(defaults) = SectionParameters::defaults(kind) {
-        solo = None;
+        let mut solo = None;
         section_rows(app, sheet, id, generator, generator.section_controls().unwrap_or(defaults), &mut solo);
         texture_card(app, sheet, (layer, id), generator.texture.as_deref().cloned().unwrap_or_default());
         micro_switch_card(app, sheet, (layer, id), generator);
         sheet.ui.data_mut(|data| data.insert_temp(solo_id, solo));
     }
     if let Some(defaults) = LightParameters::defaults(kind) {
-        light_rows(app, sheet, id, None, defaults, &picture);
+        light_rows(app, sheet, id, None, defaults, picture);
     }
 }
 

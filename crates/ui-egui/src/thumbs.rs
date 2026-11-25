@@ -64,8 +64,8 @@ pub struct Thumbs {
     big_shown: VecDeque<String>,
     /// The frame that last took in the worker's results
     received_in_pass: u64,
-    /// Per generator panel: the picture of its settings being rendered, and the last one finished (shown meanwhile)
-    set_pictures: HashMap<u64, (Option<String>, Option<TextureHandle>)>,
+    /// Per generator effect and picture size: the picture of its settings being rendered, and the last one finished (shown meanwhile)
+    set_pictures: HashMap<(u64, usize), (Option<String>, Option<TextureHandle>)>,
 }
 
 impl Thumbs {
@@ -312,7 +312,7 @@ impl Thumbs {
         self.receive(ctx);
         let size_px = size_px.clamp(1, texturecraft_engine::orb_preview::MAX_PREVIEW_SIZE_PX);
         let key = self.worker_key(&preview, size_px);
-        let (in_flight, last) = self.set_pictures.get(&effect).cloned().unwrap_or_default();
+        let (in_flight, last) = self.set_pictures.get(&(effect, size_px)).cloned().unwrap_or_default();
 
         // The picture in flight landed: it is the latest shown
         let last = match in_flight.as_ref().map(|key| self.rendered.get(key)) {
@@ -326,7 +326,7 @@ impl Thumbs {
             None => self.big(ctx, preview, size_px).or_else(|| last.clone()),
         };
         let in_flight = if busy { in_flight } else { Some(key) };
-        self.set_pictures.insert(effect, (in_flight, shown.clone().or(last)));
+        self.set_pictures.insert((effect, size_px), (in_flight, shown.clone().or(last)));
         shown
     }
 
@@ -505,7 +505,7 @@ mod tests {
         let last = ctx.load_texture("last", ColorImage::filled([1, 1], Color32::RED), TextureOptions::LINEAR);
         let rendering = thumbs.worker_key(&set(false), 8);
         thumbs.rendered.insert(rendering.clone(), WorkerPreview::Rendering);
-        thumbs.set_pictures.insert(1, (Some(rendering), Some(last.clone())));
+        thumbs.set_pictures.insert((1, 8), (Some(rendering), Some(last.clone())));
 
         let shown = thumbs.generator_set_picture(&ctx, 1, set(true), 8);
 

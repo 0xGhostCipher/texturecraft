@@ -517,3 +517,42 @@ fn new_kind_panel_snapshots() {
         }
     }
 }
+
+#[test]
+fn the_preview_opens_enlarged_in_its_own_window() {
+    let (mut harness, effect) = harness_with(false, json!({"generator": "edgeWear"}));
+    let enlarged = |harness: &Harness<'_, TextureCraftApp>| harness.query_by_role_and_label(Role::Image, "Preview").is_some();
+    assert!(!enlarged(&harness));
+
+    click_live(&mut harness, Role::Button, "Enlarge preview");
+    assert!(enlarged(&harness), "a click on the preview opens it enlarged");
+    assert!(is_on(&harness, Role::Button, "Enlarge preview"), "the preview shows it is open");
+
+    click_live(&mut harness, Role::Button, "Enlarge preview");
+    assert!(!enlarged(&harness), "a second click closes it");
+
+    click_live(&mut harness, Role::Button, "Enlarge preview");
+    execute(&mut harness.state_mut().session, "effect.remove", &json!({"effect": effect.0})).unwrap();
+    harness.run_steps(3);
+    assert!(!enlarged(&harness), "it closes with its generator");
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and TC_UI_SNAPSHOTS"]
+fn enlarged_preview_snapshots() {
+    let directory = std::path::PathBuf::from(std::env::var_os("TC_UI_SNAPSHOTS").expect("set TC_UI_SNAPSHOTS"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let (mut harness, _) = harness_with(true, json!({"generator": "edgeWear", "seed": 12}));
+    click_live(&mut harness, Role::Button, "Enlarge preview");
+
+    // The pictures render on the preview worker
+    for _ in 0..60 {
+        harness.run_steps(4);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
+        harness.state_mut().ui.prefs.brightness = brightness;
+        harness.run_steps(3);
+        harness.render().unwrap().save(directory.join(format!("generator-enlarged-preview-{name}.png"))).unwrap();
+    }
+}
