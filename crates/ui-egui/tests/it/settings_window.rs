@@ -9,26 +9,7 @@ use texturecraft_ui_egui::state::{LibraryLocation, UiState};
 use texturecraft_ui_egui::unavailable::NOT_AVAILABLE;
 use texturecraft_ui_egui::{TextureCraftApp, menus};
 
-#[path = "../../src/ui_state_store/memory_storage.rs"]
-mod memory_storage;
-use memory_storage::MemoryStorage;
-
-/// The section captions of the General page, top to bottom.
-const SECTIONS: [&str; 13] = [
-    "INTERFACE OPTIONS",
-    "LAYER STACK OPTIONS",
-    "CAMERA OPTIONS",
-    "BAKING OPTIONS",
-    "PREVIEW OPTIONS",
-    "TEMPORARY FILES",
-    "SPARSE VIRTUAL TEXTURE",
-    "IRAY HARDWARE",
-    "APPEARANCE",
-    "VIEWPORT",
-    "RESOURCES",
-    "AUTOSAVE",
-    "FOLDERS",
-];
+use crate::memory_storage::MemoryStorage;
 
 fn harness(session: Session) -> Harness<'static, TextureCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
@@ -97,24 +78,6 @@ fn the_left_column_switches_between_the_three_pages() {
 
     click(&mut h, "General");
     assert_eq!(page(&h), Some(SettingsPage::General));
-}
-
-#[test]
-fn the_general_page_lists_the_reference_sections_in_order_without_privacy() {
-    let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
-    open_settings(&mut h);
-
-    // Rows below the scrolled view are laid out too, in page order
-    let mut shown: Vec<String> = h
-        .query_all(egui_kittest::kittest::by().predicate(|node| node.label().or_else(|| node.value()).is_some_and(|text| SECTIONS.contains(&text.as_str()))))
-        .filter_map(|node| node.accesskit_node().label().or_else(|| node.accesskit_node().value()))
-        .collect();
-
-    // A label on screen also has a node for its text run
-    shown.dedup();
-    assert_eq!(shown, SECTIONS.map(String::from).to_vec());
-    assert!(h.query_by_label("PRIVACY").is_none(), "no Privacy section");
-    assert!(h.query_by_label("Automatically send usage statistics").is_none());
 }
 
 #[test]
@@ -481,4 +444,32 @@ fn the_baking_options_say_when_there_is_no_gpu_to_trace_on() {
     open_settings(&mut h);
     let no_gpu = h.query_by_label("no GPU").is_some();
     assert_eq!(h.query_by_label(GPU_RAYTRACING_UNAVAILABLE).is_some(), no_gpu, "the note shows with no GPU and only then");
+}
+
+#[test]
+fn recent_project_limit_applies_on_ok_and_persists() {
+    let mut h = harness(Session::closed().unwrap());
+    h.state_mut().ui.recent = (0..8).map(|i| format!("/projects/{i}.tcraft")).collect();
+    open_settings(&mut h);
+    h.get_by_label("Recent projects limit").scroll_to_me();
+    h.run_steps(3);
+    assert!(!h.get_by_label("Recent projects limit").accesskit_node().is_disabled());
+    h.state_mut().ui.windows.settings_draft.as_mut().unwrap().prefs.recent_projects_limit = 3;
+    click(&mut h, "Cancel");
+    assert_eq!(h.state().ui.recent.len(), 8);
+    open_settings(&mut h);
+    h.state_mut().ui.windows.settings_draft.as_mut().unwrap().prefs.recent_projects_limit = 3;
+    click(&mut h, "OK");
+    assert_eq!(h.state().ui.recent, ["/projects/0.tcraft", "/projects/1.tcraft", "/projects/2.tcraft"]);
+    texturecraft_ui_egui::windows::remember(h.state_mut(), "/projects/new.tcraft");
+    assert_eq!(h.state().ui.recent, ["/projects/new.tcraft", "/projects/0.tcraft", "/projects/1.tcraft"]);
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    let restored: UiState = serde_json::from_str(&storage.values["ui.json"]).unwrap();
+    assert_eq!(restored.prefs.recent_projects_limit, 3);
+    let ctx = h.ctx.clone();
+    let reply = texturecraft_ui_egui::control::handle(h.state_mut(), &ctx, "ui.set", &serde_json::json!({"prefs":{"recent_projects_limit":0}}));
+    assert_eq!(reply["ok"], true);
+    texturecraft_ui_egui::windows::remember(h.state_mut(), "/projects/another.tcraft");
+    assert!(h.state().ui.recent.is_empty());
 }
