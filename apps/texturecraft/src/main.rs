@@ -386,7 +386,11 @@ fn main() {
     let session = initial_session(&args);
     let frame_decision = TitleBar::decide(prefs.system_title_bar);
     let title_bar = TitleBar::of(&frame_decision.frame);
-    let mut viewport = egui::ViewportBuilder::default().with_app_id(os_window::app_id()).with_title(os_window::name()).with_inner_size(DEFAULT_SIZE).with_min_inner_size(MIN_SIZE);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_app_id(os_window::app_id())
+        .with_title(os_window::name())
+        .with_inner_size(DEFAULT_SIZE)
+        .with_min_inner_size(MIN_SIZE);
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
     }
@@ -454,11 +458,7 @@ fn main() {
                 });
                 notice_shown_in_window.store(previous_nightly_unclean, std::sync::atomic::Ordering::Relaxed);
             }
-            Ok(Box::new(Shell {
-                app,
-                window_frame: frame_guard,
-                exit_hook: Some(Box::new(finish_at_exit)),
-            }))
+            Ok(Box::new(Shell { app, window_frame: frame_guard, exit_hook: Some(Box::new(finish_at_exit)) }))
         }),
     );
     // A controlled return, including a handled startup error. On macOS a window already finished in
