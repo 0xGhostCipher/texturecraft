@@ -1416,4 +1416,116 @@ mod tests {
         assert!(blurred > 3 * pinhole.max(10), "out of focus: {pinhole} -> {blurred} edge pixels");
         assert!(focused < pinhole + pinhole / 2 + 10, "the silhouette (about the focus depth) stays sharp: {pinhole} -> {focused}");
     }
+
+    /// Specular Level 0.5 stands for OpenPBR's default specular weight of 1
+    const OPENPBR_DEFAULT_SPECULAR_LEVEL: f32 = 0.5;
+    /// A non-default IOR for the opt-in comparisons
+    const DENSE_IOR: f32 = 1.8;
+    /// The 32-bit export and the shading read the same 16-bit texel: only float rounding separates them
+    const F0_TOLERANCE: f32 = 1e-5;
+
+    /// One texture set holding a uniform dielectric with both shader models' channels.
+    fn dielectric_composite() -> Composite {
+        use Channel::*;
+        let values = [
+            (BaseColor, [0.1; 3]),
+            (Metallic, [0.0; 3]),
+            (Roughness, [0.3; 3]),
+            (SpecularLevel, [OPENPBR_DEFAULT_SPECULAR_LEVEL; 3]),
+            (Specular, [0.3, 0.2, 0.1]),
+            (Glossiness, [0.7; 3]),
+        ];
+        let channels: Vec<Channel> = values.iter().map(|(channel, _)| *channel).collect();
+        let mut composite = Composite::new(&channels, 8);
+        for (channel, value) in values {
+            let raw: Vec<u16> = value[..channel.components()].iter().map(|v| texturecraft_texel::to_u16(*v)).collect();
+            let image = composite.channels.get_mut(&channel).unwrap();
+            for y in 0..8 {
+                for x in 0..8 {
+                    image.set(x, y, &raw);
+                }
+            }
+        }
+        composite
+    }
+
+    /// A sphere covered by [`dielectric_composite`] under `display`.
+    fn dielectric_scene(display: &DisplaySettings) -> TraceScene {
+        let mesh = Arc::new(primitives::sphere(1.0, 32, 16));
+        let bvh = Arc::new(Bvh::new(&mesh));
+        let sets = vec![TraceSet { material: 0, composite: dielectric_composite(), height_strength: 0.0 }];
+        TraceScene::for_display_env(mesh, bvh, sets, display, Arc::new(crate::ibl::environment("Studio Soft", 32)))
+    }
+
+    /// The F0 the CPU tracer shades the sphere's front with.
+    fn shaded_f0(display: &DisplaySettings) -> Vec3 {
+        let scene = dielectric_scene(display);
+        let (origin, direction) = (Vec3::new(0.0, 0.0, 4.0), Vec3::NEG_Z);
+        let hit = scene.bvh.closest(origin, direction, f32::MAX).unwrap();
+        surface(&scene, hit.tri, hit.u, hit.v, origin, direction, hit.t).unwrap().f0
+    }
+
+    /// The F0 map a 32-bit float export writes for [`dielectric_composite`] under `display`.
+    fn exported_f0(display: &DisplaySettings) -> f32 {
+        use texturecraft_formats::{Dest, ExportInput, ExportOptions, ExportPreset, FileFormat, MapSpec, SourceRef, VirtualMap};
+
+        let composite = dielectric_composite();
+        let mut project = texturecraft_core::Project::new("F0", "builtin:sphere");
+        let mut set = texturecraft_core::TextureSet::new("Set", 0, composite.resolution);
+        set.channels = composite.channels.keys().map(|channel| (*channel, texturecraft_core::ChannelFormat::default_for(*channel))).collect();
+        project.texture_sets.push(set);
+        project.display = display.clone();
+        let coverage = vec![true; (composite.resolution * composite.resolution) as usize];
+        let input = ExportInput { project: &project, ts: 0, composite: &composite, baked: &Default::default(), coverage: &coverage, mesh_name: "sphere" };
+        let f0 = |component| SourceRef::Virtual { map: VirtualMap::F0, component };
+        let channels = vec![(Dest::R, f0(0)), (Dest::G, f0(1)), (Dest::B, f0(2))];
+        let map = MapSpec { file: "f0".into(), format: FileFormat::Exr, bit_depth: 32, channels, inverted: Vec::new() };
+        let options = ExportOptions::new(ExportPreset { name: "F0".into(), maps: vec![map] });
+
+        let files = texturecraft_formats::render_maps(&input, &options).unwrap();
+
+        let image = image::load_from_memory_with_format(&files[0].bytes, image::ImageFormat::OpenExr).unwrap().to_rgb32f();
+        image.get_pixel(4, 4)[0]
+    }
+
+    fn ior_display(ior: f32, ior_specular: bool, spec_gloss: bool) -> DisplaySettings {
+        DisplaySettings { ior, ior_specular, spec_gloss, ..DisplaySettings::default() }
+    }
+
+    #[test]
+    fn exported_f0_matches_the_metallic_roughness_shading_in_both_modes() {
+        let (legacy, opt_in) = (ior_display(DENSE_IOR, false, false), ior_display(DENSE_IOR, true, false));
+
+        // OpenPBR: at specular weight 1 the dielectric F0 is the Fresnel reflectance of the IOR
+        let fresnel = ((DENSE_IOR - 1.0) / (DENSE_IOR + 1.0)).powi(2);
+
+        let (legacy_shaded, legacy_exported) = (shaded_f0(&legacy), exported_f0(&legacy));
+        let (opt_in_shaded, opt_in_exported) = (shaded_f0(&opt_in), exported_f0(&opt_in));
+        let default_ior_shaded = shaded_f0(&ior_display(1.5, true, false));
+
+        for (mode, shaded, exported) in [("legacy", legacy_shaded, legacy_exported), ("IOR", opt_in_shaded, opt_in_exported)] {
+            assert!(shaded.abs_diff_eq(Vec3::splat(exported), F0_TOLERANCE), "{mode}: shaded {shaded}, exported {exported}");
+        }
+        assert!((legacy_exported - LEGACY_DIELECTRIC_F0_SCALE * OPENPBR_DEFAULT_SPECULAR_LEVEL).abs() < F0_TOLERANCE, "legacy {legacy_exported}");
+        assert!((opt_in_exported - fresnel).abs() < F0_TOLERANCE, "IOR {DENSE_IOR}: {opt_in_exported}, Fresnel {fresnel}");
+        assert!(opt_in_exported > legacy_exported, "IOR {DENSE_IOR} reflects more than the legacy 1.5 equivalent");
+        assert!(default_ior_shaded.abs_diff_eq(legacy_shaded, F0_TOLERANCE), "IOR 1.5 keeps the legacy reflectance: {default_ior_shaded}");
+    }
+
+    #[test]
+    fn specular_glossiness_shading_ignores_the_ior_specular_setting() {
+        let (off, on) = (ior_display(DENSE_IOR, false, true), ior_display(DENSE_IOR, true, true));
+        let render = |display: &DisplaySettings| {
+            let (scene, mut tracer) = (dielectric_scene(display), Tracer::new(24, 16));
+            for _ in 0..2 {
+                tracer.pass(&scene, &camera(), &TraceSettings::default());
+            }
+            tracer.rgba8(&TraceDisplay::from_display(display))
+        };
+
+        let (off_f0, on_f0) = (shaded_f0(&off), shaded_f0(&on));
+
+        assert_eq!(on_f0, off_f0, "the Specular color gives F0");
+        assert_eq!(render(&on), render(&off));
+    }
 }

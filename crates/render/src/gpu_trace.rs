@@ -1019,6 +1019,33 @@ mod tests {
         assert_region_means_match("varying roughness, default base color", &gpu, &cpu.rgba8(&d), 48, 36, 3.0);
     }
 
+    #[test]
+    fn gpu_matches_cpu_with_ior_specular_reflectance() {
+        use Channel::*;
+        let Some((mut h, mut t)) = gpu() else { return };
+
+        // A dark, glossy dielectric shows mostly its F0
+        let values = [(BaseColor, [0.02; 3]), (Metallic, [0.0; 3]), (Roughness, [0.15; 3]), (SpecularLevel, [1.0; 3])];
+        let d = TraceDisplay { exposure: 1.0, aces: true, env_opacity: 0.5, denoise: false, background: crate::DEFAULT_BACKGROUND };
+        let settings = TraceSettings { bounces: 4 };
+        let mut sphere_brightness = Vec::new();
+
+        for ior_specular in [false, true] {
+            let display = texturecraft_core::DisplaySettings { ior: 1.8, ior_specular, ..Default::default() };
+            let mut scene = sphere_scene(&mut h, crate::ibl::environment("Studio Contrast", 256), &values);
+            (scene.ior, scene.dielectric_f0_scale) = (display.ior, display.dielectric_f0_scale());
+            let (_, _, gpu) = t.render(&h.device, &h.queue, &h.renderer, &scene, &camera(), &settings, &d, [48, 36], 1024).unwrap();
+            let mut cpu = Tracer::new(48, 36);
+            for _ in 0..1024 {
+                cpu.pass(&scene, &camera(), &settings);
+            }
+            assert_region_means_match(&format!("IOR specular {ior_specular}"), &gpu, &cpu.rgba8(&d), 48, 36, 3.0);
+            sphere_brightness.push(gpu.as_chunks::<4>().0.iter().map(|pixel| pixel[..3].iter().map(|v| u32::from(*v)).sum::<u32>()).sum::<u32>());
+        }
+
+        assert!(sphere_brightness[1] > sphere_brightness[0], "IOR 1.8 reflects more than the legacy F0: {sphere_brightness:?}");
+    }
+
     /// Mean luminance of each 6×6 block of two RGBA8 renders agrees within `tol` 8-bit levels.
     fn assert_region_means_match(name: &str, a: &[u8], b: &[u8], w: usize, h: usize, tol: f32) {
         let lum = |img: &[u8], x: usize, y: usize| {
