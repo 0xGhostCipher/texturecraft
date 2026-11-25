@@ -1204,7 +1204,6 @@ impl eframe::App for TextureCraftApp {
         let panel_frame = if hide_ui { egui::Frame::NONE.fill(tokens.viewport) } else { egui::Frame::NONE.fill(tokens.chrome).inner_margin(theme::GUTTER) };
         egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| {
             if hide_ui {
-                docking::host_viewport_canvas(ui.ctx());
                 viewport::central(self, ui);
             } else {
                 docking::show(self, ui);

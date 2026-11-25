@@ -451,17 +451,6 @@ fn refresh_specs(app: &mut TextureCraftApp) {
 // ---------------------------------------------------------------------------------------------
 // Drawing
 
-/// The viewport's id as the window's document canvas.
-fn viewport_canvas_id() -> egui::Id {
-    egui::Id::unique("texturecraft-viewport-canvas")
-}
-
-/// Declares the viewport, drawn in this pass, as the window's document canvas (the dock's canvas
-/// group, or the whole window with the UI hidden).
-pub(crate) fn host_viewport_canvas(ctx: &egui::Context) {
-    crate::framework::host_canvas(ctx, viewport_canvas_id());
-}
-
 /// From a panel's left edge to its contents' text (an empty panel's note)
 pub(crate) const HEADER_TITLE_LEFT: f32 = 12.0;
 
@@ -610,13 +599,12 @@ impl DockPanels<Panel> for Panels<'_> {
         }
     }
 
-    /// The viewport, edge to edge in its group, as the window's document canvas.
+    /// The viewport, edge to edge in its group.
     fn group_view(&mut self, panels: &[Panel], _: usize, ui: &mut Ui, at: GroupAt, _: &mut BodyCx<'_>) -> Option<f32> {
         let GroupAt::Show(rect) = at else { return None };
         if !panels.contains(&Panel::Viewport) {
             return None;
         }
-        host_viewport_canvas(ui.ctx());
         crate::rail_popup::remember_viewport(ui.ctx(), ui.max_rect());
         ui.painter().rect_filled(ui.max_rect(), 0.0, self.tokens.viewport);
         crate::viewport::central(self.app, ui);

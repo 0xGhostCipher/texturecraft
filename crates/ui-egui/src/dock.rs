@@ -186,7 +186,7 @@ pub(crate) fn layers(app: &mut TextureCraftApp, ui: &mut Ui) {
 /// rename, a number field) keeps the key for itself, and the key is left alone over other panels.
 fn select_all_layers(app: &mut TextureCraftApp, ui: &Ui) {
     let ctx = ui.ctx();
-    if ctx.egui_wants_keyboard_input() || !ui.ui_contains_pointer() {
+    if crate::framework::widget_has_keyboard(ctx) || !ui.ui_contains_pointer() {
         return;
     }
 

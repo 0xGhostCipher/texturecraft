@@ -102,6 +102,7 @@ mod user_smart_mask;
 mod view2d_navigation;
 mod view2d_tiles;
 mod view_mode_picker;
+mod viewport_focus;
 mod window_menu_684;
 
 mod filter_card;

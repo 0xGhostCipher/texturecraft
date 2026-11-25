@@ -447,9 +447,9 @@ fn effect_command<'a>(app: &TextureCraftApp, id: &'a str) -> &'a str {
     }
 }
 
-/// Runs the commands bound to the keys pressed this frame, outside text fields and key capture
+/// Runs the commands bound to the keys pressed this frame, with no widget but the viewport focused, outside key capture
 pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
-    if crate::keymap::capturing(ctx) || (ctx.memory(|memory| memory.focused().is_some()) && ctx.egui_wants_keyboard_input()) {
+    if crate::keymap::capturing(ctx) || crate::framework::widget_has_keyboard(ctx) {
         return;
     }
 
@@ -487,9 +487,7 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let popup_open = egui::Popup::is_any_open(ctx) || app.ui.export.pending_drop.is_some();
     let picker_open = crate::color_picker::open_window(ctx).is_some();
 
-    let no_widget_focused = ctx.memory(|memory| memory.focused().is_none());
-    #[cfg(not(target_arch = "wasm32"))]
-    let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
+    let nothing_focused = !crate::framework::widget_has_keyboard(ctx);
     let log_copies = crate::log_panel::takes_copy(app, ctx);
     let commands_to_invoke = ctx.input_mut(|input| {
         // egui's label selection copies on these events at the end of the frame
@@ -501,7 +499,7 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
         // Escape and Enter answer the Reset UI question first, even when a shortcut binds them
         let confirming_reset = app.ui.windows.confirm_reset_ui;
         if confirming_reset && !popup_open {
-            crate::windows::reset_ui_keys(app, input, no_widget_focused);
+            crate::windows::reset_ui_keys(app, input, nothing_focused);
         }
 
         // F2 renames the selected template on Output templates, before its 3D view binding
