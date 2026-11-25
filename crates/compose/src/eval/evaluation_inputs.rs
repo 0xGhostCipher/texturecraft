@@ -22,6 +22,7 @@ pub(super) struct EvaluationInputs<'a> {
     instance_draws: OnceLock<HashMap<(usize, LayerId), usize>>,
     depth_maps: Mutex<Vec<ViewDepth>>,
     gradients: Mutex<HashMap<usize, Arc<PreparedGradient>>>,
+    coverage: OnceLock<u64>,
 }
 
 impl<'a> EvaluationInputs<'a> {
@@ -33,7 +34,13 @@ impl<'a> EvaluationInputs<'a> {
             instance_draws: OnceLock::new(),
             depth_maps: Mutex::new(Vec::new()),
             gradients: Mutex::default(),
+            coverage: OnceLock::new(),
         }
+    }
+
+    /// The working layout's coverage identity, hashed on first use only: the whole-map generator fields' cache reads it ([`crate::field_cache::coverage_identity`])
+    pub(super) fn coverage_identity(&self) -> u64 {
+        *self.coverage.get_or_init(|| crate::field_cache::coverage_identity(self.inputs.gbuf))
     }
 
     pub(super) fn environment(&self) -> EnvironmentSh {

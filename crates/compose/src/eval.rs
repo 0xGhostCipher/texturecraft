@@ -2419,7 +2419,7 @@ fn compares_this_layer(kind: &EffectKind) -> bool {
 }
 
 /// Build the curvature detail sizes every visible generator of `layers` reads, once, before tiles composite in parallel.
-fn prepare_curvature_sizes(inp: &Inputs, layers: &[LayerId]) {
+fn prepare_curvature_sizes(inp: &EvaluationInputs, layers: &[LayerId]) {
     let visible = layers.iter().filter(|id| inp.project.layers.get(id).is_some_and(|layer| layer.visible));
     let masks = visible.filter_map(|id| layer_mask(inp.project, *id)).filter(|mask| mask.enabled);
     prepare_mask_curvature_sizes(inp, masks);
@@ -2506,7 +2506,7 @@ fn wear_parameters(generator: &Generator) -> Option<WearParameters> {
 }
 
 /// Build the curvature detail sizes the visible generators of `masks` read, once, before tiles composite in parallel.
-fn prepare_mask_curvature_sizes<'a>(inp: &Inputs, masks: impl Iterator<Item = &'a Mask>) {
+fn prepare_mask_curvature_sizes<'a>(inp: &EvaluationInputs, masks: impl Iterator<Item = &'a Mask>) {
     let mut needed = [false; LEVEL_RADII.len()];
     for effect in masks.flat_map(|mask| &mask.effects).filter(|effect| effect.visible) {
         if let EffectKind::Generator(generator) = &effect.kind {
@@ -2516,7 +2516,7 @@ fn prepare_mask_curvature_sizes<'a>(inp: &Inputs, masks: impl Iterator<Item = &'
                 Some(KindControls::BorderDistance(_) | KindControls::DrippingRust(_) | KindControls::UvRandomColor(_) | KindControls::UvChecker(_))
             );
             if generator.micro_in_use().is_some() || whole_map {
-                GeneratorMaps::of(inp, generator, &curvature_sizes_in_use(generator));
+                GeneratorMaps::of(inp, generator, &curvature_sizes_in_use(generator), || inp.coverage_identity());
                 continue;
             }
             for (slot, in_use) in needed.iter_mut().zip(curvature_sizes_in_use(generator)) {
@@ -2562,7 +2562,7 @@ fn effect_plans<'a>(
                 None => (inp.pixels.masks.get(&effect.id), PaintTarget::Mask(effect.id)),
             };
             let maps = match &effect.kind {
-                EffectKind::Generator(generator) => GeneratorMaps::of(inp, generator, &curvature_sizes_in_use(generator)),
+                EffectKind::Generator(generator) => GeneratorMaps::of(inp, generator, &curvature_sizes_in_use(generator), || inp.coverage_identity()),
                 _ => GeneratorMaps::default(),
             };
             let (depth, covers_all, projection) = match &effect.kind {
@@ -7366,6 +7366,77 @@ soft {soft:?}"
 
         crate::micro_details::prepare_anchor_heights(&inputs_at(&half), anchor, stack(), || build((32, 32)));
         assert_eq!(builds.get(), 2, "a smaller working atlas builds them again");
+    }
+
+    /// Builds a field cache made: the counter goes up with each build
+    fn counted_build(builds: &std::cell::Cell<usize>) -> impl FnOnce((u32, u32)) -> Vec<f32> + '_ {
+        move |_| {
+            builds.set(builds.get() + 1);
+            vec![0.0; 4]
+        }
+    }
+
+    #[test]
+    fn a_whole_map_field_is_built_again_when_its_mesh_map_is_read_at_another_bake_size() {
+        let cache = crate::field_cache::FieldCache::new();
+        let builds = std::cell::Cell::new(0);
+        let mut fixture = fixture();
+        let occlusion = Arc::new(vec![0.5; 16]);
+        let images = ImageStore::default();
+        for resolution in [4, 4, 8] {
+            fixture.baked = BakedMaps { resolution, maps: [(BakedMap::AmbientOcclusion, occlusion.clone())].into() };
+            let inputs = inputs(&fixture, &images, None);
+            cache.get_or_build(
+                &inputs,
+                crate::field_cache::coverage_identity(&fixture.gbuf),
+                &[BakedMap::AmbientOcclusion],
+                Vec::new(),
+                counted_build(&builds),
+            );
+        }
+
+        assert_eq!(builds.get(), 2, "4 × 4 reuses its field; the same map read as 8 × 2 builds another");
+    }
+
+    #[test]
+    fn a_whole_map_field_is_built_again_after_any_texel_of_its_coverage_changes() {
+        let cache = crate::field_cache::FieldCache::new();
+        let builds = std::cell::Cell::new(0);
+        let mut fixture = fixture();
+        let images = ImageStore::default();
+        let build_on = |fixture: &Fixture| {
+            let inputs = inputs(fixture, &images, None);
+            cache.get_or_build(&inputs, crate::field_cache::coverage_identity(&fixture.gbuf), &[], Vec::new(), counted_build(&builds));
+        };
+        build_on(&fixture);
+        build_on(&fixture);
+
+        // The second texel, in place: the same allocation, one triangle different
+        fixture.gbuf.tri[1] = if fixture.gbuf.tri[1] == NO_TRI { 0 } else { NO_TRI };
+        build_on(&fixture);
+
+        assert_eq!(builds.get(), 2);
+    }
+
+    #[test]
+    fn a_whole_map_field_read_again_outlives_fields_built_before_it() {
+        const FIELDS_KEPT: u32 = 8;
+        let cache = crate::field_cache::FieldCache::new();
+        let builds = std::cell::Cell::new(0);
+        let fixture = fixture();
+        let images = ImageStore::default();
+        let inputs = inputs(&fixture, &images, None);
+        let coverage = crate::field_cache::coverage_identity(&fixture.gbuf);
+        let field = |settings: u32| {
+            cache.get_or_build(&inputs, coverage, &[], vec![settings], counted_build(&builds));
+        };
+        (0..FIELDS_KEPT).for_each(field);
+        field(0);
+        field(FIELDS_KEPT);
+        let built = builds.get();
+        field(0);
+
+        assert_eq!(builds.get(), built, "the field read again stays when a newer one pushes the oldest out");
     }
 
     #[test]

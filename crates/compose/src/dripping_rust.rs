@@ -36,8 +36,7 @@ const MIN_COVERAGE: f32 = 1e-3;
 static CACHE: FieldCache = FieldCache::new();
 
 /// The rust before its spreading and contrast at every working texel of `inp` (0 outside the islands)
-pub(crate) fn rust_field(inp: &Inputs, rust: &DrippingRustParameters, seed: u32) -> Arc<Vec<f32>> {
-    let occlusion = inp.baked.maps.get(&BakedMap::AmbientOcclusion);
+pub(crate) fn rust_field(inp: &Inputs, coverage: u64, rust: &DrippingRustParameters, seed: u32) -> Arc<Vec<f32>> {
     let settings = vec![
         rust.spreading_smoothness.to_bits(),
         rust.drips_intensity.to_bits(),
@@ -46,7 +45,7 @@ pub(crate) fn rust_field(inp: &Inputs, rust: &DrippingRustParameters, seed: u32)
         u32::from(rust.axis),
         seed,
     ];
-    CACHE.get_or_build(inp, &occlusion.into_iter().collect::<Vec<_>>(), settings, |block| build(inp, rust, seed, block))
+    CACHE.get_or_build(inp, coverage, &[BakedMap::AmbientOcclusion], settings, |block| build(inp, rust, seed, block))
 }
 
 /// The value at a working texel: the rust spread and contrasted

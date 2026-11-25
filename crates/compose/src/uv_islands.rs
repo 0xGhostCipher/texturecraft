@@ -17,12 +17,12 @@ use crate::working_field::REFERENCE_TILE_TEXELS;
 static CACHE: FieldCache = FieldCache::new();
 
 /// UV Random Color at every working texel of `inp`: one value per UV island (0 outside the islands)
-pub(crate) fn random_color_field(inp: &Inputs, random: &UvRandomColorParameters, seed: u32) -> Arc<Vec<f32>> {
+pub(crate) fn random_color_field(inp: &Inputs, coverage: u64, random: &UvRandomColorParameters, seed: u32) -> Arc<Vec<f32>> {
     let mut settings = vec![seed, u32::from(random.custom_gradient)];
     settings.push(random.used_colors().len() as u32);
     settings.extend(random.used_colors().iter().flat_map(|color| color.map(f32::to_bits)));
     settings.extend(random.positions.iter().map(|position| position.to_bits()));
-    CACHE.get_or_build(inp, &[], settings, |_| {
+    CACHE.get_or_build(inp, coverage, &[], settings, |_| {
         let island_values = island_values(inp, |island| random_gray(random, seed, island));
         let gbuf = inp.gbuf;
         gbuf.tri.par_iter().map(|triangle| island_values.get(triangle).copied().unwrap_or(0.0)).collect()
@@ -73,10 +73,10 @@ const RANDOM_SATURATION: std::ops::RangeInclusive<f32> = 0.06..=0.57;
 const RANDOM_VALUE: std::ops::RangeInclusive<f32> = 0.42..=0.80;
 
 /// UV Checker at every working texel of `inp`: the gray of its color, the mean of the sRGB-encoded channels as the reference reads it (0 outside the islands)
-pub(crate) fn checker_field(inp: &Inputs, checker: &UvCheckerParameters, seed: u32) -> Arc<Vec<f32>> {
+pub(crate) fn checker_field(inp: &Inputs, coverage: u64, checker: &UvCheckerParameters, seed: u32) -> Arc<Vec<f32>> {
     let mut settings = vec![seed, u32::from(checker.random_colors), checker.grid_tile, checker.grid_opacity.to_bits(), checker.border_width.to_bits()];
     settings.extend(checker.checker_color.iter().chain(&checker.border_color).map(|value| value.to_bits()));
-    CACHE.get_or_build(inp, &[], settings, |block| {
+    CACHE.get_or_build(inp, coverage, &[], settings, |block| {
         let gbuf = inp.gbuf;
         let (width, height) = (gbuf.width, gbuf.height);
         let island_colors = if checker.random_colors { island_colors(inp, seed) } else { HashMap::new() };

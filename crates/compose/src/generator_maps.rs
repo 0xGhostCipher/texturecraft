@@ -27,8 +27,8 @@ pub(crate) struct GeneratorMaps {
 }
 
 impl GeneratorMaps {
-    /// The maps `generator` reads, with the detail sizes `needed` marks (one flag per blurred size)
-    pub fn of(inp: &Inputs, generator: &Generator, needed: &[bool]) -> GeneratorMaps {
+    /// The maps `generator` reads, with the detail sizes `needed` marks (one flag per blurred size); `coverage` gives the working layout's coverage identity for whole-map fields
+    pub fn of(inp: &Inputs, generator: &Generator, needed: &[bool], coverage: impl Fn() -> u64) -> GeneratorMaps {
         let micro = generator.micro_in_use().map(|micro| micro.clone().clamped(generator.kind));
         let micro_curvature =
             micro.as_ref().filter(|_| MicroDetails::has_curvature(generator.kind)).and_then(|micro| MicroCurvature::of(inp, generator.kind, micro));
@@ -39,10 +39,10 @@ impl GeneratorMaps {
         };
         let controls = generator.kind_controls();
         let field = match &controls {
-            Some(KindControls::BorderDistance(border)) => Some(border_gradient(inp, border)),
-            Some(KindControls::DrippingRust(rust)) => Some(rust_field(inp, rust, generator.seed)),
-            Some(KindControls::UvRandomColor(random)) => Some(random_color_field(inp, random, generator.seed)),
-            Some(KindControls::UvChecker(checker)) => Some(checker_field(inp, checker, generator.seed)),
+            Some(KindControls::BorderDistance(border)) => Some(border_gradient(inp, coverage(), border)),
+            Some(KindControls::DrippingRust(rust)) => Some(rust_field(inp, coverage(), rust, generator.seed)),
+            Some(KindControls::UvRandomColor(random)) => Some(random_color_field(inp, coverage(), random, generator.seed)),
+            Some(KindControls::UvChecker(checker)) => Some(checker_field(inp, coverage(), checker, generator.seed)),
             _ => None,
         };
         GeneratorMaps { sizes, micro_curvature, micro_occlusion, field, controls: controls.map(Arc::new) }
