@@ -17,6 +17,9 @@ const DEFAULT_WIDTH: f32 = 420.0;
 /// The narrowest the picture shrinks to, in points
 const MIN_SIDE: f32 = 160.0;
 
+/// From the small preview's left edge to the window's right edge when it first opens, in points: clear of the properties panel
+const BESIDE_GAP: f32 = 24.0;
+
 /// How soon a picture still rendering is looked for again
 const PICTURE_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
@@ -35,7 +38,10 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let texture = app.thumbs.generator_set_picture(ctx, effect, set, PICTURE_PX);
     let tokens = Tokens::get(ctx);
     let mut open = true;
-    crate::windows::window("generator_preview", tr(generator.kind.label()), &mut open).default_width(DEFAULT_WIDTH).show(ctx, |ui| {
+    let beside =
+        ctx.data(|data| data.get_temp::<Rect>(anchor_id())).map_or(ctx.content_rect().center(), |small| pos2(small.left() - BESIDE_GAP, small.center().y));
+    let window = crate::windows::window("generator_preview", tr(generator.kind.label()), &mut open).default_width(DEFAULT_WIDTH);
+    window.default_pos(beside).pivot(egui::Align2::RIGHT_CENTER).show(ctx, |ui| {
         let side = ui.available_width().max(MIN_SIDE);
         let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), Sense::hover());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, tr("Preview")));
@@ -54,8 +60,14 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     }
 }
 
-/// Opens generator effect `effect`'s enlarged preview, or closes it when it is the one open
-pub(crate) fn toggle(app: &mut TextureCraftApp, effect: u64) {
+/// Opens generator effect `effect`'s enlarged preview beside its small one at `small`, or closes it when it is the one open
+pub(crate) fn toggle(app: &mut TextureCraftApp, ctx: &egui::Context, effect: u64, small: Rect) {
+    ctx.data_mut(|data| data.insert_temp(anchor_id(), small));
     let open = &mut app.ui.windows.generator_preview;
     *open = if *open == Some(effect) { None } else { Some(effect) };
+}
+
+/// Where the small preview was when the window was asked for: it first opens beside it
+fn anchor_id() -> egui::Id {
+    egui::Id::unique("generator_preview_anchor")
 }

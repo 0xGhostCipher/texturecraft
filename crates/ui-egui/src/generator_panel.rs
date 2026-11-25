@@ -138,7 +138,8 @@ fn enlarge_on_click(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, id
         sheet.ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, tokens.text_dim), StrokeKind::Inside);
     }
     if response.clicked() {
-        crate::generator_preview_window::toggle(app, id);
+        let ctx = sheet.ui.ctx().clone();
+        crate::generator_preview_window::toggle(app, &ctx, id, rect);
     }
 }
 
