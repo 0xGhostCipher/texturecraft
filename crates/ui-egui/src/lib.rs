@@ -137,6 +137,7 @@ mod session_log_file;
 pub mod settings_window;
 pub mod shader_settings;
 pub mod shelf;
+pub mod shelf_custom_preview;
 mod shelf_entry;
 pub mod shelf_favorite;
 mod shelf_folders;

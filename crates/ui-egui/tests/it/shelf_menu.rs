@@ -130,12 +130,13 @@ fn delete_removes_a_project_image() {
 }
 
 #[test]
-fn a_project_image_menu_renames_it_and_reloads_only_a_file_from_this_session() {
+fn a_project_image_menu_renames_it_keeping_its_star_and_greys_reload_without_a_file() {
     let mut harness = shelf(TEXTURES_TYPE);
     let mut bytes = Vec::new();
     image::RgbaImage::from_pixel(4, 4, image::Rgba([180, 90, 40, 255])).write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
     let name = harness.state_mut().session.import_resource_bytes("plate.png", bytes).unwrap();
     harness.run_steps(3);
+    pick_from_menu(&mut harness, &name, "Add to favorites");
 
     right_click(&mut harness, &name);
     assert!(harness.get_by_label("Reload").accesskit_node().is_disabled(), "an image without a file from this session can't reload");
@@ -145,6 +146,8 @@ fn a_project_image_menu_renames_it_and_reloads_only_a_file_from_this_session() {
 
     let resources = &harness.state().session.doc.resources;
     assert!(resources.contains_key("stone.png") && !resources.contains_key(&name), "Enter renames the image, keeping its extension");
+    let favorites: Vec<&str> = harness.state().ui.shelf_favorites.iter().map(|favorite| favorite.id.as_str()).collect();
+    assert_eq!(favorites, ["stone.png"], "the star follows the rename");
 }
 
 #[test]
@@ -227,4 +230,36 @@ fn favorites_come_first_newest_first_with_a_star_until_removed() {
 
     assert!(comes_before(&harness, first, second), "a removed favorite goes back to its place by name");
     assert!(comes_before(&harness, third, first), "the other favorite stays first");
+}
+
+#[test]
+fn set_custom_preview_shows_a_picked_picture_until_removed() {
+    let material = MATERIALS.iter().filter(|material| !material.smart).min_by_key(|material| material.label.to_lowercase()).unwrap();
+    let mut harness = shelf(MATERIALS_TYPE);
+    let dir = super::temp_dir::TempDir::new("shelf-custom-preview");
+    let picture = dir.join("preview.png");
+    image::RgbaImage::from_pixel(8, 4, image::Rgba([40, 160, 90, 255])).save(&picture).unwrap();
+    let not_a_picture = dir.join("notes.png");
+    std::fs::write(&not_a_picture, b"not a picture").unwrap();
+    let answers = std::sync::Arc::new(std::sync::Mutex::new(vec![picture.clone(), not_a_picture]));
+    let pick = answers.clone();
+    harness.state_mut().file_dialogs.set_override(Some(Box::new(move |_| Answer::Paths(vec![pick.lock().unwrap().remove(0)]))));
+    let picked =
+        |harness: &Harness<'_, TextureCraftApp>| harness.state().ui.shelf_custom_previews.iter().map(|preview| preview.file.clone()).collect::<Vec<_>>();
+
+    pick_from_menu(&mut harness, material.label, "Set custom preview...");
+    harness.run_steps(2);
+
+    assert_eq!(picked(&harness), std::slice::from_ref(&picture), "the tile shows the picked picture");
+
+    pick_from_menu(&mut harness, material.label, "Set custom preview...");
+    harness.run_steps(2);
+
+    assert_eq!(picked(&harness), [picture], "a file that isn't a picture leaves the preview as it was");
+
+    pick_from_menu(&mut harness, material.label, "Remove custom preview");
+
+    assert!(picked(&harness).is_empty(), "the tile shows its own thumbnail again");
+    right_click(&mut harness, material.label);
+    assert!(harness.query_by_label("Remove custom preview").is_none(), "only a tile with a custom preview offers to remove it");
 }

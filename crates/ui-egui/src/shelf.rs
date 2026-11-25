@@ -531,7 +531,9 @@ fn entry_tile(app: &mut TextureCraftApp, ui: &mut Ui, ctx: &egui::Context, entry
         return;
     }
 
-    let texture = entry.thumbnail(app, ctx);
+    // A picture the user picked replaces the thumbnail, unless its file is gone
+    let custom = crate::shelf_custom_preview::file_for(&app.ui.shelf_custom_previews, entry).and_then(|file| app.thumbs.custom_preview(ctx, file));
+    let texture = custom.or_else(|| entry.thumbnail(app, ctx));
     let asset = entry.asset();
     let session = &app.session;
     let response = tile_in_view(

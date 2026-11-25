@@ -29,6 +29,9 @@ const FIELD_TEXT_INSET: f32 = 8.0;
 /// The air above and below the separators, in points
 const SEPARATOR_SPACE: f32 = 3.0;
 
+/// The category's place in an asset's path: after the library and the type's folder
+const CATEGORY_PART: usize = 2;
+
 /// A menu just opened from the keyboard gives the focus to its first row that can be picked (ctx temp data)
 const FOCUS_FIRST_ROW: &str = "shelf_menu_focus_first_row";
 
@@ -79,8 +82,11 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
         {
             shown_info = rest;
             let field_id = ui.make_persistent_id(("asset_name", entry.identity()));
-            if let Some(renamed) = name_field(ui, width, column, field_id, name, &tokens) {
-                app.run(command, json!({"name": name, "to": renamed}));
+            if let Some(renamed) = name_field(ui, width, column, field_id, name, &tokens)
+                && let Some(result) = app.run(command, json!({"name": name, "to": renamed}))
+                && let Some(new_name) = result["name"].as_str()
+            {
+                keep_star_and_preview(app, entry, new_name);
             }
         }
         info_block(ui, width, column, shown_info, &tokens);
@@ -126,6 +132,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
                 row(ui, width, tr("Export resource..."), false, &tokens).on_hover_text(tr("Built-in assets have no file to export"));
             }
         }
+        custom_preview_rows(app, ui, width, entry, &tokens);
         show_in(app, ui, width, entry, &tokens);
         if row(ui, width, favorite_label(app, entry), true, &tokens).clicked() {
             crate::shelf_favorite::toggle(&mut app.ui.shelf_favorites, entry);
@@ -149,13 +156,36 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
     }
 }
 
+/// Moves the favorite star and custom preview of `entry`, just renamed to `new_name`, to its new identity
+fn keep_star_and_preview(app: &mut TextureCraftApp, entry: &ShelfEntry, new_name: &str) {
+    let (kind, old_id) = entry.identity();
+    let new_id = match entry {
+        ShelfEntry::SavedBrush { .. } => app
+            .session
+            .brush_presets
+            .list
+            .iter()
+            .find(|preset| preset.name == new_name)
+            .map(|preset| preset.file.as_ref().and_then(|file| file.to_str()).unwrap_or(&preset.name).to_owned()),
+        _ => Some(new_name.to_owned()),
+    };
+    let Some(new_id) = new_id else { return };
+
+    let ui = &mut app.ui;
+    let favorites = ui.shelf_favorites.iter_mut().map(|favorite| (&favorite.kind, &mut favorite.id));
+    let previews = ui.shelf_custom_previews.iter_mut().map(|preview| (&preview.kind, &mut preview.id));
+    for (_, id) in favorites.chain(previews).filter(|(stored_kind, id)| *stored_kind == kind && *id == old_id) {
+        id.clone_from(&new_id);
+    }
+}
+
 /// The info block's label and value rows: rows only where the asset has the data
 fn info_rows(entry: &ShelfEntry) -> Vec<(&'static str, String)> {
     let path = entry.path();
     let shown_path: Vec<&str> = path.iter().map(|part| LIBRARIES.iter().find(|(id, _)| id == part).map_or_else(|| tr(part), |(_, name)| tr(name))).collect();
     let mut rows =
         vec![(tr("Name"), entry.label().to_string()), (tr("Usages"), tr(entry.usage()).to_string()), (tr("Path"), format!("/{}/", shown_path.join("/")))];
-    if let Some(category) = path.get(2) {
+    if let Some(category) = path.get(CATEGORY_PART) {
         rows.push((tr("Category"), tr(category).to_string()));
     }
     rows
@@ -163,13 +193,60 @@ fn info_rows(entry: &ShelfEntry) -> Vec<(&'static str, String)> {
 
 /// The labels of the rows under the info block, for the menu's width
 fn row_labels(entry: &ShelfEntry) -> Vec<&'static str> {
-    let mut labels = vec![tr("Export resource..."), tr("Show in"), tr("Add to favorites"), tr("Remove from favorites"), tr("Close")];
+    let mut labels = vec![
+        tr("Export resource..."),
+        tr("Set custom preview..."),
+        tr("Remove custom preview"),
+        tr("Show in"),
+        tr("Add to favorites"),
+        tr("Remove from favorites"),
+        tr("Close"),
+    ];
     match entry {
         ShelfEntry::Image(_) => labels.extend([tr("Reload"), tr("Delete"), tr("Add as decal (view center)")]),
         ShelfEntry::SavedBrush { .. } => labels.extend([tr("Replace with the current brush"), tr("Delete")]),
         _ => {}
     }
     labels
+}
+
+/// Set custom preview... picks a picture to show on the tile; Remove custom preview, once one is set, shows the asset's own thumbnail again
+fn custom_preview_rows(app: &mut TextureCraftApp, ui: &mut Ui, width: f32, entry: &ShelfEntry, tokens: &Tokens) {
+    if row(ui, width, tr("Set custom preview..."), true, tokens).clicked() {
+        pick_custom_preview(app, entry);
+        ui.close();
+    }
+    if crate::shelf_custom_preview::file_for(&app.ui.shelf_custom_previews, entry).is_some()
+        && row(ui, width, tr("Remove custom preview"), true, tokens).clicked()
+    {
+        crate::shelf_custom_preview::remove(&mut app.ui.shelf_custom_previews, entry);
+        ui.close();
+    }
+}
+
+/// Asks for a picture, then shows it on `entry`'s tile
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_custom_preview(app: &mut TextureCraftApp, entry: &ShelfEntry) {
+    use crate::file_dialogs::{Bound, FileDialog};
+
+    let (kind, id) = entry.identity();
+    let (kind, id) = (kind.to_owned(), id.to_owned());
+    let dialog = FileDialog::open().filter(tr("Images"), crate::web_files::IMAGE_EXTS);
+    app.ask_file(dialog, Bound::App, move |app, paths| {
+        let Some(file) = paths.into_iter().next() else { return };
+        if image::image_dimensions(&file).is_err() {
+            app.toast(crate::i18n::trf("Could not read {file} as a picture", &[("file", &file.display())]), true);
+            return;
+        }
+
+        app.thumbs.forget_custom_preview(&file);
+        crate::shelf_custom_preview::set(&mut app.ui.shelf_custom_previews, kind, id, file);
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn pick_custom_preview(app: &mut TextureCraftApp, _: &ShelfEntry) {
+    app.toast(tr("Custom previews need the desktop app"), true);
 }
 
 /// The row that adds the asset to the favorites, or takes a favorite out

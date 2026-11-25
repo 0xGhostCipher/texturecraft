@@ -6,6 +6,7 @@ use texturecraft_engine::core::{BakedMap, Channel, ChannelBlend, NormalFormat};
 use crate::docking::Dock;
 use crate::keymap::Keymap;
 use crate::saved_search::SavedSearch;
+use crate::shelf_custom_preview::ShelfCustomPreview;
 use crate::shelf_favorite::ShelfFavorite;
 use crate::shelf_panes::ShelfPanes;
 use crate::shelf_view::ShelfView;
@@ -592,6 +593,9 @@ pub struct UiState {
     /// The asset shelf shows only favorites (the Favorites saved search)
     #[serde(default)]
     pub shelf_favorites_only: bool,
+    /// Pictures the user picked to show on asset tiles instead of their thumbnails
+    #[serde(default)]
+    pub shelf_custom_previews: Vec<ShelfCustomPreview>,
     /// Saved searches' share of the pane column above Filter by path, set by the splitter between them
     #[serde(default = "default_shelf_panes_split", deserialize_with = "deserialize_shelf_panes_split")]
     pub shelf_panes_split: f32,
@@ -750,6 +754,7 @@ impl UiState {
         self.shelf_saved_searches = keep.shelf_saved_searches;
         self.shelf_favorites = keep.shelf_favorites;
         self.shelf_favorites_only = keep.shelf_favorites_only;
+        self.shelf_custom_previews = keep.shelf_custom_previews;
     }
 }
 
@@ -786,6 +791,7 @@ impl Default for UiState {
             shelf_saved_searches: Vec::new(),
             shelf_favorites: Vec::new(),
             shelf_favorites_only: false,
+            shelf_custom_previews: Vec::new(),
             shelf_panes_split: default_shelf_panes_split(),
             props_tab: PropsTab::Brush,
             text: TextUi::default(),
@@ -913,13 +919,15 @@ mod tests {
     }
 
     #[test]
-    fn adopting_a_layout_keeps_the_shelf_query_saved_searches_and_favorites() {
+    fn adopting_a_layout_keeps_the_shelf_query_saved_searches_favorites_and_custom_previews() {
         let saved = crate::saved_search::SavedSearch { name: "rust".into(), filter: "rust".into(), tab: 2, path: vec!["starter".into()] };
         let favorite = crate::shelf_favorite::ShelfFavorite { kind: "material".into(), id: "gold".into() };
         let mut ui =
             UiState { shelf_filter: "rust".into(), shelf_tab: 2, shelf_path: vec!["starter".into()], shelf_favorites_only: true, ..UiState::default() };
         ui.shelf_saved_searches.push(saved.clone());
         ui.shelf_favorites.push(favorite.clone());
+        let preview = crate::shelf_custom_preview::ShelfCustomPreview { kind: "material".into(), id: "gold".into(), file: "gold.png".into() };
+        ui.shelf_custom_previews.push(preview.clone());
 
         ui.adopt_layout(UiState::default());
 
@@ -927,6 +935,7 @@ mod tests {
         assert_eq!(ui.shelf_saved_searches, [saved]);
         assert_eq!(ui.shelf_favorites, [favorite], "favorites are the user's own too");
         assert!(ui.shelf_favorites_only, "the Favorites search is part of the query");
+        assert_eq!(ui.shelf_custom_previews, [preview], "custom previews are the user's own");
     }
 
     #[test]
