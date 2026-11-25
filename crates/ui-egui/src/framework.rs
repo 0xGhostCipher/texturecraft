@@ -17,7 +17,7 @@ use craft_host::target::ShellInfo;
 use craft_host::{AppInfo, Host};
 use craft_keymap::Overrides;
 use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
-use craft_ui::runtime::commands::{ChromeCommand, CommandInput, CommandSet as _, NavCommand, QuitCommand};
+use craft_ui::runtime::commands::{ChromeCommand, CommandInput, CommandSet as _, EditCommands, NavCommand, QuitCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
 use craft_ui::runtime::focus::{EditSet, KeyUse};
 use craft_ui::runtime::frame::{ChromeToggle, FrameInput, FrameOutput};
@@ -116,6 +116,8 @@ impl TextureCraftApp {
                 self.ui.hide_ui = !self.ui.hide_ui;
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.fired_clipboard.extend(clipboard_events(&output));
         use crate::theme::Brightness;
         let mode = match self.ui.prefs.brightness {
             Brightness::Light | Brightness::MediumLight => craft_theme::Mode::Light,
@@ -133,6 +135,20 @@ impl TextureCraftApp {
     pub fn close_path(&mut self, ctx: &egui::Context) {
         embed::logic(ctx, || if crate::windows::close_requested(self) { CloseDecision::Hold } else { CloseDecision::Close });
     }
+}
+
+/// The Copy, Cut and Paste events the runtime took from windows with no canvas of their own (a floating panel) and ran as
+/// its `edit.copy`, `edit.cut` and `edit.paste`: the clipboard events TextureCraft's shortcuts read in the root window.
+/// The other edit commands are not read here: TextureCraft's own loop still forwards their keys.
+#[cfg(not(target_arch = "wasm32"))]
+fn clipboard_events(output: &FrameOutput) -> impl Iterator<Item = egui::Event> + '_ {
+    output.fired.iter().filter_map(|fired| match EditCommands::from_ref(&fired.command)? {
+        EditCommands::Copy => Some(egui::Event::Copy),
+        EditCommands::Cut => Some(egui::Event::Cut),
+        // The layer paste takes no content from the event; the shortcut only needs the paste chord.
+        EditCommands::Paste => Some(egui::Event::Paste(String::new())),
+        _ => None,
+    })
 }
 
 /// Declares the view `id`, an egui widget drawn in this pass, as a document canvas of the window. With nothing or the
@@ -186,4 +202,41 @@ fn window_intent(ctx: &egui::Context, intent: Intent, take: bool) -> bool {
         take && pending
     });
     pending
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use craft_ui::runtime::commands::{FirePhase, FireSource, Fired};
+    use egui_kittest::Harness;
+
+    fn fired(command: EditCommands) -> Fired {
+        Fired::new(command.into(), FireSource::Key, FirePhase::Press, 0.0)
+    }
+
+    /// With nothing focused in a floating panel, the runtime runs the chord as `edit.copy` and takes the clipboard event
+    /// from egui's input, so TextureCraft's own loop never sees it: the fired command reaches the layer clipboard once.
+    #[test]
+    fn fired_copy_and_paste_from_a_float_reach_the_layer_clipboard_once() {
+        let session = texturecraft_engine::sample_session(256, 64).unwrap();
+        let mut h =
+            Harness::builder().with_size(egui::vec2(1600.0, 960.0)).with_context_setup(install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        h.run_steps(4);
+        let ctx = h.ctx.clone();
+        let layers = |h: &Harness<'_, TextureCraftApp>| h.state().session.doc.project.layers.len();
+        let before = layers(&h);
+
+        let mut output = FrameOutput::default();
+        output.fired.push(fired(EditCommands::Copy));
+        h.state_mut().frame_input(&ctx, output, 1.0);
+        h.run_steps(3);
+        assert!(h.state().session.clipboard.is_some(), "the fired Copy copied the layer");
+        assert_eq!(layers(&h), before);
+
+        let mut output = FrameOutput::default();
+        output.fired.push(fired(EditCommands::Paste));
+        h.state_mut().frame_input(&ctx, output, 1.0);
+        h.run_steps(3);
+        assert_eq!(layers(&h), before + 1, "the fired Paste pasted the layer once");
+    }
 }

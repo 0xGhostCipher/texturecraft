@@ -320,6 +320,10 @@ pub struct TextureCraftApp {
     pub framework_dialogs: craft_ui::dialog::DialogHost,
     /// Who TextureCraft is to the framework's dialogs.
     pub(crate) framework_host: std::sync::Arc<craft_host::Host>,
+    /// The Copy, Cut and Paste the runtime took from a floating panel's window (`framework::clipboard_events`), for the
+    /// shortcuts of the next `logic`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fired_clipboard: Vec<egui::Event>,
     last_time: f64,
     /// When the next autosave is due (seconds of app time; desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -448,6 +452,8 @@ impl TextureCraftApp {
             docks: docking::LiveDock::default(),
             framework_dialogs: craft_ui::dialog::DialogHost::new(),
             framework_host: framework::host(),
+            #[cfg(not(target_arch = "wasm32"))]
+            fired_clipboard: Vec::new(),
             last_time: 0.0,
             next_autosave,
             styled: None,
@@ -1153,6 +1159,11 @@ impl eframe::App for TextureCraftApp {
 
         self.bindings.sync(&self.ui.keymap, craft_keymap::egui::platform(ctx));
         menus::shortcuts(self, ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let events = std::mem::take(&mut self.fired_clipboard);
+            menus::forwarded_shortcuts(self, ctx, events, egui::Modifiers::NONE);
+        }
         screen_pick::sync(self, ctx);
         move_on_model::end_when_gone(self, ctx);
 

@@ -414,7 +414,7 @@ pub fn forwarded_shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context, event
             continue;
         }
         let Some(id) = app.bindings.command_of(&event) else { continue };
-        invoke(app, ctx, effect_command(app, &id));
+        run_shortcut(app, ctx, &id);
     }
 }
 
@@ -555,15 +555,20 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     });
 
     for id in &commands_to_invoke {
-        if matches!(id.as_str(), "layer.copy" | "layer.cut")
-            && let Some(layer) = app.session.selected_layer().and_then(|layer| app.session.doc.project.layers.get(&layer))
-        {
-            // Ctrl+V reaches the app only while the system clipboard holds text or an image
-            ctx.copy_text(layer.name.clone());
-        }
-
-        invoke(app, ctx, effect_command(app, id));
+        run_shortcut(app, ctx, id);
     }
+}
+
+/// Runs the command a shortcut is bound to. A layer copy or cut also puts the layer's name on the system clipboard:
+/// Ctrl+V reaches the app only while that clipboard holds text or an image.
+fn run_shortcut(app: &mut TextureCraftApp, ctx: &egui::Context, id: &str) {
+    if matches!(id, "layer.copy" | "layer.cut")
+        && let Some(layer) = app.session.selected_layer().and_then(|layer| app.session.doc.project.layers.get(&layer))
+    {
+        ctx.copy_text(layer.name.clone());
+    }
+
+    invoke(app, ctx, effect_command(app, id));
 }
 
 /// The desktop and web shells turn Ctrl+C, Ctrl+X and Ctrl+V (and Ctrl+Insert, Shift+Delete,
