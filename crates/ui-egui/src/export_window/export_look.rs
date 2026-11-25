@@ -23,6 +23,9 @@ const SCROLL_BAR_MARGIN: f32 = 4.0;
 /// How far the dividers sit below the frame colour, so they read on it
 const DIVIDER_DARKENING: f32 = 0.26;
 
+/// How far the Presets list's names sit from the text colour towards the dim one
+const LIST_TEXT_DIMMING: f32 = 0.37;
+
 /// The Export textures window's colours from the theme: controls a step darker than the window, raised faces a step lighter
 #[derive(Clone, Copy)]
 pub(crate) struct ExportLook {
@@ -36,7 +39,9 @@ pub(crate) struct ExportLook {
     pub(crate) outline: Color32,
     pub(crate) text: Color32,
     pub(crate) text_dim: Color32,
+    pub(crate) list_text: Color32,
     pub(crate) accent: Color32,
+    pub(crate) dark: bool,
 }
 
 impl ExportLook {
@@ -52,7 +57,9 @@ impl ExportLook {
             outline: tokens.button_border,
             text: tokens.text,
             text_dim: tokens.text_dim,
+            list_text: lerp_color(tokens.text, tokens.text_dim, LIST_TEXT_DIMMING),
             accent: tokens.accent,
+            dark: tokens.dark,
         }
     }
 

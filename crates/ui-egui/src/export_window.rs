@@ -1758,13 +1758,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let right = window.right() - RIGHT_MARGIN;
         let row_y = window.top() + TAB_ROW_CONTROLS_Y;
         match app.ui.export.tab {
-            1 => {
-                let strip = egui::Rect::from_min_max(egui::pos2(window.center().x, window.top()), egui::pos2(right, body.top()));
-                ui.scope_builder(
-                    egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    crate::export_templates::naming_pattern,
-                );
-            }
+            1 => crate::export_templates::naming_pattern(ui, window.right(), row_y),
             2 => {
                 let width = drawn::text_width(ui, tr("Open output directory"), false) + OPEN_DIRECTORY_PADDING;
                 let rect = drawn::control_rect(window.right() - OPEN_DIRECTORY_FROM_RIGHT - width, window.right() - OPEN_DIRECTORY_FROM_RIGHT, row_y);
@@ -1800,7 +1794,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let mut row = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::left_to_right(egui::Align::Min)));
         row.set_height(body.height());
         match app.ui.export.tab {
-            1 => crate::export_templates::tab(app, &mut row, &presets),
+            1 => crate::export_templates::tab(app, ui, body, &presets),
             2 => list_tab(app, &mut row),
             _ => settings_tab(app, ui, window, body, &presets),
         }

@@ -1,7 +1,7 @@
 //! The Export textures window's own controls, drawn at the places its layout gives them: tabs,
 //! checks, dropdowns, buttons and icon buttons in the window's colours ([`ExportLook`])
 
-use egui::{Align2, Color32, FontId, Id, Pos2, Rect, Response, Role, Sense, Stroke, StrokeKind, Ui, WidgetInfo, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Id, Pos2, Rect, Response, Role, Sense, Stroke, StrokeKind, Ui, WidgetInfo, pos2, vec2};
 use egui_phosphor::regular as ic;
 
 use super::export_look::{CONTROL_HEIGHT, CONTROL_RADIUS, ExportLook, TEXT_SIZE};
@@ -33,6 +33,10 @@ const TAB_RADIUS: u8 = 4;
 const TAB_GAP: f32 = 3.0;
 /// How far a tab reaches under the divider, where the body's colour covers its lower corners
 const TAB_OVERLAP: f32 = 4.0;
+
+/// A quiet dropdown's hover face: its padding round the value and chevron, and half its height
+const TEXT_DROPDOWN_PADDING: f32 = 3.0;
+const TEXT_DROPDOWN_HALF_HEIGHT: f32 = 9.0;
 
 /// Hit area of an icon button around its glyph
 const ICON_HIT_SIZE: f32 = 20.0;
@@ -300,6 +304,27 @@ pub(crate) fn icon_button(ui: &mut Ui, centre: Pos2, icon: &str, size: f32, name
         (true, false) => look.text_dim,
     };
     glyph(ui, centre, icon, size, color);
+    paint_focus(ui, &response);
+    response
+}
+
+/// A card's quiet dropdown: its value from `value_left` and a chevron at `chevron_x`, no box
+pub(crate) fn text_dropdown(ui: &mut Ui, id: Id, value_left: f32, chevron_x: f32, y: f32, value: &str) -> Response {
+    let look = ExportLook::get(ui.ctx());
+    let enabled = ui.is_enabled();
+    let rect = Rect::from_min_max(
+        pos2(value_left - TEXT_DROPDOWN_PADDING, y - TEXT_DROPDOWN_HALF_HEIGHT),
+        pos2(chevron_x + CHEVRON_SIZE / 2.0 + TEXT_DROPDOWN_PADDING, y + TEXT_DROPDOWN_HALF_HEIGHT),
+    );
+    let response = ui.interact(rect, id, if enabled { Sense::click() } else { Sense::hover() });
+    let name = format!("{value} {}", ic::CARET_DOWN);
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, &name));
+    if response.hovered() && enabled {
+        ui.painter().rect_filled(rect, CornerRadius::same(CONTROL_RADIUS), look.raised);
+    }
+    let color = if looks_disabled(ui, enabled) { look.text_dim } else { look.text };
+    text_at(ui, value_left, y, value, color, false);
+    glyph(ui, pos2(chevron_x, y), ic::CARET_DOWN, CHEVRON_SIZE, color);
     paint_focus(ui, &response);
     response
 }

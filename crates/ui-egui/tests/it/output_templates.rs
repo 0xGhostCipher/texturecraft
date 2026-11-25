@@ -95,15 +95,23 @@ fn right_click(h: &mut Harness<'_, TextureCraftApp>, label: &str) {
 fn the_tab_shows_the_preset_tools_and_map_editor() {
     let library = TemplateLibrary::new("layout");
     let mut h = harness(&library);
-    for text in ["Presets", "Naming pattern", "Current preset:", "Output maps", "Create:", "Drop an input map onto a channel to assign it to that output."] {
+    for text in ["Presets", "Naming pattern", "Current preset:", "Output maps", "Create:"] {
         assert!(h.query_by_label(text).is_some(), "{text}");
     }
+    let hint = "Drop an input map onto a channel to assign it to that output.";
+    assert!(h.query_by_label(hint).is_none(), "the drag hint is no line under the cards");
+    let metallic = h.get_by_role_and_label(egui::Role::ListItem, "Metallic").rect().center();
+    h.hover_at(metallic);
+    h.run_steps(30);
+    assert!(h.query_by_label(hint).is_some(), "a map entry's tooltip says how to use it");
+    h.hover_at(egui::pos2(1.0, 1.0));
+    h.run_steps(4);
     assert!(h.get_all_by_role(egui::Role::ComboBox).any(|c| c.value().as_deref() == Some("OpenPBR")));
     let maps = h.state().session.export_preset("Mine").unwrap().maps.len();
     let ts = h.state().session.ts();
     let plan = h.state_mut().run("export.plan", json!({"preset": "Mine", "ts": ts})).unwrap();
     let exported = plan.as_array().unwrap().len();
-    assert!(h.query_by_label(&format!("{exported} output maps will be exported.")).is_some());
+    assert!(h.query_by_label(&format!("{exported} output maps will be exported")).is_some());
     for create in ["Gray", "RGB", "R+G+B", "RGB+A", "R+G+B+A"] {
         assert!(h.query_by_label(create).is_some(), "{create}");
     }
@@ -262,8 +270,8 @@ fn the_footer_counts_only_the_maps_the_texture_set_exports() {
     assert_eq!(plan.as_array().unwrap().len(), 1, "the sample set has no sheen: {plan}");
     hover_name_field(&mut h, 1);
     assert!(h.query_all_by_label_contains("Not exported").next().is_some(), "the sheen row says so");
-    assert!(h.query_by_label("1 output maps will be exported.").is_some());
-    assert!(h.query_by_label("2 output maps will be exported.").is_none());
+    assert!(h.query_by_label("1 output maps will be exported").is_some());
+    assert!(h.query_by_label("2 output maps will be exported").is_none());
 }
 
 #[test]
