@@ -14,6 +14,7 @@ mod ask;
 mod autosave_name;
 mod bake_job;
 pub mod bake_mode;
+pub mod baking_log;
 mod bake_preset;
 pub mod bake_presets;
 mod bake_report;
