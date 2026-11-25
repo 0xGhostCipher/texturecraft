@@ -1,6 +1,6 @@
 //! Picking a 3D generator's point on the mesh: its crosshair button arms it, the next click in the 3D view sets the point, Esc or the button again cancels
 
-use texturecraft_engine::core::LayerId;
+use texturecraft_engine::core::{EffectKind, GeneratorKind, LayerId};
 use texturecraft_engine::{Session, StackTarget};
 
 /// Which point of which generator effect the next click in the 3D view sets
@@ -10,6 +10,13 @@ pub(crate) struct PointPick {
 
     /// `effect.generator.pickPoint`'s point: distance, start or end
     pub(crate) point: &'static str,
+}
+
+impl PointPick {
+    /// Whether a `kind` generator has the point this pick sets
+    fn belongs_to(&self, kind: GeneratorKind) -> bool {
+        matches!((kind, self.point), (GeneratorKind::ThreeDDistance, "distance") | (GeneratorKind::ThreeDLinearGradient, "start" | "end"))
+    }
 }
 
 /// Where the armed pick is kept: a transient UI mode, like the depth of field's focus pick
@@ -28,10 +35,14 @@ pub(crate) fn toggle(ctx: &egui::Context, pick: PointPick) {
     set(ctx, next);
 }
 
-/// The armed pick while its effect is still the selected one; a pick whose effect was deselected or deleted is dropped
+/// The armed pick while its effect is still the selected one and still has its point; a pick whose effect was deselected, deleted or swapped to a kind without that point is dropped
 pub(crate) fn armed_on(ctx: &egui::Context, session: &Session) -> Option<PointPick> {
     let pick = armed(ctx)?;
-    if session.target == StackTarget::Effect(LayerId(pick.effect)) {
+    let has_point = match session.doc.project.effect(LayerId(pick.effect)).map(|(_, effect)| &effect.kind) {
+        Some(EffectKind::Generator(generator)) => pick.belongs_to(generator.kind),
+        _ => false,
+    };
+    if has_point && session.target == StackTarget::Effect(LayerId(pick.effect)) {
         return Some(pick);
     }
     set(ctx, None);

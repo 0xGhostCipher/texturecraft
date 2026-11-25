@@ -102,7 +102,10 @@ fn restore_defaults_puts_the_generator_back_to_its_kind_defaults() {
 
     click_live(&mut harness, Role::Button, "Restore defaults");
 
-    assert_eq!(generator(&harness, effect), Generator::new(GeneratorKind::Curvature));
+    // Resolution has its own band: restoring the parameters leaves it as set
+    let restored = generator(&harness, effect);
+    assert_eq!(restored.resolution.factor, -2);
+    assert_eq!(Generator { resolution: Generator::new(GeneratorKind::Curvature).resolution, ..restored }, Generator::new(GeneratorKind::Curvature));
 }
 
 #[test]
@@ -251,6 +254,29 @@ fn a_curvature_size_column_sets_its_size_alone_in_one_step() {
 }
 
 #[test]
+fn a_focused_curvature_size_column_steps_with_the_arrow_keys() {
+    let (mut harness, effect) = harness(false);
+    let last = generator(&harness, effect).detail.unwrap().weights.len() - 1;
+    harness.get_by_role_and_label(Role::Slider, "Huge").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Slider, "Huge").focus();
+    harness.run_steps(2);
+    let before = generator(&harness, effect).detail.unwrap().weights;
+    let history = harness.state().session.history_labels().len();
+
+    harness.key_press(egui::Key::ArrowDown);
+    harness.run_steps(3);
+    let lowered = generator(&harness, effect).detail.unwrap().weights;
+    harness.key_press(egui::Key::ArrowUp);
+    harness.run_steps(3);
+
+    assert!(lowered[last] < before[last], "down lowered Huge: {} -> {}", before[last], lowered[last]);
+    assert_eq!(lowered[..last], before[..last], "the other sizes kept theirs");
+    assert!((generator(&harness, effect).detail.unwrap().weights[last] - before[last]).abs() < 1e-6, "up raised it back");
+    assert_eq!(harness.state().session.history_labels().len(), history + 2, "each press is a step");
+}
+
+#[test]
 fn restore_defaults_puts_a_light_back_on_its_defaults() {
     let (mut harness, effect) = harness_with(false, json!({"generator": "direction", "lightHorizontal": 10.0, "highlightLevel": 0.7, "invert": true}));
     click_live(&mut harness, Role::Button, "Restore defaults");
@@ -277,6 +303,45 @@ fn micro_details_show_their_settings_once_switched_on() {
     harness.get_by_role_and_label(Role::Button, "Micro Details").click();
     harness.run_steps(3);
     assert!(slot_reading(&harness, "Empty").rect().is_positive(), "Micro Height on: its slot, empty");
+}
+
+/// An instance showing its source's generator offers its Micro Height only the anchor points below both: one between the source and the instance is refused by the source's mask
+#[test]
+fn an_inherited_generators_micro_height_lists_only_anchors_below_its_owner() {
+    const BELOW: &str = "Height below";
+    const BETWEEN: &str = "Height between";
+    let mut session = texturecraft_engine::sample_session(512, 256).unwrap();
+    session.active_set = 1;
+    let low = execute(&mut session, "layer.add.fill", &json!({})).unwrap()["layer"].clone();
+    execute(&mut session, "effect.add.anchor", &json!({"layer": low, "target": "content", "name": BELOW})).unwrap();
+    let source = execute(&mut session, "layer.add.fill", &json!({"color": [0.8, 0.3, 0.1]})).unwrap()["layer"].clone();
+    execute(&mut session, "mask.add.black", &json!({"layer": source})).unwrap();
+    let added = execute(&mut session, "effect.add.generator", &json!({"layer": source, "generator": "dirt", "microHeight": true})).unwrap();
+    let effect = LayerId(added["effect"].as_u64().unwrap());
+    let between = execute(&mut session, "layer.add.fill", &json!({})).unwrap()["layer"].clone();
+    execute(&mut session, "effect.add.anchor", &json!({"layer": between, "target": "content", "name": BETWEEN})).unwrap();
+    let instance = execute(&mut session, "layer.instance", &json!({"layer": source})).unwrap()["layer"].clone();
+    execute(&mut session, "layer.select", &json!({"layer": instance})).unwrap();
+    session.target = texturecraft_engine::StackTarget::Effect(effect);
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 2400.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+    harness.state_mut().ui.dock.close(Panel::Layers);
+    harness.state_mut().ui.dock.focus(Panel::Properties);
+    harness.run_steps(6);
+
+    harness.get_by_role_and_label(Role::Button, "Micro Details").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Button, "Micro Details").click();
+    harness.run_steps(3);
+    slot_reading(&harness, "Empty").scroll_to_me();
+    harness.run_steps(3);
+    slot_reading(&harness, "Empty").click();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(Role::Tab, "Anchor points").click();
+    harness.run_steps(3);
+
+    let offered: Vec<_> = harness.get_all_by_role(Role::ListBoxOption).filter_map(|row| row.accesskit_node().label()).collect();
+    assert!(offered.iter().any(|label| label.contains(BELOW)), "the anchor below the source is offered: {offered:?}");
+    assert!(!offered.iter().any(|label| label.contains(BETWEEN)), "the anchor above the source is excluded: {offered:?}");
 }
 
 #[test]
@@ -438,6 +503,14 @@ fn a_point_pick_waits_for_the_view_until_escape() {
     harness.run_steps(3);
 
     assert!(!is_on(&harness, Role::Button, end), "a pick left behind is dropped");
+
+    // A kind without the point drops it too: swapped back, it waits no more
+    click_live(&mut harness, Role::Button, end);
+    for kind in ["position", "3dLinearGradient"] {
+        execute(&mut harness.state_mut().session, "effect.set", &json!({"effect": effect.0, "generator": kind})).unwrap();
+        harness.run_steps(3);
+    }
+    assert!(!is_on(&harness, Role::Button, end), "a pick on a swapped kind is dropped");
 }
 
 #[test]

@@ -5,7 +5,7 @@ use serde_json::json;
 use texturecraft_engine::core::{LayerId, Source};
 
 use crate::TextureCraftApp;
-use crate::dock::{anchor_label, anchors_below, image_drop, mesh_map_color};
+use crate::dock::{anchor_label, image_drop, mesh_map_color, project_effect_anchors_below};
 use crate::fill_material_panel::{source_choice, source_tabs};
 use crate::generator_input_slot::GeneratorInputSlot;
 use crate::i18n::{baked_map_label, tr, trf};
@@ -93,7 +93,7 @@ pub(crate) fn input_card(
     }
     let current = source.map(|source| source_choice(&app.session, source));
     let tabs = || {
-        let anchors = if slot.takes_anchor() { anchors_below(&app.session.doc.project, layer) } else { Vec::new() };
+        let anchors = if slot.takes_anchor() { project_effect_anchors_below(&app.session.doc.project, layer, LayerId(id)) } else { Vec::new() };
         let mut tabs = source_tabs(&app.session, &anchors, tokens.button, false);
 
         // A generator's inputs read images, values and anchor points, never a procedural

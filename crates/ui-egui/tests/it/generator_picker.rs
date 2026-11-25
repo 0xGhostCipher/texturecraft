@@ -95,8 +95,8 @@ fn generator_picker_snapshots() {
         harness.render().unwrap().save(output.join(format!("{name}.png"))).unwrap();
     }
 
-    // The picker's tile is the button named Dirt
-    harness.get_by_role_and_label(Role::Button, "Dirt").hover();
+    // The picker's tile is the list option named Dirt
+    harness.get_by_role_and_label(Role::ListBoxOption, "Dirt").hover();
     for _ in 0..10 {
         harness.run_steps(5);
         std::thread::sleep(std::time::Duration::from_millis(300));

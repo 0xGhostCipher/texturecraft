@@ -169,18 +169,11 @@ pub(crate) fn micro_params(kind: GeneratorKind, micro: &MicroDetails) -> Value {
     params
 }
 
-/// The `effect.set` params that put generator effect `id` back to the defaults of its kind; its images stay in their slots
+/// The `effect.set` params that put generator effect `id`'s parameters back to the defaults of its kind; its images stay in their slots and its resolution, in a band of its own, stays as set
 pub(crate) fn defaults_of(id: u64, generator: &Generator) -> Value {
     let kind = generator.kind;
     let defaults = Generator::new(kind);
-    let params = json!({
-        "effect": id,
-        "seed": defaults.seed,
-        "invert": defaults.invert,
-        "resolution": format!("{:?}", defaults.resolution.mode),
-        "customResolution": defaults.resolution.custom,
-        "resolutionFactor": defaults.resolution.factor,
-    });
+    let params = json!({"effect": id, "seed": defaults.seed, "invert": defaults.invert});
     if let Some(controls) = &defaults.controls {
         return merged(params, kind_params(controls));
     }

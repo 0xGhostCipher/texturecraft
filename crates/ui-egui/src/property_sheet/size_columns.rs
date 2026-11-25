@@ -18,6 +18,9 @@ const FACE_AIR: f32 = 2.0;
 /// Width of a column's track and fill
 const COLUMN_TRACK_WIDTH: f32 = 2.0;
 
+/// How far one arrow key press moves a focused column: a twentieth of its track
+const KEY_STEP: f32 = 0.05;
+
 impl PropertySheet<'_> {
     /// One 0..1 vertical slider per name in `values`, side by side across the panel
     pub(crate) fn size_columns(&mut self, names: &[&str], values: &mut [f32]) -> SizeColumnsResponse {
@@ -40,6 +43,23 @@ impl PropertySheet<'_> {
                 let picked = (1.0 - (pointer.y - track_top) / COLUMN_TRACK).clamp(0.0, 1.0);
                 if picked != *value {
                     *value = picked;
+                    moved = true;
+                }
+            }
+
+            // A focused column keeps the arrow keys: up and right raise it, down and left lower it, each press its own step
+            if hit.has_focus() {
+                self.ui.memory_mut(|memory| {
+                    memory.set_focus_lock_filter(id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() })
+                });
+                let presses = self.ui.input(|input| {
+                    let raised = input.num_presses(egui::Key::ArrowUp) + input.num_presses(egui::Key::ArrowRight);
+                    let lowered = input.num_presses(egui::Key::ArrowDown) + input.num_presses(egui::Key::ArrowLeft);
+                    raised as f32 - lowered as f32
+                });
+                let stepped = (*value + presses * KEY_STEP).clamp(0.0, 1.0);
+                if stepped != *value {
+                    *value = stepped;
                     moved = true;
                 }
             }
