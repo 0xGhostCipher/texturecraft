@@ -16,7 +16,7 @@ use craft_behavior::flow::Axis;
 use craft_ui::contract::{Bind, BodyCx, PlainData, SizeLimits, Tracked};
 use craft_ui::docking::{DockConfig, DockPanels, GroupAt, PanelSpec, PanelSpecs};
 use craft_ui::patterns::dock::DockArea;
-use egui::{Margin, Rect, Ui, Vec2, vec2};
+use egui::{Margin, Rect, Ui, Vec2, ViewportId, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -485,14 +485,15 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     // Panels arrange in a split tree around the viewport; floating title bars only move windows.
     // Each closable tab has its close button, as each group header had one for its shown panel.
     let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false).tab_close_buttons(true);
-    let output = {
+    let (output, focused_windows) = {
         let tokens = Tokens::get(&context);
-        let mut panels = Panels { app: &mut *app, tokens, layout: shown.layout().clone() };
+        let mut panels = Panels { app: &mut *app, tokens, layout: shown.layout().clone(), focused_windows: Vec::new() };
         let mut area = DockArea::new("Panels", Bind::given(Arc::clone(&shown)), &specs, &mut panels, config);
         if let Some(hand_over) = hand_over {
             area = area.continue_move(hand_over);
         }
-        area.show(ui)
+        let output = area.show(ui);
+        (output, panels.focused_windows)
     };
     app.docks.specs = specs;
 
@@ -502,9 +503,11 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     // Keys pressed in a panel floated into a window of its own run the app's shortcuts there
     #[cfg(not(target_arch = "wasm32"))]
     for (_, viewport) in &output.windows {
-        let (events, held) = context.input_for(*viewport, |input| (input.events.clone(), input.modifiers));
+        let (events, held) = forwarded_events(&context, *viewport, &focused_windows);
         crate::menus::forwarded_shortcuts(app, &context, events, held);
     }
+    #[cfg(target_arch = "wasm32")]
+    let _ = focused_windows;
     if let Some(error) = &output.error {
         log::warn!("docking: {:?}", error.error);
     }
@@ -520,12 +523,34 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 }
 
+/// Records in `focused_windows` whether a widget of the running pass's window has the keyboard, after one of the window's
+/// panels drew
+fn note_focus(context: &egui::Context, focused_windows: &mut Vec<ViewportId>) {
+    let window = context.viewport_id();
+    focused_windows.retain(|focused| *focused != window);
+    if context.memory(|memory| memory.focused().is_some()) {
+        focused_windows.push(window);
+    }
+}
+
+/// The keys, text and clipboard events `window` hands to the app's shortcuts, with the modifiers held there: nothing
+/// while one of its widgets has the keyboard
+#[cfg(not(target_arch = "wasm32"))]
+fn forwarded_events(context: &egui::Context, window: ViewportId, focused_windows: &[ViewportId]) -> (Vec<egui::Event>, egui::Modifiers) {
+    use egui::Event;
+    let focused = focused_windows.contains(&window);
+    let forwarded = |event: &&Event| !focused && matches!(event, Event::Key { .. } | Event::Text(_) | Event::Copy | Event::Cut | Event::Paste(_));
+    context.input_for(window, |input| (input.events.iter().filter(forwarded).cloned().collect(), input.modifiers))
+}
+
 /// The panels' contents for the dock area
 struct Panels<'a> {
     app: &'a mut TextureCraftApp,
     tokens: Tokens,
     /// The arrangement the dock shows in this pass
     layout: Layout<Panel>,
+    /// The windows in which a widget had the keyboard once their panels drew
+    focused_windows: Vec<ViewportId>,
 }
 
 /// Room between a panel's edges and its contents
@@ -597,6 +622,7 @@ impl DockPanels<Panel> for Panels<'_> {
         if *panel != Panel::Viewport {
             panel_body(self.app, ui, *panel);
         }
+        note_focus(ui.ctx(), &mut self.focused_windows);
     }
 
     /// The viewport, edge to edge in its group.
@@ -637,6 +663,59 @@ mod tests {
 
     fn panels_of(w: &Workspace) -> Vec<Panel> {
         w.layout().panels().into_iter().copied().collect()
+    }
+
+    /// What a floating panel's own window with a text field, focused when `typing`, hands on of `events`
+    #[cfg(not(target_arch = "wasm32"))]
+    fn handed_on(typing: bool, events: &[egui::Event]) -> Vec<egui::Event> {
+        use std::{cell::RefCell, rc::Rc};
+
+        let window = ViewportId::from_hash_of("floating panel");
+        let context = egui::Context::default();
+        context.set_embed_viewports(false);
+
+        // Runs the window's pass inside its parent's, as eframe does
+        let arriving = Rc::new(RefCell::new(Vec::new()));
+        let queued = Rc::clone(&arriving);
+        egui::Context::set_immediate_viewport_renderer(move |context, viewport| {
+            let mut input = egui::RawInput { viewport_id: viewport.ids.this, events: queued.take(), ..Default::default() };
+            input.viewports.insert(viewport.ids.this, egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() });
+            let mut output = context.run_ui(input, viewport.viewport_ui_cb);
+            output.textures_delta.clear();
+        });
+
+        let mut name = String::new();
+        let mut handed_on = Vec::new();
+        // The field takes the keyboard a pass before the keys arrive
+        for arrived in [Vec::new(), events.to_vec()] {
+            *arriving.borrow_mut() = arrived;
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                let mut focused_windows = Vec::new();
+                ui.ctx().show_viewport_immediate(window, egui::ViewportBuilder::default(), |ui, _| {
+                    let field = ui.text_edit_singleline(&mut name);
+                    if typing {
+                        field.request_focus();
+                    }
+                    note_focus(ui.ctx(), &mut focused_windows);
+                });
+                handed_on.extend(forwarded_events(ui.ctx(), window, &focused_windows).0);
+            });
+            output.textures_delta.clear();
+        }
+
+        assert_eq!(name.is_empty(), !typing, "a focused field types the text");
+        handed_on
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_floating_panel_hands_on_its_keys_unless_a_field_there_has_the_keyboard() {
+        use egui::{Event, Key, Modifiers};
+
+        let key = Event::Key { key: Key::B, physical_key: Some(Key::B), pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        let keys = [key, Event::Text("b".into()), Event::Paste("pasted".into())];
+        assert!(handed_on(true, &keys).is_empty(), "the field's keys are its own");
+        assert_eq!(handed_on(false, &keys), keys, "with nothing focused they are the app's");
     }
 
     #[test]
