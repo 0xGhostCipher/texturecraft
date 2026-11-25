@@ -31,9 +31,8 @@ release push. An org admin completes the following setup for this repo:
 
    Those twelve (`APPLE_*` and `KEYCHAIN_PASSWORD`, `AZURE_*`) are all a signed release needs;
    `GITHUB_TOKEN` is provided by Actions.
-4. Add the repo to the org's **Default runner group** (Settings → Actions → Runner groups). The
-   macOS job (`macos-15-xlarge`) and the FreeBSD job (`github-ubuntu-16core`) run on larger runners,
-   which only serve repos in that group; outside it they wait for a runner forever, with no error.
+4. Add the repo to the org's **Default runner group** (Settings → Actions → Runner groups) for the
+   larger macOS runner (`macos-15-xlarge`). The FreeBSD release job runs its VM on `ubuntu-latest`.
 
 ### 2. Set the version
 
@@ -117,8 +116,8 @@ is its own zip next to the DMG). Release builds embed the craft-fonts interface 
 (`CRAFT_FONTS_REF` in `release.yml`) and ship their `OFL-<family>.txt` licences with the other
 notices. The packaging scripts smoke-test `texturecraft-cli --version` where they can run the
 staged binary. The FreeBSD aarch64 release cross-build skips that check. The Linux job also runs
-the AppImage with `--version`. Both binaries must print their version and exit without opening a
-window.
+the AppImage with `--version` as a non-blocking check. Both binaries must print their version and
+exit without opening a window.
 
 ## TextureCraft-specific values
 
