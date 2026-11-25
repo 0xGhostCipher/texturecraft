@@ -94,9 +94,10 @@ fn global_blur_applies_as_one_undo_step() {
 
 #[test]
 fn restore_defaults_puts_the_generator_back_to_its_kind_defaults() {
+    const SET_FACTOR: i8 = -2;
     let (mut harness, effect) = harness(false);
     assert!(harness.get_by_role_and_label(Role::Button, "Restore defaults").accesskit_node().is_disabled(), "at its defaults it does nothing");
-    let edits = json!({"effect": effect.0, "level": 0.9, "blur": 0.5, "balance": 0.2, "resolutionFactor": -2, "seed": 99});
+    let edits = json!({"effect": effect.0, "level": 0.9, "blur": 0.5, "balance": 0.2, "resolutionFactor": SET_FACTOR, "seed": 99});
     execute(&mut harness.state_mut().session, "effect.set", &edits).unwrap();
     harness.run_steps(3);
 
@@ -104,7 +105,7 @@ fn restore_defaults_puts_the_generator_back_to_its_kind_defaults() {
 
     // Resolution has its own band: restoring the parameters leaves it as set
     let restored = generator(&harness, effect);
-    assert_eq!(restored.resolution.factor, -2);
+    assert_eq!(restored.resolution.factor, SET_FACTOR);
     assert_eq!(Generator { resolution: Generator::new(GeneratorKind::Curvature).resolution, ..restored }, Generator::new(GeneratorKind::Curvature));
 }
 

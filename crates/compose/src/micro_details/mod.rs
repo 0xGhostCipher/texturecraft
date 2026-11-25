@@ -62,7 +62,7 @@ const OCCLUSION_STRENGTH: f32 = 0.3232;
 const CACHE_ENTRIES: usize = 8;
 const CACHE_BYTES: usize = 256 << 20;
 
-/// The anchor heights prepared last, one per mesh maps, texture set and anchor
+/// The anchor heights prepared last, one per mesh maps, texture set and anchor: a working-size atlas each, kept while the session's stack reads it and its mesh maps live
 static ANCHOR_HEIGHTS: Mutex<Vec<AnchorEntry>> = Mutex::new(Vec::new());
 
 /// The mesh maps (by address) and texture sets whose anchor heights are being built: the build composites the stack, which prepares them again

@@ -2418,7 +2418,7 @@ fn compares_this_layer(kind: &EffectKind) -> bool {
     matches!(kind, EffectKind::Compare { left, right, .. } if *left == CompareSource::ThisLayer || *right == CompareSource::ThisLayer)
 }
 
-/// Build the curvature detail sizes every visible generator of `layers` reads, once, before tiles composite in parallel.
+/// Build the curvature detail sizes every visible generator of `layers` reads, once, before tiles composite in parallel
 fn prepare_curvature_sizes(inp: &EvaluationInputs, layers: &[LayerId]) {
     let visible = layers.iter().filter(|id| inp.project.layers.get(id).is_some_and(|layer| layer.visible));
     let masks = visible.filter_map(|id| layer_mask(inp.project, *id)).filter(|mask| mask.enabled);
@@ -2445,7 +2445,8 @@ fn prepare_micro_anchors(inp: &EvaluationInputs) {
             }
         }
     }
-    if inp.whole_stack() {
+    // Only the session's own stack knows every reader: a cut-down one (a histogram's, a thumbnail's) builds what is missing and drops nothing
+    if inp.is_session_stack() {
         crate::micro_details::keep_anchor_heights(inp, &readers.iter().map(|(_, anchor)| *anchor).collect::<Vec<_>>());
     }
     if readers.is_empty() {
@@ -2459,8 +2460,7 @@ fn prepare_micro_anchors(inp: &EvaluationInputs) {
     };
     readers.sort_by_key(|(_, anchor)| drawn_at(*anchor));
     for (reader, anchor) in readers {
-        // A stack cut below an effect (a histogram's) reads the heights the whole stack prepared, building only those missing
-        if !inp.whole_stack() && crate::micro_details::has_anchor_heights(inp, anchor) {
+        if !inp.is_session_stack() && crate::micro_details::has_anchor_heights(inp, anchor) {
             continue;
         }
         let Some(stack) = StackKey::new(inp.project, inp.pixels, inp.baked, inp.images, inp.ts, &set.stack) else { return };
@@ -2511,7 +2511,7 @@ fn wear_parameters(generator: &Generator) -> Option<WearParameters> {
     generator.wear.or_else(|| WearParameters::defaults(generator.kind).filter(|_| generator.kind == GeneratorKind::FiberGlassEdgeWear))
 }
 
-/// Build the curvature detail sizes the visible generators of `masks` read, once, before tiles composite in parallel.
+/// Build the curvature detail sizes the visible generators of `masks` read, once, before tiles composite in parallel
 fn prepare_mask_curvature_sizes<'a>(inp: &EvaluationInputs, masks: impl Iterator<Item = &'a Mask>) {
     let mut needed = [false; LEVEL_RADII.len()];
     for effect in masks.flat_map(|mask| &mask.effects).filter(|effect| effect.visible) {
@@ -4407,7 +4407,7 @@ pub fn composite_tiles_with_projectors(
         cache.bind_mesh(mesh);
     }
 
-    let inputs = EvaluationInputs::new(inputs, projectors);
+    let inputs = EvaluationInputs::new(inputs, projectors).of_the_session_stack();
     composite_evaluation_tiles(&inputs, out, tiles, below);
 }
 
@@ -5118,7 +5118,7 @@ pub fn effect_histogram(inp: &Inputs, effect: LayerId, channel: Channel, bins: u
     let (cut, in_mask) = cut_below(inp.project, owner, effect)?;
     let cut_inp = Inputs { project: &cut, preview: None, block_scales: inp.block_scales.clone(), ..*inp };
     let projectors = ProjectorDepthCache::default();
-    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors).below_a_cut();
+    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors);
     let channels = evaluation_channels(&cut_inp, cut.texture_set(inp.ts).map(|set| set.channel_list()).unwrap_or_default());
     let tiles = histogram_tiles(inp.gbuf.width, inp.gbuf.height);
     let shared = shared_histogram_fields(&cut_inp, &channels, &tiles);
@@ -5242,7 +5242,7 @@ pub fn compare_histograms(inp: &Inputs, effect: LayerId, bins: usize) -> Option<
 
     let cut_inp = Inputs { project: &cut, preview: None, block_scales: inp.block_scales.clone(), ..*inp };
     let projectors = ProjectorDepthCache::default();
-    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors).below_a_cut();
+    let cut_inp = EvaluationInputs::new(&cut_inp, &projectors);
     let mut channels = evaluation_channels(&cut_inp, set.channel_list());
     if !channels.contains(&channel) {
         channels.push(channel);
