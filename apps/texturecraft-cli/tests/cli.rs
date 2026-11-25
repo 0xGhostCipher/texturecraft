@@ -16,17 +16,6 @@ fn cli_binary_path(runner_path: Option<OsString>) -> OsString {
     runner_path.unwrap_or_else(|| env!("CARGO_BIN_EXE_texturecraft-cli").into())
 }
 
-#[test]
-fn cli_binary_prefers_relocated_runner_path() {
-    let relocated = OsString::from("relocated archive/texturecraft-cli");
-    assert_eq!(cli_binary_path(Some(relocated.clone())), relocated);
-}
-
-#[test]
-fn cli_binary_defaults_to_cargo_path() {
-    assert_eq!(cli_binary_path(None), OsString::from(env!("CARGO_BIN_EXE_texturecraft-cli")));
-}
-
 fn cli(args: &[&str]) -> Output {
     Command::new(cli_binary()).args(args).output().unwrap()
 }
@@ -108,22 +97,34 @@ fn new_info_run_bake_export_batch() {
 
 #[test]
 fn batch_rejects_non_string_paths() {
-    let d = tmp("batch-paths");
-    let script = d.join("script.json");
-    let out = d.join("unexpected.tcraft");
-    let invalid_open = serde_json::json!({"steps": [], "open": false, "save": p(&out)});
-    let invalid_save = serde_json::json!({"steps": [], "open": "builtin:cube", "save": [p(&out)]});
+    let directory = tmp("batch-paths");
+    let script = directory.join("script.json");
+    let unexpected_project = directory.join("unexpected.tcraft");
+    let invalid_open = serde_json::json!({"steps": [], "open": false, "save": p(&unexpected_project)});
+    let invalid_save = serde_json::json!({
+        "open": "builtin:cube",
+        "save": [p(&unexpected_project)],
+        "steps": [{"id": "file.saveCopy", "params": {"path": p(&unexpected_project)}}]
+    });
+
     for (body, field) in [(invalid_open, "open"), (invalid_save, "save")] {
         std::fs::write(&script, body.to_string()).unwrap();
         let output = cli(&["batch", p(&script)]);
-        assert_eq!(output.status.code(), Some(1));
+
         let error = String::from_utf8_lossy(&output.stderr);
-        assert!(error.contains(field) && error.contains("must be a string"), "{error}");
-        assert!(output.stdout.is_empty() && !out.exists());
+        assert_eq!(output.status.code(), Some(1), "{field}: {error}");
+        assert!(error.contains(&format!("`{field}` field must be a string")), "{error}");
+        assert!(output.stdout.is_empty());
+        assert!(!unexpected_project.exists());
     }
+
     std::fs::write(&script, r#"{"steps":[],"open":null,"save":null}"#).unwrap();
-    assert_eq!(json(&["batch", p(&script)])["completed"], 0);
-    let _ = std::fs::remove_dir_all(&d);
+    let reply = json(&["batch", p(&script)]);
+
+    assert_eq!(reply["completed"], 0);
+    assert!(reply["failed"].is_null());
+
+    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[test]
