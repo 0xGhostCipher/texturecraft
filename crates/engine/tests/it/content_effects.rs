@@ -212,6 +212,28 @@ fn generators_read_an_anchor_height_as_their_micro_height() {
 }
 
 #[test]
+fn the_earlier_micro_keys_keep_an_earlier_model_generator_on_the_earlier_micro_detail() {
+    let mut session = session();
+    let low = id(execute(&mut session, "layer.add.fill", &json!({"height": 0.5})).unwrap(), "layer");
+    let anchor = id(execute(&mut session, "effect.add.anchor", &json!({"layer": low})).unwrap(), "effect");
+    let top = id(execute(&mut session, "layer.add.fill", &json!({"color": [1.0, 1.0, 1.0]})).unwrap(), "layer");
+    execute(&mut session, "mask.add.black", &json!({"layer": top})).unwrap();
+    let earlier_micro = |session: &Session, generator: u64| match session.doc.project.effect(LayerId(generator)).map(|(_, effect)| &effect.kind) {
+        Some(EffectKind::Generator(generator)) => generator.earlier_micro(),
+        _ => None,
+    };
+
+    // `level` keeps the generator on the earlier model, where these keys read the anchor's height as before Micro Details
+    let generator = id(execute(&mut session, "effect.add.generator", &json!({"layer": top, "generator": "curvature", "level": 0.5})).unwrap(), "effect");
+    execute(&mut session, "effect.set", &json!({"effect": generator, "microAnchor": anchor, "microAmount": 0.25})).unwrap();
+    assert_eq!(earlier_micro(&session, generator), Some((LayerId(anchor), 0.25)));
+
+    // A Micro Details control moves it onto the reference's controls and the anchor's curvature
+    execute(&mut session, "effect.set", &json!({"effect": generator, "microHeightIntensity": 1.0})).unwrap();
+    assert_eq!(earlier_micro(&session, generator), None);
+}
+
+#[test]
 fn anchor_effects_added_through_instance_validate_against_source() {
     let mut session = session();
     let source = id(execute(&mut session, "layer.add.fill", &json!({"height": 0.5})).unwrap(), "layer");

@@ -29,6 +29,9 @@ pub struct MicroDetails {
     /// The micro normal image (None: an empty slot)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_source: Option<Source>,
+    /// Saved as the micro detail before Micro Details (an anchor's height times an amount): a generator still on the earlier model adds it that way, see [`super::Generator::earlier_micro`]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub earlier: bool,
 }
 
 impl MicroDetails {
@@ -37,7 +40,7 @@ impl MicroDetails {
     /// Height Details Intensity per unit of an anchor's micro detail amount (0..1): the earlier default amount, 0.5, reads at the default intensity
     pub const HEIGHT_INTENSITY_PER_AMOUNT: f32 = 2.0;
 
-    /// The micro details reading anchor point `anchor`'s height as their Micro Height at `amount` (0..1) on a `kind` generator, None for kinds without them
+    /// The micro detail saved before Micro Details, anchor point `anchor`'s height at `amount` (0..1), as Micro Details on a `kind` generator (None for kinds without them): the anchor is the Micro Height, `amount` its intensity
     pub fn of_anchor(kind: GeneratorKind, anchor: LayerId, amount: f32) -> Option<MicroDetails> {
         let amount = if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 };
         let source = Source::Anchor { anchor, channel: Channel::Height, ramp: Vec::new() };
@@ -46,6 +49,7 @@ impl MicroDetails {
             height: true,
             height_intensity: amount * MicroDetails::HEIGHT_INTENSITY_PER_AMOUNT,
             height_source: Some(source),
+            earlier: true,
             ..MicroDetails::defaults(kind)?
         };
         Some(micro.clamped(kind))
@@ -64,6 +68,7 @@ impl MicroDetails {
             ao_depth: 0.05,
             height_source: None,
             normal_source: None,
+            earlier: false,
         };
         match kind {
             GeneratorKind::Curvature | GeneratorKind::AmbientOcclusion => Some(shared),

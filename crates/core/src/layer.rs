@@ -1274,9 +1274,18 @@ impl Generator {
         self.inputs.values().chain(self.texture.as_ref().and_then(|texture| texture.source.as_ref())).chain(self.grunge.as_ref()).chain(micro)
     }
 
-    /// The micro details as saved, when the generator computes with them: with a slot switched on, also on the earlier model where an anchor's micro detail saved before Micro Details reads (bring them into range before use: saved files are not trusted)
+    /// The micro details as saved, when the generator computes with them: with a slot switched on, except a micro detail saved before Micro Details on a generator still on the earlier model, which [`Generator::earlier_micro`] reads (bring them into range before use: saved files are not trusted)
     pub fn micro_in_use(&self) -> Option<&MicroDetails> {
-        self.micro.as_deref().filter(|micro| micro.in_use(self.kind))
+        self.micro.as_deref().filter(|micro| micro.in_use(self.kind) && !(micro.earlier && self.on_earlier_model()))
+    }
+
+    /// The anchor point and amount (0..1) of a micro detail saved before Micro Details, while the generator is still on the earlier model: its signal adds that anchor's height times the amount, as it did when saved
+    pub fn earlier_micro(&self) -> Option<(LayerId, f32)> {
+        let micro = self.micro.as_deref().filter(|micro| micro.earlier && micro.in_use(self.kind) && micro.height && self.on_earlier_model())?;
+        let Some(Source::Anchor { anchor, .. }) = &micro.height_source else { return None };
+
+        let amount = micro.height_intensity / MicroDetails::HEIGHT_INTENSITY_PER_AMOUNT;
+        Some((*anchor, if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 }))
     }
 
     /// Whether the generator is on the level, softness and noise it had before the reference app's controls
@@ -2830,6 +2839,25 @@ mod tests {
         saved["kind"] = serde_json::to_value(GeneratorKind::ThinAreas).unwrap();
         let without: Generator = serde_json::from_value(saved).unwrap();
         assert!(without.micro.is_none(), "a kind without micro details drops it");
+    }
+
+    #[test]
+    fn a_micro_detail_saved_on_an_anchor_keeps_its_earlier_reading_until_the_generator_leaves_the_earlier_model() {
+        // Saved before the reference's controls too: on the earlier model
+        let earlier = Generator { section: None, ..Generator::new(GeneratorKind::Curvature) };
+        let mut saved = serde_json::to_value(earlier).unwrap();
+        saved["micro"] = serde_json::json!({"anchor": 9, "amount": 0.25});
+        let generator: Generator = serde_json::from_value(saved).unwrap();
+
+        assert_eq!(generator.earlier_micro(), Some((LayerId(9), 0.25)));
+        assert!(generator.micro_in_use().is_none(), "the earlier reading replaces the Micro Height's curvature");
+
+        let reloaded: Generator = serde_json::from_value(serde_json::to_value(&generator).unwrap()).unwrap();
+        assert_eq!(reloaded.earlier_micro(), Some((LayerId(9), 0.25)), "saving again keeps the earlier reading");
+
+        let on_sections = Generator { section: SectionParameters::defaults(GeneratorKind::Curvature), ..generator };
+        assert_eq!(on_sections.earlier_micro(), None);
+        assert!(on_sections.micro_in_use().is_some(), "on the reference's controls the anchor reads as a Micro Height");
     }
 
     #[test]

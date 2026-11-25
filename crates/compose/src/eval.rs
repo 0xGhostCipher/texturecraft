@@ -3463,6 +3463,7 @@ impl<'a, 'b> Texel<'a, 'b> {
         }
 
         let coords = self.coords();
+        let earlier_micro = generator.earlier_micro().map_or(0.0, |(anchor, amount)| self.earlier_micro_detail(generator.kind, anchor, amount));
 
         // Micro details saved on the earlier model add to its curvature and occlusion inputs too
         let signal = match (generator.kind, &generator.detail) {
@@ -3470,7 +3471,7 @@ impl<'a, 'b> Texel<'a, 'b> {
                 // Detail sizes are blurred copies of the mesh map, so a replaced curvature input reads at its own size only
                 let sizes = if generator.inputs.contains_key(&BakedMap::Curvature) { None } else { maps.sizes.as_deref() };
                 let curvature = self.curvature_input(generator, maps);
-                self.curvature_detail(detail, sizes, curvature)
+                self.curvature_detail(detail, sizes, curvature, earlier_micro)
             }
             (GeneratorKind::EdgeWear, None) | (GeneratorKind::FiberGlassEdgeWear, _) => (self.curvature_input(generator, maps).unwrap_or(0.5) - 0.5) * 2.0,
             (GeneratorKind::Curvature, None) => self.curvature_input(generator, maps).unwrap_or(0.5),
@@ -3491,6 +3492,11 @@ impl<'a, 'b> Texel<'a, 'b> {
                 | GeneratorKind::UvChecker,
                 _,
             ) => 0.0,
+        };
+        let signal = if matches!(generator.kind, GeneratorKind::Curvature | GeneratorKind::EdgeWear) && generator.detail.is_some() {
+            signal
+        } else {
+            signal + earlier_micro
         };
         let signal = if generator.noise_amount > 0.0 {
             let noise = world_noise(coords.pos, generator.noise_scale, generator.seed);
@@ -3519,7 +3525,7 @@ impl<'a, 'b> Texel<'a, 'b> {
                 let detail = generator.detail_in_use().unwrap_or_default();
                 let sizes = if generator.inputs.contains_key(&BakedMap::Curvature) { None } else { maps.sizes.as_deref() };
                 let curvature = self.curvature_input(generator, maps);
-                self.curvature_detail(&detail, sizes, curvature)
+                self.curvature_detail(&detail, sizes, curvature, 0.0)
             }
             GeneratorKind::AmbientOcclusion => self.occlusion_input(generator, maps).unwrap_or(1.0),
             GeneratorKind::Position => {
@@ -3682,6 +3688,31 @@ impl<'a, 'b> Texel<'a, 'b> {
         }
     }
 
+    /// How a micro detail saved before Micro Details moves an earlier-model generator's signal at this texel: anchor point `anchor`'s height times `amount` (0 where the anchor is not evaluated yet), an edge where raised and a cavity where recessed
+    fn earlier_micro_detail(&self, kind: GeneratorKind, anchor: LayerId, amount: f32) -> f32 {
+        let response = self.anchor_value(anchor, Channel::Height, ChannelKind::Signed)[0].clamp(-1.0, 1.0) * amount;
+        match kind {
+            GeneratorKind::Curvature | GeneratorKind::EdgeWear | GeneratorKind::AmbientOcclusion => response,
+
+            // Dirt gathers in dents
+            GeneratorKind::Dirt => -response,
+
+            // Kinds the micro detail never moved, or without an earlier model
+            GeneratorKind::FiberGlassEdgeWear
+            | GeneratorKind::ThinAreas
+            | GeneratorKind::Position
+            | GeneratorKind::Direction
+            | GeneratorKind::WorldSpaceNormals
+            | GeneratorKind::ThreeDDistance
+            | GeneratorKind::ThreeDLinearGradient
+            | GeneratorKind::UvBorderDistance
+            | GeneratorKind::GrayscaleConversion
+            | GeneratorKind::DrippingRust
+            | GeneratorKind::UvRandomColor
+            | GeneratorKind::UvChecker => 0.0,
+        }
+    }
+
     /// The generator's curvature input at this texel with what its micro details add
     fn curvature_input(&mut self, generator: &Generator, maps: &GeneratorMaps) -> Option<f32> {
         let curvature = self.generator_input(generator, BakedMap::Curvature)?;
@@ -3715,16 +3746,20 @@ impl<'a, 'b> Texel<'a, 'b> {
         }
     }
 
-    /// The curvature of `detail`'s mode at this texel from `curvature` (None: nothing to read), with its blurred detail sizes when given.
-    fn curvature_detail(&self, detail: &CurvatureDetail, curvature_sizes: Option<&CurvatureSizes>, curvature: Option<f32>) -> f32 {
-        let combine = |edges: f32, cavities: f32| match detail.mode {
-            CurvatureMode::Edges => edges,
-            CurvatureMode::Cavities => cavities,
-            CurvatureMode::Both => 1.0 - (1.0 - edges) * (1.0 - cavities),
-            CurvatureMode::Raw => 0.5 + 0.5 * (edges - cavities),
+    /// The curvature of `detail`'s mode at this texel from `curvature` (None: nothing to read), with its blurred detail sizes when given and an earlier micro detail's term (see [`Texel::earlier_micro_detail`]) as an edge where positive and a cavity where negative
+    fn curvature_detail(&self, detail: &CurvatureDetail, curvature_sizes: Option<&CurvatureSizes>, curvature: Option<f32>, earlier_micro: f32) -> f32 {
+        let combine = |edges: f32, cavities: f32| {
+            let edges = 1.0 - (1.0 - edges) * (1.0 - earlier_micro.max(0.0));
+            let cavities = 1.0 - (1.0 - cavities) * (1.0 + earlier_micro.min(0.0));
+            match detail.mode {
+                CurvatureMode::Edges => edges,
+                CurvatureMode::Cavities => cavities,
+                CurvatureMode::Both => 1.0 - (1.0 - edges) * (1.0 - cavities),
+                CurvatureMode::Raw => 0.5 + 0.5 * (edges - cavities),
+            }
         };
 
-        // Without curvature to read the texel is flat: no edges or cavities
+        // Without curvature to read only an earlier micro detail supplies edges or cavities
         let Some(curvature) = curvature else { return combine(0.0, 0.0) };
         let Some((baked_x, baked_y)) = self.baked_curvature_texel() else { return combine(0.0, 0.0) };
 
@@ -7205,6 +7240,37 @@ soft {soft:?}"
                 micro.height_source = None;
             }
             assert_eq!(colors(&mut fixture, &emptied), off, "without an anchor the micro details change nothing");
+        }
+    }
+
+    #[test]
+    fn a_micro_detail_saved_before_micro_details_renders_as_saved_on_the_earlier_model() {
+        const SAVED_AMOUNT: f32 = 0.25;
+        const FLAT_CURVATURE: f32 = 0.4;
+        let colors = |height: f32, curvature: f32, micro: bool| -> Vec<f32> {
+            let mut fixture = fixture();
+            fixture.baked = BakedMaps { resolution: 64, maps: [(BakedMap::Curvature, Arc::new(vec![curvature; 64 * 64]))].into() };
+            let low = fixture.project.alloc_id();
+            let mut fill = Fill::default();
+            fill.sources.insert(Channel::Height, Source::Uniform([height; 3]));
+            fixture.project.insert_layer(0, Layer::new(low, "Flat", LayerKind::Fill(fill), &[Channel::Height]), None, false).unwrap();
+            let anchor = content_fx(&mut fixture, low, EffectKind::Anchor);
+            let top = fill_layer(&mut fixture.project, [1.0; 3], 0.5);
+            let earlier = Generator { section: None, detail: None, level: 0.5, softness: 0.5, noise_amount: 0.0, ..Generator::new(GeneratorKind::Curvature) };
+            let micro = MicroDetails::of_anchor(GeneratorKind::Curvature, anchor, SAVED_AMOUNT).filter(|_| micro).map(Box::new);
+            let mut mask = Mask::new(MaskBackground::Black);
+            mask.effects.push(Effect::new(LayerId(900), EffectKind::Generator(Generator { micro, ..earlier })));
+            fixture.project.layer_mut(top).unwrap().mask = Some(mask);
+            let composite = run(&fixture, None);
+            (0..64 * 64).map(|index| composite.value(Channel::BaseColor, index % 64, index / 64)[0]).collect()
+        };
+
+        // The saved micro detail added the anchor's height times its amount to the curvature signal, even where the height is flat
+        for height in [0.0, 0.3, 0.6, 1.0] {
+            let saved = colors(0.0, FLAT_CURVATURE + height * SAVED_AMOUNT, false);
+            let loaded = colors(height, FLAT_CURVATURE, true);
+            let largest_change = saved.iter().zip(&loaded).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+            assert!(largest_change < 1e-3, "height {height}: {largest_change}");
         }
     }
 

@@ -42,9 +42,10 @@ impl AnchoredMicroEdit {
         Ok(Some(AnchoredMicroEdit { anchor, amount }))
     }
 
-    /// The edit made on `generator`: an anchor switches the micro details and their Micro Height on and reads it there
+    /// The edit made on `generator`: an anchor switches the micro details and their Micro Height on and reads it there; a generator on the earlier model reads it as these keys did before Micro Details
     pub fn apply(self, command: &str, generator: &mut Generator) -> Result<()> {
         let kind = generator.kind;
+        let earlier = generator.on_earlier_model();
         let defaults = MicroDetails::defaults(kind);
         match (self.anchor, &defaults) {
             (Some(None), _) => {
@@ -65,6 +66,9 @@ impl AnchoredMicroEdit {
             let micro = reads_height.ok_or_else(|| bad(command, "give `microAnchor` before `microAmount`: the generator's Micro Height reads nothing"))?;
             micro.height_intensity = amount * MicroDetails::HEIGHT_INTENSITY_PER_AMOUNT;
             **micro = micro.as_ref().clone().clamped(kind);
+        }
+        if let Some(micro) = generator.micro.as_mut() {
+            micro.earlier = earlier;
         }
         Ok(())
     }

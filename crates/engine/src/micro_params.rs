@@ -60,6 +60,7 @@ pub fn micro_from(command: &str, params: &Value, generator: &mut Generator, earl
     }
 
     let micro = generator.micro.get_or_insert_with(|| Box::new(defaults));
+    micro.earlier = false;
     for (key, value) in [("useMicroDetails", &mut micro.enabled), ("microHeight", &mut micro.height), ("microNormal", &mut micro.normal)] {
         if let Some(given) = boolp(params, key) {
             *value = given;
