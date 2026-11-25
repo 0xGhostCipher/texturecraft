@@ -544,3 +544,33 @@ fn the_favorites_search_shows_only_favorites_until_all_is_picked() {
     assert!(harness.query_by_label(other).is_some(), "All shows every asset again");
     assert!(harness.query_by_label("My brushes").is_some(), "All shows the saved brushes list again");
 }
+
+#[test]
+fn the_edge_between_the_panes_and_the_grid_drags_and_the_width_is_saved() {
+    let mut harness = shelf(REFERENCE_WINDOW);
+    harness.state_mut().ui.shelf_panes.saved_searches = true;
+    harness.run_steps(3);
+
+    const DRAG_DISTANCE_POINTS: f32 = 40.0;
+    let (initial_share, edge) = (harness.state().ui.shelf_panes_share, harness.get_by_label("Resize Assets filter panes and grid").rect());
+    let from = edge.center();
+    let to = from + egui::vec2(DRAG_DISTANCE_POINTS, 0.0);
+    harness.hover_at(from);
+    harness.run_steps(1);
+    harness.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    harness.run_steps(1);
+    for step in 1..=4 {
+        harness.hover_at(from + (to - from) * (step as f32 / 4.0));
+        harness.run_steps(1);
+    }
+    harness.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    harness.run_steps(3);
+
+    let moved = harness.get_by_label("Resize Assets filter panes and grid").rect();
+    assert!(moved.center().x > edge.center().x, "the edge follows the drag: {edge:?} to {moved:?}");
+    assert!(harness.state().ui.shelf_panes_share > initial_share, "the panes take a larger share");
+
+    let saved = serde_json::to_value(&harness.state().ui).unwrap();
+    let restored: texturecraft_ui_egui::state::UiState = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored.shelf_panes_share, harness.state().ui.shelf_panes_share, "the width is saved");
+}

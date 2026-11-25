@@ -330,7 +330,7 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
                 ui.set_min_size(vec2(width, grid_rect.height()));
                 crate::shelf_panes::column(app, ui, &paths, &applicable);
             });
-            ui.separator();
+            crate::shelf_panes::edge(app, ui, width, grid_rect.width());
         }
 
         // Saved smart materials are files in the user's library, without folders of their own

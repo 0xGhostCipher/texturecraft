@@ -493,6 +493,18 @@ pub(crate) fn default_shelf_panes_split() -> f32 {
     0.45
 }
 
+/// The share of the Assets panel's width the filter panes take until their edge is dragged
+fn default_shelf_panes_share() -> f32 {
+    0.45
+}
+
+fn deserialize_shelf_panes_share<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+    let share = f32::deserialize(deserializer)?;
+
+    // A finite JSON number can overflow f32 and prevent the next settings save
+    Ok(if share.is_finite() { share } else { default_shelf_panes_share() })
+}
+
 fn deserialize_shelf_panes_split<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
     let share = f32::deserialize(deserializer)?;
 
@@ -605,6 +617,9 @@ pub struct UiState {
     /// Saved searches' share of the pane column above Filter by path, set by the splitter between them
     #[serde(default = "default_shelf_panes_split", deserialize_with = "deserialize_shelf_panes_split")]
     pub shelf_panes_split: f32,
+    /// The share of the Assets panel's width the filter panes take
+    #[serde(default = "default_shelf_panes_share", deserialize_with = "deserialize_shelf_panes_share")]
+    pub shelf_panes_share: f32,
     pub props_tab: PropsTab,
     #[serde(default)]
     pub text: TextUi,
@@ -803,6 +818,7 @@ impl Default for UiState {
             shelf_custom_previews: Vec::new(),
             shelf_updates: crate::shelf_updates::ShelfUpdates::default(),
             shelf_panes_split: default_shelf_panes_split(),
+            shelf_panes_share: default_shelf_panes_share(),
             props_tab: PropsTab::Brush,
             text: TextUi::default(),
             rename: None,

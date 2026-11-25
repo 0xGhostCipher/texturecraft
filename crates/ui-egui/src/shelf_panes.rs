@@ -13,8 +13,11 @@ use crate::theme::Tokens;
 use crate::unavailable::NOT_AVAILABLE;
 use crate::widgets::icon_button;
 
-const COLUMN_FRACTION: f32 = 0.45;
 const COLUMN_MIN_WIDTH_POINTS: f32 = 110.0;
+/// Width of the draggable edge between the panes and the grid
+const EDGE_WIDTH_POINTS: f32 = 6.0;
+/// The grid keeps at least this much width when the edge is dragged right
+const GRID_MIN_WIDTH_POINTS: f32 = 80.0;
 const SPLITTER_HEIGHT_POINTS: f32 = 6.0;
 const PANE_MIN_HEIGHT_POINTS: f32 = 40.0;
 /// The built-in saved search after "All" that shows only the favorite assets
@@ -49,7 +52,29 @@ pub(crate) fn toggles(app: &mut TextureCraftApp, ui: &mut Ui, size: f32) {
 /// The width of the panes' column in a panel `width` wide, or None while no pane is open
 pub(crate) fn column_width(app: &TextureCraftApp, width: f32) -> Option<f32> {
     let panes = &app.ui.shelf_panes;
-    (panes.saved_searches || panes.filter_by_path).then(|| (width * COLUMN_FRACTION).max(COLUMN_MIN_WIDTH_POINTS).min(width))
+    let share = app.ui.shelf_panes_share;
+    (panes.saved_searches || panes.filter_by_path)
+        .then(|| (width * share).min(width - EDGE_WIDTH_POINTS - GRID_MIN_WIDTH_POINTS).max(COLUMN_MIN_WIDTH_POINTS).min(width))
+}
+
+/// The draggable edge between the panes' column (`column` wide) and the grid in a panel `width` wide
+pub(crate) fn edge(app: &mut TextureCraftApp, ui: &mut Ui, column: f32, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(EDGE_WIDTH_POINTS, ui.available_height()), egui::Sense::hover());
+    let visuals = ui.visuals();
+    let line_stroke = visuals.widgets.noninteractive.bg_stroke;
+    let widest = (width - EDGE_WIDTH_POINTS - GRID_MIN_WIDTH_POINTS).max(COLUMN_MIN_WIDTH_POINTS);
+    if width > 0.0 && widest > COLUMN_MIN_WIDTH_POINTS {
+        let colors =
+            ResizeHandleStyle { hovered: visuals.widgets.hovered.bg_fill, dragged: visuals.widgets.active.bg_fill, focused: visuals.selection.bg_fill };
+        let resize = ResizeHandle::new(ui.scope_id().with("shelf_panes_edge"), SplitAxis::Horizontal, rect, tr("Resize Assets filter panes and grid"), colors)
+            .hit_margin(0.0)
+            .value(column.clamp(COLUMN_MIN_WIDTH_POINTS, widest), COLUMN_MIN_WIDTH_POINTS..=widest)
+            .show(ui);
+        if resize.delta != 0.0 {
+            app.ui.shelf_panes_share = (column + resize.delta).clamp(COLUMN_MIN_WIDTH_POINTS, widest) / width;
+        }
+    }
+    ui.painter().vline(rect.center().x, rect.y_range(), line_stroke);
 }
 
 /// Draws the open panes and a divider when both are visible.
