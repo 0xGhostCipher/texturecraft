@@ -264,6 +264,18 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
                 gray8("SheenRoughness", Channel::SheenRoughness),
             ]
         }),
+        // Spec: https://create.roblox.com/docs/art/modeling/surface-appearance (ColorMap alpha is opacity)
+        // Spec: https://create.roblox.com/docs/art/modeling/texture-specifications (OpenGL normals only; grayscale metalness and roughness)
+        // Spec: https://create.roblox.com/docs/art/modeling/reimport (the file name suffix it assigns to each map)
+        preset(
+            "Roblox SurfaceAppearance (separate maps)",
+            vec![
+                map("Color", 8, base_with_alpha()),
+                map("Normal", 8, normal(VirtualMap::NormalOpenGl)),
+                map("Metalness", 8, gray(ch(Channel::Metallic, 0))),
+                map("Roughness", 8, gray(ch(Channel::Roughness, 0))),
+            ],
+        ),
         preset("Separate maps", Channel::ALL.into_iter().map(channel_map).collect()),
         preset(
             "Mesh maps",

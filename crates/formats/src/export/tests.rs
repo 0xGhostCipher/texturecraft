@@ -1741,19 +1741,6 @@ fn a_map_preview_holds_the_values_its_file_stores() {
     assert!(MapPreview::sample(&fx.input(), &options, options.preset.maps.len(), 8).is_err(), "a map the template doesn't have is an error");
 }
 
-/// The 8-bit value of an image position as RGBA
-fn pixel(file: &ExportedFile) -> [i32; 4] {
-    decode(file).to_rgba8().get_pixel(3, 3).0.map(i32::from)
-}
-
-fn byte(value: f32) -> i32 {
-    (value * 255.0).round() as i32
-}
-
-fn assert_close(actual: [i32; 4], expected: [i32; 4], what: &str) {
-    assert!(actual.iter().zip(expected).all(|(a, e)| (a - e).abs() <= 1), "{what}: {actual:?} instead of {expected:?}");
-}
-
 /// Tilts every normal of `fx` and returns the green byte an OpenGL normal map stores for it
 fn tilt_normals(fx: &mut Fx) -> i32 {
     let tilt = Vec3::new(0.3, 0.4, 0.0);
@@ -1829,4 +1816,22 @@ fn the_redshift_template_writes_one_map_per_input_the_set_has() {
     let green = pixel(find(&files, "_Normal.png"))[1];
     assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
     assert!(!names.iter().any(|name| name.contains("Sheen") || name.contains("CoatRoughness")), "inputs the set lacks write no maps: {names:?}");
+}
+
+#[test]
+fn the_roblox_template_writes_opacity_in_the_colour_alpha_and_opengl_normals() {
+    let mut fx = packing_fixture();
+    let open_gl_green = tilt_normals(&mut fx);
+
+    let files = fx.render_preset("Roblox SurfaceAppearance (separate maps)");
+
+    let base = fx.comp.value(Channel::BaseColor, 3, 3).map(|v| byte(linear_to_srgb(v)));
+    assert_close(pixel(find(&files, "_Color.png")), [base[0], base[1], base[2], byte(0.9)], "sRGB colour, opacity in alpha");
+    for (input, expected) in [("Metalness", 0.8), ("Roughness", 0.4)] {
+        let file = find(&files, &format!("_{input}.png"));
+        assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is grayscale");
+        assert_close(pixel(file), [byte(expected), byte(expected), byte(expected), 255], input);
+    }
+    let green = pixel(find(&files, "_Normal.png"))[1];
+    assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
 }
