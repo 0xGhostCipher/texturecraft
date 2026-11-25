@@ -507,6 +507,9 @@ pub(crate) fn set_params(app: &TextureCraftApp, set_index: usize) -> serde_json:
                     settings["bitDepth"] = json!(file_type.bit_depth);
                     settings["dithering"] = json!(file_type.dithering);
                 }
+                if let Some(size) = map.size {
+                    settings["size"] = json!(size);
+                }
                 settings
             })
             .collect();
@@ -608,6 +611,7 @@ fn output_maps(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize) {
                         ui.label(file_type_text(&row.inherited));
                     }
                 }
+                map_size_combo(ui, ("exp_map_size", ts, row.map), &mut m.size);
             });
             ui.end_row();
         }
@@ -619,11 +623,27 @@ fn output_maps(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize) {
             Some(1) => m.enabled = false,
             Some(2) => m.enabled = !m.enabled,
             Some(3) if m.file_type.is_none() => m.file_type = Some(row.inherited.clone()),
-            Some(4) => m.file_type = None,
+            Some(4) => (m.file_type, m.size) = (None, None),
             _ => {}
         }
     }
     o.maps.retain(|_, m| *m != MapExport::default());
+}
+
+/// An output map's size: the export's, or its own, which wins over it
+fn map_size_combo(ui: &mut Ui, id: (&str, usize, usize), size: &mut Option<u32>) {
+    let shown = size.map_or_else(|| tr("Export size").to_string(), |side| format!("{side}x{side}"));
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(size, None, tr("Export size"));
+            ui.separator();
+            for side in SIZES {
+                ui.selectable_value(size, Some(side), format!("{side}x{side}"));
+            }
+        })
+        .response
+        .on_hover_text(tr("This map's own size, which wins over the export size"));
 }
 
 /// Count the files planned across all selected texture sets.

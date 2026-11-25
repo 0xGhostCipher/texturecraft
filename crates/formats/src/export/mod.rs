@@ -441,6 +441,11 @@ pub struct ExportOptions {
 }
 
 impl ExportOptions {
+    /// The output size of the preset's map `map`: its own, else the export's (None: the texture set's)
+    pub fn map_size(&self, map: usize) -> Option<u32> {
+        self.maps.get(&map).and_then(|own| own.size).or(self.size)
+    }
+
     /// The colour space colour maps use at this format's default depth.
     pub fn space_for(&self, format: FileFormat) -> ColorSpace {
         self.space_for_depth(format, format.default_depth())
@@ -614,10 +619,10 @@ pub fn sanitize_file_path(s: &str) -> String {
 pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOptions) -> Result<Vec<PlannedFile>> {
     opts.preset.validate()?;
     let set = project.texture_set(ts)?;
-    if let Some(s) = opts.size
-        && (!s.is_power_of_two() || s > MAX_IMAGE_SIZE)
-    {
-        return Err(FormatError::Invalid(format!("export size {s} must be a power of two up to {MAX_IMAGE_SIZE}")));
+    for s in opts.size.iter().chain(opts.maps.values().filter_map(|own| own.size.as_ref())) {
+        if !s.is_power_of_two() || *s > MAX_IMAGE_SIZE {
+            return Err(FormatError::Invalid(format!("export size {s} must be a power of two up to {MAX_IMAGE_SIZE}")));
+        }
     }
 
     let mut used = BTreeSet::new();
@@ -736,7 +741,11 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
 
         let bit_depth = in_tile.iter().map(|(_, _, depth, _)| *depth).max().unwrap_or(8);
         let folder_count: usize = in_tile.iter().map(|(_, layer, ..)| layer.name.matches('/').count()).sum();
-        check_psd_size(psd_size(set, tile, opts.size), in_tile.len(), folder_count, bit_depth)?;
+        let size = in_tile
+            .iter()
+            .map(|(_, layer, ..)| psd_size(set, tile, opts.map_size(layer.map)))
+            .max_by_key(|(width, height)| u64::from(*width) * u64::from(*height));
+        check_psd_size(size.unwrap_or((1, 1)), in_tile.len(), folder_count, bit_depth)?;
 
         let mut warnings: Vec<String> = Vec::new();
         for warning in in_tile.iter().flat_map(|(.., layer_warnings)| layer_warnings) {
@@ -793,7 +802,7 @@ fn claim_path(files: &mut BTreeSet<String>, dirs: &mut BTreeSet<String>, name: &
     Ok(())
 }
 
-/// The size of a texture set's PSD for `tile` (None: the whole set, an atlas of a UV-tiled one)
+/// The size of a PSD layer of a texture set at `export_size` for `tile` (None: the whole set, an atlas of a UV-tiled one)
 fn psd_size(set: &TextureSet, tile: Option<u32>, export_size: Option<u32>) -> (u32, u32) {
     let block_resolution = set.block_resolution();
     match (tile, set.tile_grid()) {

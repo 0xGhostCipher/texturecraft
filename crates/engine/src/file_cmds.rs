@@ -58,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|j2k|jp2|webp|psd (or the extension; the maps written as psd are the layers of one <mesh>_<texture set>.psd per texture set and UV tile, which the USD asset and MaterialX don't read), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?}] (per map file type and bit depth), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, JP2, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, J2K, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts, options and reservedNames, a list gives each texture set's own `ts`, options and `reservedNames`, a file the texture export skipped is not read, the export window sends it with the last command; a failure is a warning)} → {files, warnings, materialUdimPatterns?}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|j2k|jp2|webp|psd (or the extension; the maps written as psd are the layers of one <mesh>_<texture set>.psd per texture set and UV tile, which the USD asset and MaterialX don't read), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?, size?: px (wins over `size`)}] (per map file type, bit depth and size), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, JP2, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, J2K, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts, options and reservedNames, a list gives each texture set's own `ts`, options and `reservedNames`, a file the texture export skipped is not read, the export window sends it with the last command; a failure is a warning)} → {files, warnings, materialUdimPatterns?}",
             always,
             export_textures
         ),
@@ -375,12 +375,12 @@ pub fn export_options(session: &Session, params: &Value, cmd: &str) -> Result<Ex
     Ok(options)
 }
 
-/// `maps`: per map `{map: index into the preset's maps, enabled?, format?, bitDepth?, dithering?}`.
+/// `maps`: per map `{map: index into the preset's maps, enabled?, format?, bitDepth?, dithering?, size?}`
 fn map_overrides(params: &Value, map_count: usize, cmd: &str) -> Result<std::collections::BTreeMap<usize, MapOverride>> {
     let mut overrides = std::collections::BTreeMap::new();
     let Some(list) = params.get("maps").filter(|value| !value.is_null()) else { return Ok(overrides) };
 
-    let list = list.as_array().ok_or_else(|| bad(cmd, "`maps` must be a list of {map, enabled?, format?, bitDepth?, dithering?}"))?;
+    let list = list.as_array().ok_or_else(|| bad(cmd, "`maps` must be a list of {map, enabled?, format?, bitDepth?, dithering?, size?}"))?;
     for settings in list {
         let index = u64p(settings, "map").and_then(|value| usize::try_from(value).ok()).filter(|index| *index < map_count);
         let index = index.ok_or_else(|| bad(cmd, format!("`maps`: `map` must be the index of one of the preset's {map_count} maps")))?;
@@ -398,6 +398,10 @@ fn map_overrides(params: &Value, map_count: usize, cmd: &str) -> Result<std::col
         }
         if let Some(dithering) = settings.get("dithering").filter(|value| !value.is_null()) {
             options.dither = Some(dithering.as_bool().ok_or_else(|| bad(cmd, "`maps`: `dithering` must be true or false"))?);
+        }
+        if let Some(size) = settings.get("size").filter(|value| !value.is_null()) {
+            let size = size.as_u64().and_then(|size| u32::try_from(size).ok()).ok_or_else(|| bad(cmd, "`maps`: `size` must be a size in texels"))?;
+            options.size = Some(crate::session::check_resolution(size)?);
         }
 
         overrides.insert(index, options);
@@ -445,7 +449,9 @@ fn plan(session: &mut Session, params: &Value) -> Result<Value> {
         let block_size = set.block_resolution();
         for (_, output) in set_outputs {
             let source_size = output.tile.map_or(set.resolution, |tile| set.tile_resolution(tile));
-            let size = scale_export_side(source_size, block_size, options.size);
+
+            // A map's own size wins over the export's; a PSD is the size of its largest layer
+            let size = output.maps().map(|map| scale_export_side(source_size, block_size, options.map_size(map))).max().unwrap_or(source_size);
 
             files.push(json!({
                 "ts": set_index,

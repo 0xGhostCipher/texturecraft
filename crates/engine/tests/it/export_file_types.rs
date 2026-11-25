@@ -27,3 +27,15 @@ fn the_new_file_types_dithering_and_diffusion_export() {
     assert!(plan.as_array().unwrap().iter().all(|f| f["dithering"] == false), "float files are never dithered");
     assert!(execute(&mut s, "export.plan", &json!({"padding": "smudge"})).is_err());
 }
+
+#[test]
+fn a_map_size_wins_over_the_export_size_in_the_plan() {
+    let mut s = texturecraft_engine::sample_session(256, 64).unwrap();
+
+    let plan = execute(&mut s, "export.plan", &json!({"ts": 0, "size": 512, "maps": [{"map": 0, "size": 128}]})).unwrap();
+
+    let files = plan.as_array().unwrap();
+    assert!(files.iter().filter(|file| file["map"] == 0).all(|file| file["size"] == 128), "{plan}");
+    assert!(files.iter().filter(|file| file["map"] != 0).all(|file| file["size"] == 512), "{plan}");
+    assert!(execute(&mut s, "export.plan", &json!({"ts": 0, "maps": [{"map": 0, "size": 100}]})).is_err());
+}

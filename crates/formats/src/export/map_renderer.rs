@@ -56,12 +56,12 @@ impl<'a> MapRenderer<'a> {
         Ok(MapRenderer { options, set, sampler, dilation_map, grid, width, height, tile_res })
     }
 
-    /// The export size of a file of `tile` (None: the whole set).
-    pub(super) fn size(&self, tile: Option<u32>) -> Result<(u32, u32)> {
+    /// The export size of map `map_index`'s file of `tile` (None: the whole set)
+    pub(super) fn size(&self, map_index: usize, tile: Option<u32>) -> Result<(u32, u32)> {
         let (_, _, w, h) = self.region(tile)?;
 
         // An atlas scales by the requested size per tile
-        let scale = |value| scale_export_side(value, self.tile_res, self.options.size);
+        let scale = |value| scale_export_side(value, self.tile_res, self.options.map_size(map_index));
         Ok((scale(w), scale(h)))
     }
 
@@ -87,7 +87,7 @@ impl<'a> MapRenderer<'a> {
         let component_count = channel_layout.len();
         let inverted: Vec<bool> = channel_layout.iter().map(|(d, _)| map.inverted.contains(d)).collect();
         let (x0, y0, w, h) = self.region(tile)?;
-        let size = self.size(tile)?;
+        let size = self.size(map_index, tile)?;
         let sampler = &self.sampler;
         let dilation_map = self.dilation_map.as_ref();
         let beyond_default = matches!(options.padding, Padding::DilationDefault(_) | Padding::Infinite);

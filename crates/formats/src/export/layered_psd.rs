@@ -5,16 +5,17 @@ use texturecraft_texel::linear_to_srgb;
 
 use super::encoding::Encoding;
 use super::map_renderer::MapRenderer;
-use super::{ExportedFile, FileFormat, PSD_MAX_FILE_BYTES, PSD_RGBA_PLANES, PlannedFile, quantize_integer};
+use super::{ExportedFile, FileFormat, PSD_MAX_FILE_BYTES, PSD_RGBA_PLANES, PlannedFile, quantize_integer, resize};
 use crate::{FormatError, Result};
 
 /// Where alpha sits in an RGBA texel
 const ALPHA_INDEX: usize = 3;
 
-/// Render the layers of `planned` one at a time and write them as one PSD
+/// Render the layers of `planned` one at a time and write them as one PSD the size of the largest; smaller maps are scaled up to it
 pub(super) fn render_psd(renderer: &MapRenderer, planned: PlannedFile) -> Result<ExportedFile> {
     let PlannedFile { name, tile, bit_depth, mut warnings, layers, .. } = planned;
-    let size = renderer.size(tile)?;
+    let sizes = layers.iter().map(|layer| renderer.size(layer.map, tile)).collect::<Result<Vec<_>>>()?;
+    let size = sizes.into_iter().max_by_key(|(width, height)| u64::from(*width) * u64::from(*height)).unwrap_or((1, 1));
 
     // Each layer as straight RGBA in 0-1, sRGB-encoded where the map's file would be, dropped once quantized
     let mut composite = vec![0.0f32; size.0 as usize * size.1 as usize * PSD_RGBA_PLANES];
@@ -23,8 +24,9 @@ pub(super) fn render_psd(renderer: &MapRenderer, planned: PlannedFile) -> Result
     for layer in layers.iter().rev() {
         let map = renderer.render(layer.map, tile, FileFormat::Psd, bit_depth)?;
         embedded = map.embed.or(embedded);
-        let rgba = to_rgba(&map.data, map.component_count, &map.srgb);
-        drop(map);
+        let data = resize(map.data, map.size, map.component_count, size);
+        let rgba = to_rgba(&data, map.component_count, &map.srgb);
+        drop(data);
         over(&mut composite, &rgba);
         let encoding = Encoding { format: FileFormat::Psd, depth: bit_depth, dither: layer.dither };
         let bytes = quantize_integer(encoding, size.0, PSD_RGBA_PLANES, rgba.into_iter())?;

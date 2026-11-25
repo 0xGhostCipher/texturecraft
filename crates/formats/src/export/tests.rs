@@ -557,6 +557,33 @@ fn gray_map(file: &str, src: SourceRef) -> MapSpec {
 }
 
 #[test]
+fn an_output_with_its_own_size_keeps_it() {
+    let fx = Fx::new(&default_channels());
+    let preset = ExportPreset {
+        name: "sizes".into(),
+        maps: vec![
+            gray_map("small", SourceRef::Channel { channel: Channel::Roughness, component: 0 }),
+            gray_map("set_size", SourceRef::Channel { channel: Channel::Metallic, component: 0 }),
+        ],
+    };
+    let mut options = ExportOptions::new(preset);
+    options.maps.insert(0, MapOverride { size: Some(32), ..MapOverride::default() });
+
+    for (export_size, other) in [(None, RES), (Some(128), 128)] {
+        let files = fx.render(&ExportOptions { size: export_size, ..options.clone() });
+        assert_eq!(find(&files, "small.png").width, 32, "its own size wins over {export_size:?}");
+        assert_eq!(find(&files, "set_size.png").width, other);
+    }
+
+    // A PSD is as large as its largest layer
+    options.format_override = Some(FileFormat::Psd);
+    assert_eq!(fx.render(&options)[0].width, RES);
+
+    options.maps.insert(0, MapOverride { size: Some(100), ..MapOverride::default() });
+    assert!(list_outputs(&fx.project, 0, "sphere", &options).is_err(), "a size that isn't a power of two is refused");
+}
+
+#[test]
 fn validation_rejects_bad_presets() {
     let ok = ExportPreset { name: "Mine".into(), maps: vec![gray_map("$mesh_$textureSet_$channel ($colorSpace) $project", SourceRef::Constant(1.0))] };
     ok.validate().unwrap();

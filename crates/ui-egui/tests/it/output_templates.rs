@@ -188,7 +188,7 @@ fn the_preview_ignores_a_texture_sets_output_map_settings() {
     h.state_mut().run("export.preset.save", json!({ "preset": two })).unwrap();
     let own = "Unreal Engine (Packed)".to_string();
     let mut o = texturecraft_ui_egui::state::SetExport { preset: Some(own.clone()), maps_template: own, ..Default::default() };
-    o.maps.insert(2, texturecraft_ui_egui::state::MapExport { enabled: false, file_type: None });
+    o.maps.insert(2, texturecraft_ui_egui::state::MapExport { enabled: false, file_type: None, size: None });
     let ts = h.state().session.ts();
     h.state_mut().ui.export.sets.insert(ts, o);
     h.state_mut().ui.export.preset = "Two".into();
@@ -208,7 +208,7 @@ fn texture_set_overrides_follow_a_renamed_template_and_drop_a_removed_one() {
     let library = TemplateLibrary::new("follow");
     let mut h = harness(&library);
     let mut o = texturecraft_ui_egui::state::SetExport { preset: Some("Mine".into()), maps_template: "Mine".into(), ..Default::default() };
-    o.maps.insert(1, texturecraft_ui_egui::state::MapExport { enabled: false, file_type: None });
+    o.maps.insert(1, texturecraft_ui_egui::state::MapExport { enabled: false, file_type: None, size: None });
 
     // The override is there when the window opens
     h.state_mut().ui.windows.export = false;
@@ -270,7 +270,7 @@ fn per_map_settings_follow_their_map_when_the_template_reorders_it() {
     let mut h = harness(&library);
 
     // The first texture set leaves out the template's first map
-    let off = MapExport { enabled: false, file_type: None };
+    let off = MapExport { enabled: false, file_type: None, size: None };
     h.state_mut().ui.export.sets.insert(0, SetExport { maps_template: "Mine".into(), maps: [(0, off.clone())].into(), ..SetExport::default() });
     h.run_steps(2);
     let first = h.state().session.export_preset("Mine").unwrap().maps[0].file.clone();
@@ -284,7 +284,7 @@ fn per_map_settings_follow_their_map_when_the_template_reorders_it() {
 fn a_draft_in_the_same_order_as_the_external_save_remaps_from_that_order() {
     let library = TemplateLibrary::new("stale");
     let mut h = harness(&library);
-    let off = MapExport { enabled: false, file_type: None };
+    let off = MapExport { enabled: false, file_type: None, size: None };
     h.state_mut().ui.export.sets.insert(0, SetExport { maps_template: "Mine".into(), maps: [(0, off.clone())].into(), ..SetExport::default() });
     h.run_steps(2);
     let saved = h.state().session.export_preset("Mine").unwrap();
@@ -321,7 +321,7 @@ fn a_retained_draft_keeps_overrides_with_maps_after_an_external_reorder() {
     let mut external = saved.clone();
     external.maps.swap(0, 1);
     harness.state_mut().run("export.preset.save", json!({"preset": external})).unwrap();
-    let disabled = MapExport { enabled: false, file_type: None };
+    let disabled = MapExport { enabled: false, file_type: None, size: None };
     harness.state_mut().ui.export.sets.insert(0, SetExport { maps_template: "Mine".into(), maps: [(0, disabled.clone())].into(), ..SetExport::default() });
     harness.run_steps(3);
 

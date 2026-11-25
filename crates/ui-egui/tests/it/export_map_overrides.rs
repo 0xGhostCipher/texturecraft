@@ -119,7 +119,7 @@ fn export_writes_a_map_with_its_own_file_type() {
     let _ = std::fs::remove_dir_all(&dir);
     let template = h.state().ui.export.preset.clone();
     let mut o = SetExport { maps_template: template, ..SetExport::default() };
-    o.maps.insert(first, MapExport { enabled: true, file_type: Some(FileType { format: "targa".into(), bit_depth: 8, dithering: false }) });
+    o.maps.insert(first, MapExport { enabled: true, file_type: Some(FileType { format: "targa".into(), bit_depth: 8, dithering: false }), size: None });
     let e = &mut h.state_mut().ui.export;
     e.dir = dir.display().to_string();
     e.sets.insert(0, o);
@@ -147,7 +147,7 @@ fn a_map_the_template_no_longer_has_is_ignored() {
     let before = selected(&h);
     let template = h.state().ui.export.preset.clone();
     let mut o = SetExport { maps_template: template, ..SetExport::default() };
-    o.maps.insert(999, MapExport { enabled: false, file_type: None });
+    o.maps.insert(999, MapExport { enabled: false, file_type: None, size: None });
     h.state_mut().ui.export.sets.insert(0, o);
     h.run_steps(3);
     assert_eq!(selected(&h), before, "the export still plans every file");
@@ -162,4 +162,39 @@ fn each_row_names_its_own_map() {
     for id in ["baseColor", "metallic", "roughness"] {
         assert!(h.query_all_by_label_contains(&format!("_{id}")).next().is_some(), "a row for {id}");
     }
+}
+
+#[test]
+fn a_map_picks_its_own_size_and_the_export_writes_it_at_that_size() {
+    let mut h = harness();
+    let first = plan(&mut h)[0]["map"].as_u64().unwrap() as usize;
+    let combo = h.get_all_by_role(egui::Role::ComboBox).find(|combo| combo.value().as_deref() == Some("Export size")).expect("a map's size list");
+    combo.click();
+    h.run_steps(4);
+    click(&mut h, "128x128");
+    assert_eq!(maps(&h).get(&first).and_then(|map| map.size), Some(128), "{:?}", maps(&h));
+    assert!(h.query_by_label("*").is_some(), "the set is marked");
+
+    let dir = std::env::temp_dir().join(format!("tc-export-map-sizes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let set_count = h.state().session.set_count();
+    let export = &mut h.state_mut().ui.export;
+    export.dir = dir.display().to_string();
+    export.skip = (1..set_count).collect();
+    h.run_steps(3);
+    click(&mut h, "Export");
+    for _ in 0..64 {
+        if h.state().ui.export.job.is_none() {
+            break;
+        }
+
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+
+    let sizes: Vec<u32> =
+        std::fs::read_dir(&dir).unwrap().flatten().filter_map(|entry| image::image_dimensions(entry.path()).ok()).map(|(width, _)| width).collect();
+    assert_eq!(sizes.iter().filter(|width| **width == 128).count(), 1, "the map at its own size: {sizes:?}");
+    assert!(sizes.iter().filter(|width| **width != 128).all(|width| *width == 256), "the others at the set's: {sizes:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
