@@ -70,3 +70,33 @@ opt-level = 0
 
 [profile.test.package.texturecraft-ui-egui]
 opt-level = 0
+
+# The TLS stack and the dialog, browser and screen capture crates: no test makes a TLS connection, opens a file dialog or
+# captures the screen, so their optimized builds only cost test build time.
+
+[profile.test.package.ring]
+opt-level = 0
+
+[profile.test.package.rustls]
+opt-level = 0
+
+[profile.test.package.rustls-webpki]
+opt-level = 0
+
+[profile.test.package.rustls-platform-verifier]
+opt-level = 0
+
+[profile.test.package.ureq]
+opt-level = 0
+
+[profile.test.package.ureq-proto]
+opt-level = 0
+
+[profile.test.package.webbrowser]
+opt-level = 0
+
+[profile.test.package.rfd]
+opt-level = 0
+
+[profile.test.package.xcap]
+opt-level = 0
