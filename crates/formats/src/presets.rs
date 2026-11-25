@@ -229,6 +229,21 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
                 map("SubsurfaceMask", 8, gray(ch(Channel::ScatterWeight, 0))),
             ],
         ),
+        // Spec: https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Archived/KHR_materials_pbrSpecularGlossiness/README.md (diffuse with alpha, specular RGB with glossiness in A)
+        preset(
+            "glTF Specular Glossiness (archived extension)",
+            vec![
+                map("Diffuse", 8, base_with_alpha()),
+                map("SpecularGlossiness", 8, {
+                    let mut specular_glossiness = rgb(|k| ch(Channel::Specular, k));
+                    specular_glossiness.push((Dest::A, ch(Channel::Glossiness, 0)));
+                    specular_glossiness
+                }),
+                map("Normal", 8, normal(VirtualMap::NormalOpenGl)),
+                map("Occlusion", 8, gray(virt(VirtualMap::AoMixed, 0))),
+                map("Emissive", 8, rgb(|k| ch(Channel::Emissive, k))),
+            ],
+        ),
         preset("Separate maps", Channel::ALL.into_iter().map(channel_map).collect()),
         preset(
             "Mesh maps",

@@ -1785,3 +1785,24 @@ fn the_unreal_subsurface_template_writes_the_scatter_mask_beside_the_packed_maps
     let green = pixel(find(&files, "_Normal.png"))[1];
     assert!((green - (255 - open_gl_green)).abs() <= 1, "DirectX normal: green {green}");
 }
+
+#[test]
+fn the_gltf_specular_glossiness_template_packs_a_specular_glossiness_sets_own_channels() {
+    let mut fx = Fx::new(&[Channel::BaseColor, Channel::Specular, Channel::Glossiness, Channel::Normal, Channel::Height, Channel::Opacity]);
+    let specular = [0.2, 0.5, 0.8];
+    fx.set_all(Channel::Specular, |_, _| specular);
+    fx.set_all(Channel::Glossiness, |_, _| [0.3; 3]);
+    fx.set_all(Channel::Opacity, |_, _| [0.9; 3]);
+    let open_gl_green = tilt_normals(&mut fx);
+
+    let files = fx.render_preset("glTF Specular Glossiness (archived extension)");
+
+    let specular_glossiness = find(&files, "_SpecularGlossiness.png");
+    assert_eq!(decode(specular_glossiness).color(), image::ColorType::Rgba8);
+    let srgb = specular.map(|v| byte(linear_to_srgb(v)));
+    assert_close(pixel(specular_glossiness), [srgb[0], srgb[1], srgb[2], byte(0.3)], "sRGB specular, linear glossiness in alpha");
+    let base = fx.comp.value(Channel::BaseColor, 3, 3).map(|v| byte(linear_to_srgb(v)));
+    assert_close(pixel(find(&files, "_Diffuse.png")), [base[0], base[1], base[2], byte(0.9)], "sRGB diffuse, opacity in alpha");
+    let green = pixel(find(&files, "_Normal.png"))[1];
+    assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
+}

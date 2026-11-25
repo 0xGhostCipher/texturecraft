@@ -138,6 +138,7 @@ Built-in presets (each one lists the public specification its packing follows in
 | Unity URP Lit (Metallic Smoothness) | `BaseMap`, `MetallicMap` (R metal, A smoothness), `NormalMap` (OpenGL), `OcclusionMap`, `EmissionMap` |
 | USD Preview Surface (separate maps) | one map per UsdPreviewSurface input the set has, named like it: `diffuseColor`, `emissiveColor`, `metallic`, `roughness`, `normal` (OpenGL), `occlusion`, `opacity`, `clearcoat`, `clearcoatRoughness` |
 | Unreal Engine Subsurface Profile (Packed) | `BaseColor` (no alpha), `OcclusionRoughnessMetallic`, `Normal` (DirectX), `SubsurfaceMask` (scatter weight, for the Opacity input) |
+| glTF Specular Glossiness (archived extension) | `Diffuse` (A = opacity), `SpecularGlossiness` (RGB specular, A glossiness, from the set's own channels), `Normal` (OpenGL), `Occlusion`, `Emissive` |
 | Separate maps | one file per channel, gray where scalar, height 16-bit |
 | Mesh maps | every baked map (`$channel` = map id), 16-bit |
 
