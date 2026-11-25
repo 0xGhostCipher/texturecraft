@@ -114,9 +114,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 ## Files and texture sets
 
 - **Open** glTF/GLB, FBX (binary and ASCII), COLLADA, **USD** (usda, usdc, usdz), **Alembic**,
-  OBJ, PLY and STL, or a built-in mesh (the `project.new` command; *File › Open sample project...* opens the
-  material ball); UVs are generated when a mesh has none. A `.gltf`'s buffers
-  and images and a loose USD layer's textures are read from its folder and kept in the project.
+  OBJ, PLY and STL, or a built-in mesh with the `project.new` command. UVs are generated when a mesh
+  has none. A `.gltf`'s buffers and images and a loose USD layer's textures are read from its folder
+  and kept in the project.
   Reimport a changed mesh and your painted strokes stay on the surface. The
   `file.changeMesh` command (trusted local command API and the control channel) moves the project onto a different mesh file and keeps its layers.
   **Edit › Project Configuration...** (desktop) does the same from the 3D MESH section: *Select...* picks the
@@ -124,6 +124,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   strokes follow the surface (on by default), and PROJECT SETTINGS sets the project's normal map format and
   shows its UV tiles in the UV workflow tooltip. Edit the tiles in Texture Set Settings.
   Physical size and color management show the same settings as New project.
+- **File › Open Sample Project** opens a `.tcraft` picker. On desktop, the picker starts in
+  `Samples` under the data folder and offers the bundled `Material Ball.tcraft`. In the browser,
+  the picker uses local files.
 - **File › New project...** opens a setup form with BASIC SETTINGS (*Select...* a mesh file,
   the project template, the document resolution; Create waits for a mesh) and ADVANCED SETTINGS (normal
   map format, *Use UV Tile workflow*, *Import cameras*, *Import baked maps*, physical size, color
