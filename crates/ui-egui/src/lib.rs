@@ -814,12 +814,12 @@ impl TextureCraftApp {
         let only = job.only;
 
         self.session.bake_preview_set_current(set_index);
-        match self.session.bake_task(set_index) {
-            Ok(mut task) => {
-                if let Some(map) = only {
-                    task.settings.maps.select([map]);
-                }
-
+        let task = match only {
+            Some(map) => self.session.bake_task_only(set_index, map),
+            None => self.session.bake_task(set_index),
+        };
+        match task {
+            Ok(task) => {
                 let progress = Arc::new(Progress::new());
                 let worker_progress = progress.clone();
                 let maps_total = task.maps().len();

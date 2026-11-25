@@ -451,6 +451,17 @@ fn the_breadcrumb_switches_the_shown_map() {
 }
 
 #[test]
+fn a_long_texture_set_name_leaves_the_map_switcher_and_restore_defaults_in_the_breadcrumb() {
+    let mut harness = harness(Some(BakedMap::Curvature));
+    harness.state_mut().session.doc.project.texture_sets[0].name = "W".repeat(200);
+    harness.run_steps(3);
+
+    let switcher = harness.get_by_label("Switch Mesh Map").rect();
+    let restore = harness.get_by_role_and_label(Role::Button, "Restore Defaults").rect();
+    assert!(switcher.right() <= restore.left(), "the map switcher stays left of Restore Defaults");
+}
+
+#[test]
 fn curvature_controls_follow_the_method_and_grey_out_by_their_switches() {
     let mut harness = harness(Some(BakedMap::Curvature));
     let curvature = |harness: &Harness<'_, TextureCraftApp>| harness.state().session.doc.project.texture_sets[0].bake.maps.curvature.parameters;

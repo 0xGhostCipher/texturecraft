@@ -117,15 +117,30 @@ pub(super) fn parse_mesh(file_name: &str, bytes: Vec<u8>) -> Result<BakeMesh> {
 }
 
 impl Session {
+    /// The bake of texture set `texture_set`'s checked maps
     pub fn bake_task(&self, texture_set: usize) -> Result<BakeTask> {
+        self.bake_task_of(texture_set, None)
+    }
+
+    /// The bake of texture set `texture_set`'s map `map` alone, checked or not
+    pub fn bake_task_only(&self, texture_set: usize, map: BakedMap) -> Result<BakeTask> {
+        self.bake_task_of(texture_set, Some(map))
+    }
+
+    fn bake_task_of(&self, texture_set: usize, only: Option<BakedMap>) -> Result<BakeTask> {
         let set = self.doc.project.texture_set(texture_set)?;
         if !set.has_enabled_bake_tiles() {
             return Err(EngineError::Other(format!("texture set {} has no UV tiles selected for baking", set.name)));
         }
 
-        let needs_low_color = set.bake.maps.opacity.is_enabled
-            || (set.bake.maps.id.is_enabled && set.bake.maps.id.parameters.source == texturecraft_core::IdColorSource::MaterialColor);
-        let low_base_color = if needs_low_color && (set.bake.high_poly.use_low_as_high || self.doc.bake_meshes.high.is_empty()) {
+        let mut settings = set.bake.clone();
+        if let Some(map) = only {
+            settings.maps.select([map]);
+        }
+        // Read from the maps that bake, so a map baked alone while unchecked still gets the colours
+        let needs_low_color = settings.maps.opacity.is_enabled
+            || (settings.maps.id.is_enabled && settings.maps.id.parameters.source == texturecraft_core::IdColorSource::MaterialColor);
+        let low_base_color = if needs_low_color && (settings.high_poly.use_low_as_high || self.doc.bake_meshes.high.is_empty()) {
             self.doc
                 .bake_meshes
                 .low_base_color
@@ -158,7 +173,7 @@ impl Session {
             mesh: self.bake_mesh(texture_set)?,
             bvh: self.bvh.clone(),
             material: set.material,
-            settings: set.bake.clone(),
+            settings,
             high,
             cage,
             skew,
@@ -730,14 +745,19 @@ fn updated_settings(session: &Session, params: &Value, command: &str) -> Result<
 fn set_settings(session: &mut Session, params: &Value, command: &str) -> Result<Vec<usize>> {
     let targets = updated_settings(session, params, command)?;
     let sets = targets.iter().map(|(index, _)| *index).collect();
-    let next = with_sync_partners(&session.doc.project, targets, command)?;
+    let next = with_sync_partners(&session.doc.project, targets, command, boolp(params, "preset") == Some(true))?;
 
     super::sync_command::store(session, "Bake Settings", next)?;
     Ok(sets)
 }
 
-/// `targets` plus every set sharing a sync group with a target, which takes the fields the target changed in that group
-fn with_sync_partners(project: &texturecraft_core::Project, targets: Vec<(usize, BakeSettings)>, command: &str) -> Result<Vec<(usize, BakeSettings)>> {
+/// `targets` plus every set sharing a sync group with a target, which takes the fields the target changed in that group; fails when a set's settings come out invalid (`from_preset`: preset limits apply)
+fn with_sync_partners(
+    project: &texturecraft_core::Project,
+    targets: Vec<(usize, BakeSettings)>,
+    command: &str,
+    from_preset: bool,
+) -> Result<Vec<(usize, BakeSettings)>> {
     let mut next: BTreeMap<usize, BakeSettings> = BTreeMap::new();
     for (target, settings) in &targets {
         let Some(before) = project.texture_sets.get(*target).map(|set| &set.bake) else { continue };
@@ -754,6 +774,10 @@ fn with_sync_partners(project: &texturecraft_core::Project, targets: Vec<(usize,
                 entry.copy_group(&patched, group);
             }
         }
+    }
+    // A field valid beside the target's other values can be invalid beside a partner's: min above the partner's max
+    for (partner, settings) in &next {
+        validate_model_settings(settings, command, from_preset, project.texture_sets.get(*partner).map(|set| &set.bake))?;
     }
     next.extend(targets);
     Ok(next.into_iter().collect())
@@ -859,5 +883,25 @@ mod gpu_raytracing_tests {
         assert_eq!(chosen_tracer(Some(&installed), true).map(|tracer| tracer.name()), Some("gpu".to_string()));
         assert!(chosen_tracer(Some(&installed), false).is_none(), "off keeps the rays on the CPU");
         assert!(chosen_tracer(None, true).is_none(), "no installed tracer bakes on the CPU");
+    }
+}
+
+#[cfg(test)]
+mod bake_task_tests {
+    use std::sync::Arc;
+
+    use texturecraft_core::BakedMap;
+
+    #[test]
+    fn a_map_baked_alone_while_unchecked_still_reads_the_low_polys_colours() {
+        let mut session = crate::sample_session(64, 64).unwrap();
+        session.doc.project.texture_sets[0].bake.maps.select([BakedMap::Normal]);
+        let colours = Arc::new(vec![None]);
+        let _ = session.doc.bake_meshes.low_base_color.set(Ok(colours.clone()));
+
+        assert!(session.bake_task(0).unwrap().low_base_color.is_empty(), "the checked maps need no colours");
+        let task = session.bake_task_only(0, BakedMap::Opacity).unwrap();
+        assert!(Arc::ptr_eq(&task.low_base_color, &colours), "Opacity reads them");
+        assert!(task.settings.maps.opacity.is_enabled);
     }
 }

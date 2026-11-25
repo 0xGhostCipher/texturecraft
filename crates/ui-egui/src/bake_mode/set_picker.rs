@@ -4,7 +4,7 @@ use egui::{Align2, CornerRadius, FontId, Rect, RichText, Sense, Stroke, StrokeKi
 use egui_phosphor::regular as icon;
 use serde_json::{Value, json};
 use texturecraft_engine::bake::settings_patch;
-use texturecraft_engine::core::{BakeSettings, BakeSyncGroup, BakedMap};
+use texturecraft_engine::core::{BakeSettings, BakeSyncGroup, BakedMap, Project};
 
 use super::common_settings::antialiasing_label;
 use super::set_picker_purpose::SetPickerPurpose;
@@ -66,7 +66,7 @@ impl SetPicker {
     pub(super) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let Some(mut picker) = ctx.data(|data| data.get_temp::<SetPicker>(Self::id())) else { return };
 
-        let rows = picker.rows(app);
+        let rows = picker.rows(&app.session.doc.project, app.session.ts());
         let active = app.session.ts();
         let tokens = Tokens::get(ctx);
         let frame = egui::Frame::new()
@@ -98,14 +98,8 @@ impl SetPicker {
     }
 
     /// The listed sets
-    fn rows(&self, app: &TextureCraftApp) -> Vec<SetPickerRow> {
-        let project = &app.session.doc.project;
-        let active = app.session.ts();
-        let source = match self.purpose {
-            // New additions take on the settings already shared, or the active set's when none are
-            SetPickerPurpose::Sync(group) => project.texture_sets.iter().find(|set| set.bake.sync.shares(group)).or(project.texture_sets.get(active)),
-            SetPickerPurpose::Copy { .. } => None,
-        };
+    fn rows(&self, project: &Project, active: usize) -> Vec<SetPickerRow> {
+        let chosen: Vec<usize> = self.chosen.iter().enumerate().filter(|(_, chosen)| **chosen).map(|(index, _)| index).collect();
         project
             .texture_sets
             .iter()
@@ -113,8 +107,19 @@ impl SetPicker {
             // A copy goes from the active set, so it isn't listed
             .filter(|(index, _)| matches!(self.purpose, SetPickerPurpose::Sync(_)) || *index != active)
             .map(|(index, set)| {
-                let note = match (self.purpose, source) {
-                    (SetPickerPurpose::Sync(group), Some(source)) if !set.bake.sync.shares(group) => differing_values(&set.bake, &source.bake, group),
+                let note = match self.purpose {
+                    // What the set would take on OK when ticked: the source `bake.sync` picks from the ticked sets with this one among them
+                    SetPickerPurpose::Sync(group) if !set.bake.sync.shares(group) => {
+                        let mut members = chosen.clone();
+                        if let Err(slot) = members.binary_search(&index) {
+                            members.insert(slot, index);
+                        }
+                        project
+                            .bake_sync_source(group, &members, active)
+                            .filter(|source| *source != index)
+                            .and_then(|source| project.texture_sets.get(source))
+                            .and_then(|source| differing_values(&set.bake, &source.bake, group))
+                    }
                     _ => None,
                 };
                 SetPickerRow { index, name: set.name.clone(), note }
@@ -261,7 +266,7 @@ fn leaf_count(patch: &Value) -> usize {
 mod tests {
     use texturecraft_engine::core::{BakeAntialiasing, BakeResolution, BakeSettings, BakeSyncGroup, BakedMap};
 
-    use super::differing_values;
+    use super::{SetPicker, SetPickerPurpose, differing_values};
 
     #[test]
     fn a_set_shows_its_own_size_and_antialiasing_and_counts_the_rest() {
@@ -286,5 +291,26 @@ mod tests {
 
         assert_eq!(differing_values(&set, &source, BakeSyncGroup::Common), None);
         assert_eq!(differing_values(&set, &source, BakeSyncGroup::Map(BakedMap::AmbientOcclusion)).as_deref(), Some("1 differing setting"));
+    }
+
+    #[test]
+    fn the_note_compares_with_the_set_the_sync_will_take_settings_from() {
+        let ao = BakeSyncGroup::Map(BakedMap::AmbientOcclusion);
+        let mut project = texturecraft_engine::sample_session(256, 64).unwrap().doc.project;
+        let third = project.texture_sets[1].clone();
+        project.texture_sets.push(third);
+        for (index, set) in project.texture_sets.iter_mut().enumerate() {
+            set.bake = BakeSettings::default();
+            set.bake.sync.set_shares(ao, index == 0);
+        }
+        project.texture_sets[1].bake.maps.ao.parameters.rays.rays = 16;
+
+        // Set 0 leaves the group and sets 1 and 2 join with set 1 active: set 2 takes set 1's values, not set 0's
+        let picker = SetPicker { purpose: SetPickerPurpose::Sync(ao), chosen: vec![false, true, true] };
+        let rows = picker.rows(&project, 1);
+        let note = |index: usize| rows.iter().find(|row| row.index == index).and_then(|row| row.note.clone());
+
+        assert_eq!(note(2).as_deref(), Some("1 differing setting"));
+        assert_eq!(note(1), None, "the source itself has nothing to take");
     }
 }

@@ -1,4 +1,4 @@
-//! The Mesh Map Bakers rows: a drag down the checkboxes gives each the state the first one took
+//! The Mesh Map Bakers rows: a primary drag down the checkboxes gives each the state the first one took
 
 use egui::{Event, Modifiers, PointerButton, Role};
 use egui_kittest::Harness;
@@ -50,6 +50,39 @@ fn a_drag_down_the_checkboxes_unchecks_every_row_it_crosses() {
 
     let expected: Vec<BakedMap> = BakedMap::ALL.into_iter().filter(|map| DRAGGED.iter().all(|(dragged, _)| dragged != map)).collect();
     assert_eq!(enabled(&harness), expected, "the three rows are unchecked, the release does not check the last one again");
+}
+
+#[test]
+fn a_drag_that_jumps_past_a_row_between_two_frames_still_unchecks_it() {
+    let mut harness = harness();
+    let [from, _, to] = DRAGGED.map(|(_, name)| checkbox_center(&harness, name));
+
+    harness.hover_at(from);
+    harness.run_steps(1);
+    harness.event(Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    harness.run_steps(2);
+    harness.hover_at(to);
+    harness.run_steps(1);
+    harness.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    harness.run_steps(3);
+
+    let expected: Vec<BakedMap> = BakedMap::ALL.into_iter().filter(|map| DRAGGED.iter().all(|(dragged, _)| dragged != map)).collect();
+    assert_eq!(enabled(&harness), expected, "World Space Normal, between Normal and ID, is unchecked too");
+}
+
+#[test]
+fn holding_the_secondary_button_on_a_checkbox_leaves_it_alone() {
+    let mut harness = harness();
+    let at = checkbox_center(&harness, DRAGGED[1].1);
+
+    harness.hover_at(at);
+    harness.run_steps(1);
+    harness.event(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+    harness.run_steps(3);
+    harness.event(Event::PointerButton { pos: at, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+    harness.run_steps(3);
+
+    assert_eq!(enabled(&harness), BakedMap::ALL);
 }
 
 #[test]

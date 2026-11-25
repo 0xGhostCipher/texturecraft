@@ -148,3 +148,39 @@ fn a_part_no_high_poly_part_matches_keeps_the_distance_settings() {
 
     assert!(heights.iter().all(|(_, height)| *height == UNFITTED_DISTANCE));
 }
+
+#[test]
+fn a_part_meeting_another_part_takes_its_distances_from_its_own_high_poly_only() {
+    const LOW_HEIGHT: f32 = 0.01;
+    const RAISED_HEIGHT: f32 = 0.3;
+
+    // Two low parts sharing the edge x = 0, under a low and a raised high-poly part matched by name
+    let part = |name: &str, side: f32, height: f32, subdivisions: usize| {
+        let mut part = primitives::plane(1.0, subdivisions);
+        for position in &mut part.positions {
+            *position += Vec3::new(side * 0.5, height, 0.0);
+        }
+        part.submeshes[0].name = name.into();
+        part
+    };
+    let mut low = part("left_low", -1.0, 0.0, 4);
+    low.append(&part("right_low", 1.0, 0.0, 4));
+    let mut high = part("left_high", -1.0, LOW_HEIGHT, 8);
+    high.append(&part("right_high", 1.0, RAISED_HEIGHT, 8));
+    for mesh in [&mut low, &mut high] {
+        mesh.materials.truncate(1);
+        for submesh in &mut mesh.submeshes {
+            submesh.material = 0;
+        }
+    }
+    let mut bake_settings = automatic(&[BakedMap::Normal]);
+    bake_settings.high_poly.match_mode = texturecraft_core::MeshMatchMode::ByMeshName;
+
+    let heights = cage_heights(&low, &high, &bake_settings);
+
+    // The left part's triangles come first, three corners each
+    let left_corners = low.submeshes[0].count as usize;
+    for (position, height) in &heights[..left_corners] {
+        assert!(*height < RAISED_HEIGHT / 2.0, "the left part's cage at {position} stays near the left high poly: {height}");
+    }
+}

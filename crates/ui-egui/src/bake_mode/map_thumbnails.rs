@@ -3,13 +3,13 @@ use std::sync::{Arc, Weak};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use texturecraft_engine::Session;
-use texturecraft_engine::core::BakedMap;
+use texturecraft_engine::core::{BakedMap, BlockScales};
 
 /// Side of a thumbnail's texture, in pixels (twice the row's square, for high-density screens)
 const THUMBNAIL_PIXELS: u32 = 44;
 
-/// A thumbnail's texture, with the baked data and the working size it was drawn from
-type Thumbnail = (Weak<Vec<f32>>, (u32, u32), TextureHandle);
+/// A thumbnail's texture, with the baked data, the working size and the UV tiles' scales it was drawn from
+type Thumbnail = (Weak<Vec<f32>>, (u32, u32), BlockScales, TextureHandle);
 
 /// The Mesh Map Bakers rows' thumbnails of the baked maps, redrawn when a map is baked again
 #[derive(Default)]
@@ -27,9 +27,10 @@ impl MapThumbnails {
             return None;
         };
 
-        if let Some((drawn_from, working_size, texture)) = self.textures.get(&key)
+        if let Some((drawn_from, working_size, block_scales, texture)) = self.textures.get(&key)
             && drawn_from.ptr_eq(&Arc::downgrade(data))
             && *working_size == cache.size
+            && *block_scales == cache.composite.block_scales
         {
             return Some(texture.clone());
         }
@@ -38,7 +39,7 @@ impl MapThumbnails {
         let side = THUMBNAIL_PIXELS as usize;
         let image = ColorImage::from_rgba_unmultiplied([side, side], &rgba);
         let texture = context.load_texture(format!("bake_map_{texture_set}_{}", map.id()), image, TextureOptions::LINEAR);
-        self.textures.insert(key, (Arc::downgrade(data), cache.size, texture.clone()));
+        self.textures.insert(key, (Arc::downgrade(data), cache.size, cache.composite.block_scales.clone(), texture.clone()));
         Some(texture)
     }
 }
@@ -62,6 +63,15 @@ mod tests {
         let rebaked = baked.maps[&map].as_ref().clone();
         baked.maps.insert(map, Arc::new(rebaked));
         assert_ne!(thumbnails.texture(&context, &session, 0, map).unwrap().id(), first.id(), "a new bake is drawn again");
+
+        let mut tiled =
+            texturecraft_engine::Session::new_project("Tiles", texturecraft_engine::geom::primitives::udim_plane(), "builtin:udim_plane", None, 256).unwrap();
+        let tiled_set = &mut tiled.doc.project.texture_sets[0];
+        let tile = *tiled_set.uv_tiles.iter().next().expect("the UDIM plane has UV tiles");
+        tiled_set.tile_resolutions.insert(tile, 128);
+        let second = thumbnails.texture(&context, &session, 0, map).unwrap();
+        session.caches[0].composite.block_scales = tiled_set.block_scales();
+        assert_ne!(thumbnails.texture(&context, &session, 0, map).unwrap().id(), second.id(), "a UV tile resolution edit draws it again");
 
         session.doc.baked.get_mut(&0).unwrap().maps.remove(&map);
         assert!(thumbnails.texture(&context, &session, 0, map).is_none(), "a map not baked has none");

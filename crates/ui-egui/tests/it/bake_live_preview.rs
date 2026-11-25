@@ -151,7 +151,7 @@ fn a_new_resolution_or_a_settings_change_from_anywhere_bakes_the_preview_again()
     // A change that doesn't come from the panel: a script, an undo or a synced set
     let before = picture(&harness);
     harness.state_mut().run("bake.settings", serde_json::json!({ "ts": 0, "patch": { "maps": { "ao": { "parameters": { "rays": { "rays": 8 } } } } } }));
-    let changed = run_until(&mut harness, |harness| picture(harness).as_ref().map(std::sync::Arc::as_ptr) != before.as_ref().map(std::sync::Arc::as_ptr));
+    let changed = run_until(&mut harness, |harness| is_new(picture(harness), before.as_ref()));
     assert!(changed, "the settings change brings a new picture");
 
     // The same file loaded again: same name, new geometry
@@ -162,7 +162,12 @@ fn a_new_resolution_or_a_settings_change_from_anywhere_bakes_the_preview_again()
         }
         session.add_high_poly_bytes("High.obj", bytes.to_vec()).unwrap();
         let before = picture(&harness);
-        let reloaded = run_until(&mut harness, |harness| picture(harness).as_ref().map(std::sync::Arc::as_ptr) != before.as_ref().map(std::sync::Arc::as_ptr));
+        let reloaded = run_until(&mut harness, |harness| is_new(picture(harness), before.as_ref()));
         assert!(reloaded, "high poly load {index} brings a new picture");
     }
+}
+
+/// True when the preview holds a picture other than `before`, which the caller keeps alive so its address can't be reused
+fn is_new(now: Option<std::sync::Arc<Vec<f32>>>, before: Option<&std::sync::Arc<Vec<f32>>>) -> bool {
+    now.is_some_and(|now| before.is_none_or(|before| !std::sync::Arc::ptr_eq(&now, before)))
 }

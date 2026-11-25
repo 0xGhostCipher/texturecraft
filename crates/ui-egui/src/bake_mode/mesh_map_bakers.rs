@@ -1,4 +1,4 @@
-use egui::{Align, CornerRadius, FontId, Layout, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{Align, CornerRadius, FontId, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 use egui_phosphor::regular as icon;
 use serde_json::json;
 use texturecraft_engine::ViewMode;
@@ -16,6 +16,9 @@ use crate::theme::{Tokens, semibold};
 /// The presets menu's least width, and its name field's, room for a typical preset name
 const PRESETS_MENU_MIN_WIDTH: f32 = 220.0;
 const PRESET_NAME_FIELD_WIDTH: f32 = 130.0;
+
+/// Spacing of the points tested along a checkbox drag's path between two frames, well under a row's height
+const CROSS_STEP: f32 = 4.0;
 
 /// How far past its box a row's check takes clicks, so it is easy to hit
 const CHECK_HIT_AIR: f32 = 3.0;
@@ -80,9 +83,11 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
 
     let selected = super::selected_map(app.ui.selected_baked_map, settings);
     let check_drag_id = ui.scope_id().with("check_drag");
+    let drag_from_id = ui.scope_id().with("check_drag_from");
     let mut check_drag: Option<bool> = ui.data(|data| data.get_temp(check_drag_id));
+    let drag_from: Option<Pos2> = ui.data(|data| data.get_temp(drag_from_id));
     for map in BakedMap::ALL {
-        if ui.push_id(map, |ui| row(app, ui, map, settings, map == selected, &mut check_drag)).inner {
+        if ui.push_id(map, |ui| row(app, ui, map, settings, map == selected, &mut check_drag, drag_from)).inner {
             app.ui.selected_baked_map = Some(map);
             app.ui.dock.focus(Panel::MeshMapSettings);
         }
@@ -90,11 +95,16 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
 
     // Kept through the frame of the release, so the click that ends a drag does not toggle its last checkbox back
     let is_held = ui.input(|input| input.pointer.primary_down());
+    let pointer = ui.input(|input| input.pointer.latest_pos());
     ui.data_mut(|data| {
-        if let Some(value) = check_drag.filter(|_| is_held) {
+        if let (Some(value), true) = (check_drag, is_held) {
             data.insert_temp(check_drag_id, value);
+            if let Some(pointer) = pointer {
+                data.insert_temp(drag_from_id, pointer);
+            }
         } else {
             data.remove_temp::<bool>(check_drag_id);
+            data.remove_temp::<Pos2>(drag_from_id);
         }
     });
 }
@@ -223,8 +233,16 @@ fn copy_items(app: &mut TextureCraftApp, ui: &mut Ui, what: &'static str, map: O
     }
 }
 
-/// One baker row (`check_drag`: the state a pressed check gives those the pointer then crosses); returns whether the row itself was clicked
-fn row(app: &mut TextureCraftApp, ui: &mut Ui, map: BakedMap, settings: &mut BakeSettings, is_selected: bool, check_drag: &mut Option<bool>) -> bool {
+/// One baker row (`check_drag`: the state a pressed check gives those the pointer then crosses; `drag_from`: where that drag's pointer was last frame); returns whether the row itself was clicked
+fn row(
+    app: &mut TextureCraftApp,
+    ui: &mut Ui,
+    map: BakedMap,
+    settings: &mut BakeSettings,
+    is_selected: bool,
+    check_drag: &mut Option<bool>,
+    drag_from: Option<Pos2>,
+) -> bool {
     let several_sets = app.session.doc.project.texture_sets.len() > 1;
     let tokens = Tokens::get(ui.ctx());
     let name = tr(baked_map_label(map));
@@ -243,7 +261,7 @@ fn row(app: &mut TextureCraftApp, ui: &mut Ui, map: BakedMap, settings: &mut Bak
     let check = Rect::from_center_size(pos2(rect.left() + ROW_INSET + CHECK_SIZE / 2.0, rect.center().y), vec2(CHECK_SIZE, CHECK_SIZE));
     let checkbox = ui.interact(check.expand(CHECK_HIT_AIR), ui.scope_id().with("include"), Sense::click()).on_hover_text(tr("Include in Bake"));
     checkbox.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, settings.maps.is_enabled(map), name));
-    let is_dragged_over = drag_check(ui, &checkbox, rect, settings.maps.is_enabled(map), check_drag);
+    let is_dragged_over = drag_check(ui, &checkbox, rect, settings.maps.is_enabled(map), check_drag, drag_from);
     if let Some(value) = check_drag.filter(|_| is_dragged_over) {
         settings.maps.set_enabled(map, value);
     } else if checkbox.clicked() && check_drag.is_none() {
@@ -311,12 +329,24 @@ fn row(app: &mut TextureCraftApp, ui: &mut Ui, map: BakedMap, settings: &mut Bak
     response.clicked()
 }
 
-/// Start a checkbox drag at a press on `checkbox`; returns whether a drag is in this row's checkbox column now (the whole row height counts)
-fn drag_check(ui: &Ui, checkbox: &egui::Response, row: Rect, is_enabled: bool, check_drag: &mut Option<bool>) -> bool {
-    if check_drag.is_none() && checkbox.is_pointer_button_down_on() {
+/// Start a checkbox drag at a primary press on `checkbox`; returns whether the drag's pointer crossed this row's checkbox column (the whole row height counts) since `drag_from`
+fn drag_check(ui: &Ui, checkbox: &egui::Response, row: Rect, is_enabled: bool, check_drag: &mut Option<bool>, drag_from: Option<Pos2>) -> bool {
+    let is_primary = ui.input(|input| input.pointer.primary_down());
+    if check_drag.is_none() && is_primary && checkbox.is_pointer_button_down_on() {
         *check_drag = Some(!is_enabled);
     }
-    check_drag.is_some() && ui.rect_contains_pointer(Rect::from_x_y_ranges(checkbox.rect.x_range(), row.y_range()))
+    let Some(pointer) = ui.input(|input| input.pointer.latest_pos()).filter(|_| check_drag.is_some()) else {
+        return false;
+    };
+
+    let column = Rect::from_x_y_ranges(checkbox.rect.x_range(), row.y_range());
+    ui.rect_contains_pointer(column) || crosses(column, drag_from.unwrap_or(pointer), pointer)
+}
+
+/// Whether the straight line from `from` to `to` passes through `rect`, so a row skipped between two frames still counts
+fn crosses(rect: Rect, from: Pos2, to: Pos2) -> bool {
+    let steps = (from.distance(to) / CROSS_STEP).ceil().max(1.0) as u32;
+    (0..=steps).any(|step| rect.contains(from.lerp(to, step as f32 / steps as f32)))
 }
 
 /// The baked map's thumbnail in `rect`; before it is baked, an empty square crossed by a diagonal

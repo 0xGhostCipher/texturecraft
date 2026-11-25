@@ -51,10 +51,7 @@ fn sync(session: &mut Session, params: &Value) -> Result<Value> {
     let members = sets_param(session, COMMAND, params)?;
     let sets = &session.doc.project.texture_sets;
 
-    // Additions take the settings of a set that already shares them; with none left, of the active set when it joins, else of the first
-    let staying = members.iter().copied().find(|index| sets.get(*index).is_some_and(|set| set.bake.sync.shares(group)));
-    let active = session.ts();
-    let source = staying.or_else(|| members.contains(&active).then_some(active)).or_else(|| members.first().copied());
+    let source = session.doc.project.bake_sync_source(group, &members, session.ts());
     let source = source.and_then(|index| sets.get(index)).map(|set| set.bake.clone());
 
     let next: Vec<(usize, BakeSettings)> = sets
@@ -264,5 +261,17 @@ mod tests {
         execute(&mut session, "bake.settings", &json!({ "ts": 0, "patch": { "maps": { "ao": { "parameters": { "rays": { "rays": 6 } } } } } })).unwrap();
         assert_eq!(bake(&session, 1).maps.ao.parameters.rays.rays, 6);
         assert_eq!(bake(&session, 1).common.dilation, 3);
+    }
+
+    #[test]
+    fn an_edit_that_would_leave_a_synced_set_with_an_invalid_interval_changes_no_set() {
+        let mut session = session();
+        session.doc.project.texture_sets[0].bake.maps.ao.parameters.rays.max_distance = 0.5;
+        session.doc.project.texture_sets[1].bake.maps.ao.parameters.rays.max_distance = 0.05;
+        let before = session.doc.project.texture_sets.clone();
+
+        let patch = json!({ "ts": 0, "patch": { "maps": { "ao": { "parameters": { "rays": { "min_distance": 0.1 } } } } } });
+        assert!(execute(&mut session, "bake.settings", &patch).is_err(), "set 1 would get a minimum above its maximum");
+        assert_eq!(session.doc.project.texture_sets, before);
     }
 }

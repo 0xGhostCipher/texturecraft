@@ -489,6 +489,12 @@ impl Project {
         }
     }
 
+    /// The set whose `group` settings the sets joining a sync of `members` take: one of them already sharing the group, else `active` when it is one of them, else the first
+    pub fn bake_sync_source(&self, group: BakeSyncGroup, members: &[usize], active: usize) -> Option<usize> {
+        let staying = members.iter().copied().find(|index| self.texture_sets.get(*index).is_some_and(|set| set.bake.sync.shares(group)));
+        staying.or_else(|| members.contains(&active).then_some(active)).or_else(|| members.first().copied())
+    }
+
     pub fn layer(&self, id: LayerId) -> Result<&Layer> {
         self.layers.get(&id).ok_or(CoreError::NoLayer(id))
     }

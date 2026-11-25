@@ -99,14 +99,8 @@ impl PropertySheet<'_> {
         let name = painter.layout_job(job);
         painter.galley(pos2(rect.left() + NAME_LEFT, name_y - name.size().y / 2.0), name, name_color);
         if let Some(folder) = row.folder {
-            let shown = shortened_folder(&painter, folder, words_right - rect.left() - NAME_LEFT);
-            painter.text(
-                pos2(rect.left() + NAME_LEFT, rect.top() + FOLDER_CENTER),
-                Align2::LEFT_CENTER,
-                shown,
-                FontId::proportional(SMALL_TEXT_SIZE),
-                tokens.text_dim,
-            );
+            let shown = folder_galley(&painter, folder, words_right - rect.left() - NAME_LEFT, tokens.text_dim);
+            painter.galley(pos2(rect.left() + NAME_LEFT, rect.top() + FOLDER_CENTER - shown.size().y / 2.0), shown, tokens.text_dim);
         }
 
         let words = Rect::from_min_max(pos2(rect.left(), rect.top()), pos2(words_right, rect.bottom()));
@@ -135,6 +129,11 @@ impl PropertySheet<'_> {
     }
 }
 
+/// `folder` shortened to fit `room`, cut with "…" when even its first and last folders are too wide
+fn folder_galley(painter: &egui::Painter, folder: &str, room: f32, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    crate::widgets::elided(painter, shortened_folder(painter, folder, room), SMALL_TEXT_SIZE, color, room)
+}
+
 /// `folder` with folders after its first one left out, from the second on, until it fits in `room`
 fn shortened_folder(painter: &egui::Painter, folder: &str, room: f32) -> String {
     let fits = |text: &str| painter.layout_no_wrap(text.to_owned(), FontId::proportional(SMALL_TEXT_SIZE), egui::Color32::WHITE).size().x <= room;
@@ -149,4 +148,26 @@ fn shortened_folder(painter: &egui::Painter, folder: &str, room: f32) -> String 
         shown = parts.join("/");
     }
     shown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_too_long_even_when_shortened_is_cut_to_its_room() {
+        let room = 120.0;
+        let folder = format!("C:\\{}", "W".repeat(80));
+        let mut laid_out = None;
+        let mut output = egui::Context::default().run_ui(egui::RawInput::default(), |ui| {
+            laid_out = Some(folder_galley(ui.painter(), &folder, room, egui::Color32::WHITE));
+        });
+
+        // The font atlas upload is not under test
+        output.textures_delta.clear();
+        let galley = laid_out.unwrap();
+
+        assert!(galley.size().x <= room);
+        assert_eq!(galley.rows[0].glyphs.last().map(|glyph| glyph.chr), Some('…'));
+    }
 }

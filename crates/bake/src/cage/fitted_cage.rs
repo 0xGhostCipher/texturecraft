@@ -2,7 +2,7 @@ use super::name_keys::NameKeys;
 use crate::map::interpolate;
 use crate::{BakeRequest, HighPoly, MeshExtent};
 use rayon::prelude::*;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use texturecraft_geom::Mesh;
 use texturecraft_geom::glam::Vec3;
 
@@ -26,6 +26,7 @@ impl FittedCage {
     pub(crate) fn new(request: &BakeRequest, high: HighPoly, welded_indices: &[u32], ray_normals: &[Vec3], extent: MeshExtent) -> FittedCage {
         let low = request.mesh;
         let keys = NameKeys::of(request, high);
+        let welded_indices = welded_within_groups(welded_indices, &keys.low_vertices);
         let welded = |vertex: usize| welded_indices.get(vertex).copied().unwrap_or(0) as usize;
         let welded_count = welded_indices.iter().max().map_or(0, |last| *last as usize + 1);
         let mut reach: Vec<Option<(f32, f32)>> = vec![None; welded_count];
@@ -69,6 +70,23 @@ impl FittedCage {
             first_rear * first_weight + second_rear * second_weight + third_rear * third_weight,
         ))
     }
+}
+
+/// `welded_indices` with the vertices of different mesh-name groups (`vertex_keys`, empty when names don't matter) kept apart, so a group's distances come only from its own high poly and never spread into another group
+fn welded_within_groups(welded_indices: &[u32], vertex_keys: &[u32]) -> Vec<u32> {
+    if vertex_keys.is_empty() {
+        return welded_indices.to_vec();
+    }
+
+    let mut indices: HashMap<(u32, Option<u32>), u32> = HashMap::new();
+    welded_indices
+        .iter()
+        .enumerate()
+        .map(|(vertex, &welded)| {
+            let next = indices.len() as u32;
+            *indices.entry((welded, vertex_keys.get(vertex).copied())).or_insert(next)
+        })
+        .collect()
 }
 
 /// Per low-poly vertex, how far along its ray normal the high-poly surface in front of it (positive) or behind it (negative) is. A ray that only finds a surface much farther than the nearest high-poly point (within `max_distance`) found another part, so the vertex takes that nearest point's height instead
@@ -153,7 +171,15 @@ fn spread_to_neighbours(reach: &mut [Option<(f32, f32)>], triangles: impl Iterat
 
 #[cfg(test)]
 mod tests {
-    use super::spread_to_neighbours;
+    use super::{spread_to_neighbours, welded_within_groups};
+
+    #[test]
+    fn coincident_vertices_of_different_name_groups_are_not_welded() {
+        // Vertices 0 and 1 share a position, as do 2 and 3; 1 and 2 are in group 7, the others in group 5
+        assert_eq!(welded_within_groups(&[0, 0, 1, 1], &[5, 7, 7, 5]), [0, 1, 2, 3]);
+        assert_eq!(welded_within_groups(&[0, 0, 1, 1], &[5, 5, 7, 7]), [0, 0, 1, 1], "same group: still welded");
+        assert_eq!(welded_within_groups(&[0, 0, 1], &[]), [0, 0, 1], "without name matching nothing changes");
+    }
 
     #[test]
     fn unfitted_vertices_take_the_largest_distances_of_their_nearest_fitted_neighbours() {

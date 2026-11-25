@@ -12,6 +12,8 @@ use texturecraft_ui_egui::state::Mode;
 const TRIANGLE_OBJ: &str = "o Part_high\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
 /// Longest the test waits for the worker
 const LOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// Frames (5 ms apart) a stroke stays open while a high poly loads
+const STROKE_FRAMES: usize = 200;
 
 /// A bake-mode app with Common Settings in front
 fn harness() -> Harness<'static, TextureCraftApp> {
@@ -94,4 +96,31 @@ fn a_high_poly_that_finishes_after_the_list_changed_joins_the_list_as_it_is() {
     session.add_high_poly_bytes("part.obj", TRIANGLE_OBJ.as_bytes().to_vec()).unwrap();
     assert_eq!(session.apply_high_poly_load(load), "2_part.obj", "the name is made unique against the list of now");
     assert_eq!(session.doc.bake_meshes.merged_high().unwrap().mesh.triangle_count(), 2, "both meshes bake");
+}
+
+#[test]
+fn a_high_poly_read_during_a_paint_stroke_is_added_after_it_and_survives_its_cancel() {
+    let folder = std::env::temp_dir().join(format!("texturecraft-high-poly-stroke-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("part.obj").display().to_string();
+    std::fs::write(&path, TRIANGLE_OBJ).unwrap();
+
+    let mut harness = harness();
+    // Bake mode finishes strokes at once: the files go on loading after a switch back to painting
+    harness.state_mut().ui.mode = Mode::Painting;
+    texturecraft_engine::execute(&mut harness.state_mut().session, "layer.add.paint", &serde_json::json!({})).unwrap();
+    harness.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
+    harness.state_mut().load_high_polys([path]);
+    // Time for the worker to read one triangle
+    for _ in 0..STROKE_FRAMES {
+        std::thread::sleep(Duration::from_millis(5));
+        harness.run_steps(1);
+    }
+    assert!(harness.state().session.stroke_active());
+    assert!(high_names(&harness).is_empty(), "nothing is added while the stroke runs");
+
+    harness.state_mut().session.cancel_stroke();
+    run_until_loaded(&mut harness);
+    assert_eq!(high_names(&harness), ["part.obj"]);
+    let _ = std::fs::remove_dir_all(folder);
 }

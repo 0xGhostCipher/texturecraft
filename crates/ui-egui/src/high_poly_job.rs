@@ -50,7 +50,7 @@ impl TextureCraftApp {
         });
     }
 
-    /// Add a loaded high poly to the session and start on the next file; drop them all once another project is open
+    /// Add a loaded high poly to the session (once no paint stroke is running) and start on the next file; drop them all once another project is open
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn poll_high_poly_job(&mut self, context: &egui::Context) {
         let Some(job) = &self.high_poly_job else { return };
@@ -61,6 +61,11 @@ impl TextureCraftApp {
         }
 
         context.request_repaint_after(POLL_INTERVAL);
+        // A stroke's cancel or undo restores the document from its start, which would drop a high poly added during it
+        if self.session.stroke_active() {
+            return;
+        }
+
         let loaded = match job.answer.try_recv() {
             Ok(loaded) => loaded,
             Err(TryRecvError::Empty) => return,

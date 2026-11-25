@@ -231,7 +231,7 @@ fn input(app: &TextureCraftApp, target: LivePreviewTarget, size: BakeResolution)
 fn start(app: &mut TextureCraftApp, ctx: &egui::Context, target: LivePreviewTarget, size: BakeResolution, dragging: bool) {
     app.live_preview.cancel();
     app.live_preview.made_from = input(app, target, size);
-    let mut task = match app.session.bake_task(target.set) {
+    let mut task = match app.session.bake_task_only(target.set, target.map) {
         Ok(task) => task,
         Err(error) => {
             // Once, not on every change while it stays unbakeable
@@ -245,7 +245,6 @@ fn start(app: &mut TextureCraftApp, ctx: &egui::Context, target: LivePreviewTarg
     };
     app.live_preview.cannot_bake = false;
 
-    task.settings.maps.select([target.map]);
     let own = task.settings.common.resolution;
     let size = if own.pixels() < size.pixels() { own } else { size };
     task.settings.common.resolution = size;

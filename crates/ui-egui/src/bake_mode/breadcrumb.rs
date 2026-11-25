@@ -26,7 +26,7 @@ const RESET_BOX: f32 = 20.0;
 /// Size of the names
 const NAME_SIZE: f32 = 12.0;
 
-/// › texture set › map above Mesh Map Settings, each caret a menu to switch it, with ⟲ (Restore Defaults) at the right when the map has parameters; returns whether ⟲ was clicked
+/// › texture set › map above Mesh Map Settings, each caret a menu to switch it, with ⟲ (Restore Defaults) at the right when the map has parameters; a long set name is cut with "…"; returns whether ⟲ was clicked
 pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, selected: BakedMap, restorable: bool) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let active_set = app.session.ts();
@@ -39,13 +39,17 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, selected: BakedMap, r
     let set_caret = caret(ui, &painter, &tokens, x, center_y, "texture_set_caret", tr("Switch Texture Set"));
     x += CARET_BOX + CARET_TO_NAME;
     let set_name = set_names.get(active_set).map_or("", String::as_str);
-    let set_galley = painter.layout_no_wrap(set_name.to_owned(), FontId::proportional(NAME_SIZE), tokens.text);
+    let map_name = tr(baked_map_label(selected));
+    let map_width = painter.layout_no_wrap(map_name.to_owned(), semibold(NAME_SIZE), tokens.text_strong).size().x;
+    let reset_width = if restorable { RESET_BOX } else { 0.0 };
+    let set_room = line.right() - reset_width - map_width - CARET_TO_NAME - CARET_BOX - NAME_TO_CARET - x;
+    let set_galley = crate::widgets::elided(&painter, set_name, NAME_SIZE, tokens.text, set_room);
     let set_width = set_galley.size().x;
     painter.galley(pos2(x, center_y - set_galley.size().y / 2.0), set_galley, tokens.text);
     x += set_width + NAME_TO_CARET;
     let map_caret = caret(ui, &painter, &tokens, x, center_y, "map_caret", tr("Switch Mesh Map"));
     x += CARET_BOX + CARET_TO_NAME;
-    painter.text(pos2(x, center_y), Align2::LEFT_CENTER, tr(baked_map_label(selected)), semibold(NAME_SIZE), tokens.text_strong);
+    painter.text(pos2(x, center_y), Align2::LEFT_CENTER, map_name, semibold(NAME_SIZE), tokens.text_strong);
 
     egui::Popup::menu(&set_caret).show(|ui| {
         for (set_index, name) in set_names.iter().enumerate() {
