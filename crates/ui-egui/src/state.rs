@@ -368,6 +368,9 @@ pub struct ExportUi {
     /// `file.exportTextures`).
     #[serde(default)]
     pub materialx: bool,
+    /// Also write `<project>_shaders.json`: the shader's settings and the texture sets using it (`shaderParameters` of `file.exportTextures`)
+    #[serde(default)]
+    pub shader_parameters: bool,
     /// Texture sets excluded from export.
     pub skip: Vec<usize>,
     /// Per texture set (by index) overrides of the settings above.
@@ -442,6 +445,7 @@ impl Default for ExportUi {
             color_space: String::new(),
             usd_asset: false,
             materialx: false,
+            shader_parameters: false,
             skip: Vec::new(),
             sets: Default::default(),
             owner: Vec::new(),

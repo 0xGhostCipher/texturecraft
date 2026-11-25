@@ -364,6 +364,13 @@ mod web {
 
         // Keep one file for each case-insensitive name in the download
         texturecraft_engine::formats::skip_repeated_names(&mut files);
+        if app.ui.export.shader_parameters {
+            let sets: Vec<usize> = jobs.iter().map(|(set_index, _)| *set_index).collect();
+            let parameters = texturecraft_engine::shader_parameters::shader_parameters(&app.session.doc.project, &sets);
+            let name = texturecraft_engine::shader_parameters::shader_parameters_file(&app.session.doc.project.name);
+            let bytes = serde_json::to_vec_pretty(&parameters).map_err(|e| e.to_string())?;
+            files.push(ExportedFile { name, bytes, width: 0, height: 0, warnings: Vec::new() });
+        }
         app.session.log.warnings("MapExporter", files.iter().flat_map(|file| file.warnings.iter().cloned()));
         let file_count = files.len();
 

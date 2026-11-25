@@ -58,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export textures",
             ["File"],
             None,
-            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|j2k|jp2|webp|psd (or the extension; the maps written as psd are the layers of one <mesh>_<texture set>.psd per texture set and UV tile, which the USD asset and MaterialX don't read), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?, size?: px (wins over `size`)}] (per map file type, bit depth and size), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, JP2, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, J2K, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts, options and reservedNames, a list gives each texture set's own `ts`, options and `reservedNames`, a file the texture export skipped is not read, the export window sends it with the last command; a failure is a warning)} → {files, warnings, materialUdimPatterns?}",
+            "{dir, preset?: built-in or user preset name, or a preset object {name, maps}, ts?: index|[indexes]|\"all\", format?: bmp|jpeg|jng|pgm|png|targa|tiff|hdr|exr|j2k|jp2|webp|psd (or the extension; the maps written as psd are the layers of one <mesh>_<texture set>.psd per texture set and UV tile, which the USD asset and MaterialX don't read), bitDepth?: 8|16|32 (32 is float for tiff, hdr and exr; 16 is half float for exr), dithering?: bool (8-bit files), padding?: none|dilation|dilationDefault|diffusion|infinite, dilation?: px, size?: px, normalFormat?: openGl|directX, maps?: [{map: index into the preset's maps, enabled?: bool (false leaves the map out), format?, bitDepth?, dithering?, size?: px (wins over `size`)}] (per map file type, bit depth and size), colorSpace?: sRGB (default for 8/16-bit files)|Linear Rec.709 (default for exr, hdr)|ACEScg|ACES2065-1 (colour maps are converted, data maps never are; 8/16-bit files clamp to 0-1; a chosen space is also recorded in the colour maps: an ICC profile in PNG, JPEG, JP2, TIFF and WebP, the chromaticities in EXR; TGA, BMP, HDR, J2K, JNG, PGM and PSD exports warn about missing metadata), reservedNames?: [file names or UDIM patterns] (from earlier commands of the same export, compared ignoring case), materialX?: bool (also write an OpenPBR .mtlx per texture set, reusing compatible OpenPBR maps and writing dedicated textures for the remaining inputs), usdAsset?: true|[export params, one object per texture set (not empty)] (also write <mesh>.usd, a binary USD file, next to the textures: the whole mesh, a UsdPreviewSurface material per texture set whose inputs read the files the export wrote with its output template (base color, roughness, metallic, normal, emissive, opacity, clear coat; packed maps read their own channels); a texture set outside the export has none; true takes this command's ts, options and reservedNames, a list gives each texture set's own `ts`, options and `reservedNames`, a file the texture export skipped is not read, the export window sends it with the last command; a failure is a warning), shaderParameters?: true|[texture set indexes] (also write <project>_shaders.json: the shader's model and settings and the texture sets using it; true lists this command's ts, the export window sends every set of the export with the last command; a failure is a warning)} → {files, warnings, materialUdimPatterns?}",
             always,
             export_textures
         ),
@@ -670,6 +670,7 @@ fn export_textures(session: &mut Session, params: &Value) -> Result<Value> {
     let reserved_patterns: Vec<_> = taken_names.keys().filter(|name| name.contains("<udim>")).cloned().collect();
     let material = params.get("materialX").and_then(Value::as_bool).unwrap_or(false);
     let usd_asset = usd_asset_param(session, params, &options, &sets)?;
+    let shader_sets = crate::shader_parameters::shader_parameters_param(&session.doc.project, params, &sets, "file.exportTextures")?;
     let mut warnings = Vec::new();
     let mut udim_patterns = Vec::new();
 
@@ -728,6 +729,17 @@ fn export_textures(session: &mut Session, params: &Value) -> Result<Value> {
 
     if let Some(exports) = &usd_asset {
         written.extend(write_usd_asset(session, dir, exports, &mut warnings));
+    }
+    if let Some(shader_sets) = shader_sets {
+        let path = dir.join(crate::shader_parameters::shader_parameters_file(&session.doc.project.name));
+        let parameters = crate::shader_parameters::shader_parameters(&session.doc.project, &shader_sets);
+
+        // The textures are written by now: a shaders file that fails is a warning, as a failed USD asset is
+        let text = serde_json::to_vec_pretty(&parameters).map_err(|error| error.to_string());
+        match text.and_then(|text| texturecraft_formats::write_atomic(&path, &text).map_err(|error| error.to_string())) {
+            Ok(()) => written.push(path),
+            Err(error) => warnings.push(format!("The shader settings file was not written: {error}")),
+        }
     }
 
     session.log.info("MapExporter", format!("Exported {} textures to {}", written.len(), dir.display()));

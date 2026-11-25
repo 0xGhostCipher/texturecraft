@@ -272,7 +272,15 @@ fn start_export(app: &mut TextureCraftApp) {
         return;
     }
 
-    e.job = Some(crate::state::ExportJob { total: pending.len(), pending, preview, directory: dir, usd_asset: e.usd_asset, ..Default::default() });
+    e.job = Some(crate::state::ExportJob {
+        total: pending.len(),
+        pending,
+        preview,
+        directory: dir,
+        usd_asset: e.usd_asset,
+        shader_parameters: e.shader_parameters,
+        ..Default::default()
+    });
 }
 
 /// Two texture sets that would write a file of the same name (ignoring case, as Windows and macOS
@@ -373,6 +381,11 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         }
     }
 
+    // The last command writes the shader parameters, listing every texture set of the export
+    if let Some(job) = app.ui.export.job.as_ref().filter(|job| job.shader_parameters && job.pending.is_empty()) {
+        params["shaderParameters"] = job.preview.iter().filter_map(|plan| plan.index).collect();
+    }
+
     let Some(response) = app.run("file.exportTextures", params) else {
         app.ui.export.job = None;
         return;
@@ -394,8 +407,8 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     };
     let files: Vec<String> = response_strings(&response, "files").map(relative).collect();
     let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
-    // The USD asset is no texture: it stays in the list of written files only
-    for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd")) {
+    // The USD asset and the shader parameters are no textures: they stay in the list of written files only
+    for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd") && !file.to_ascii_lowercase().ends_with(".json")) {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
         lines.push(set());
         lines.push(ConsoleLine::Step(trf("Saved texture {file}", &[("file", &stem)])));
@@ -772,6 +785,7 @@ fn dilation_button(ui: &mut Ui, padding: &str, dilation: &mut u32) {
 }
 
 /// A greyed checkbox with its tooltip and the "not available" hint
+#[cfg(target_arch = "wasm32")]
 fn unavailable_checkbox(ui: &mut Ui, label: &str, tooltip: &str) {
     let mut off = false;
     ui.add_enabled(false, egui::Checkbox::new(&mut off, label)).on_disabled_hover_ui(|ui| {
@@ -801,6 +815,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
             settings.color_space,
             settings.usd_asset,
             settings.materialx,
+            settings.shader_parameters,
         ) = (
             defaults.dir,
             defaults.format,
@@ -813,6 +828,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
             defaults.color_space,
             defaults.usd_asset,
             defaults.materialx,
+            defaults.shader_parameters,
         );
         crate::export_templates::select(app, defaults.preset);
     }
@@ -874,8 +890,8 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, builtins: &[ExportPreset]
     #[cfg(target_arch = "wasm32")]
     crate::unavailable::checkbox(ui, false, tr("Export MaterialX"));
 
-    // Unavailable export controls stay disabled
-    unavailable_checkbox(ui, tr("Export shader settings"), tr("Save the settings of each shader instance in a JSON file"));
+    ui.checkbox(&mut app.ui.export.shader_parameters, tr("Export shader settings"))
+        .on_hover_text(tr("Save the settings of each shader instance in a JSON file"));
     ui.add_space(8.0);
     egui::Grid::new("exp_grid_more").num_columns(2).min_col_width(LABEL_COLUMN_WIDTH).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
         let settings = &mut app.ui.export;
