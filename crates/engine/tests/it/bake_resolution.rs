@@ -128,6 +128,7 @@ fn imported_mesh_maps_display_and_export_the_entire_overridden_tile() {
     execute(&mut session, "effect.add.generator", &json!({"layer": layer.0, "generator": "ambientOcclusion"})).unwrap();
     let mask = session.mask_at(layer, &[(376, 120), (266, 10)]).unwrap();
     let expected = [240.0 / 255.0, 20.0 / 255.0];
+    assert_eq!(mask.len(), expected.len(), "one value per requested texel");
     assert!(
         mask.iter().zip(expected).all(|(value, expected)| (value - expected).abs() < 0.001),
         "generators sample the whole bake through the working layout: {mask:?}"

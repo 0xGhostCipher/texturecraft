@@ -267,10 +267,12 @@ fn gaussian_wrapped(values: &[f32], (width, height): (u32, u32), sigma: f32) -> 
 fn blur_lines(values: &[f32], length: usize, sigma: f32) -> Vec<f32> {
     let length = length.max(1);
     let mut out = vec![0.0; values.len()];
-    out.par_chunks_mut(length).zip(values.par_chunks(length)).for_each(|(out, line)| {
-        if sigma < BOX_BLUR_MIN_SIGMA {
-            kernel_blur(line, out, sigma);
-        } else {
+
+    // Every line reads the same sampled kernel
+    let kernel = (sigma < BOX_BLUR_MIN_SIGMA).then(|| gaussian_kernel(sigma));
+    out.par_chunks_mut(length).zip(values.par_chunks(length)).for_each(|(out, line)| match &kernel {
+        Some(kernel) => kernel_blur(line, out, kernel),
+        None => {
             // Three box passes of radius r spread a value with variance r(r + 1)
             let radius = (((1.0 + 4.0 * sigma * sigma).sqrt() - 1.0) / 2.0).round().max(1.0) as usize;
             let mut current = line.to_vec();
@@ -283,18 +285,23 @@ fn blur_lines(values: &[f32], length: usize, sigma: f32) -> Vec<f32> {
     out
 }
 
-/// `line` blurred into `out` by a sampled gaussian of `sigma`, wrapping around
-fn kernel_blur(line: &[f32], out: &mut [f32], sigma: f32) {
+/// A gaussian of `sigma` sampled at whole texels each side of its centre, its weights summing to 1
+fn gaussian_kernel(sigma: f32) -> Vec<f32> {
     let reach = (KERNEL_REACH_SIGMAS * sigma).ceil().max(1.0) as i64;
     let weights: Vec<f32> = (-reach..=reach).map(|offset| (-(offset * offset) as f32 / (2.0 * sigma * sigma)).exp()).collect();
     let total: f32 = weights.iter().sum();
+    weights.into_iter().map(|weight| weight / total).collect()
+}
+
+/// `line` blurred into `out` by `kernel` (centred, as [`gaussian_kernel`] samples it), wrapping around
+fn kernel_blur(line: &[f32], out: &mut [f32], kernel: &[f32]) {
+    let reach = (kernel.len() / 2) as i64;
     let length = line.len().max(1) as i64;
     for (index, value) in out.iter_mut().enumerate() {
-        let sum: f32 = (-reach..=reach)
-            .zip(&weights)
+        *value = (-reach..=reach)
+            .zip(kernel)
             .map(|(offset, weight)| line.get((index as i64 + offset).rem_euclid(length) as usize).copied().unwrap_or(0.0) * weight)
             .sum();
-        *value = sum / total;
     }
 }
 

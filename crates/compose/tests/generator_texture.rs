@@ -103,6 +103,7 @@ fn replacing() -> TextureLayer {
 }
 
 fn assert_all(actual: &[f32], expected: f32, what: &str) {
+    assert!(!actual.is_empty(), "{what}: no texels read");
     for (index, actual) in actual.iter().enumerate() {
         assert!((actual - expected).abs() < TOLERANCE, "{what}: texel {index} is {actual}, expected {expected}");
     }

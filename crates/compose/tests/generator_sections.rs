@@ -103,6 +103,7 @@ fn with_light(change: impl FnOnce(&mut LightParameters)) -> Generator {
 }
 
 fn assert_close(actual: &[f32], expected: &[f32], what: &str) {
+    assert_eq!(actual.len(), expected.len(), "{what}: texels read");
     for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
         assert!((actual - expected).abs() < TOLERANCE, "{what}: texel {index} is {actual}, expected {expected}");
     }
