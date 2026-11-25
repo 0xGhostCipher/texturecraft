@@ -462,8 +462,9 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     // in egui's input, it runs the Escape and Enter handlers below, the shortcuts and the Path tool's keys
     for (key, taken) in [(Key::Escape, crate::framework::take_window_cancel(ctx)), (Key::Enter, crate::framework::take_window_submit(ctx))] {
         if taken {
+            let escape = craft_ui::runtime::keys::escape_mods(ctx).filter(|_| key == Key::Escape);
             ctx.input_mut(|i| {
-                let modifiers = i.modifiers;
+                let modifiers = escape.map_or(i.modifiers, |held| Modifiers { shift: held.shift, alt: held.alt, ..Modifiers::NONE });
                 i.events.insert(0, egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers });
             });
         }
