@@ -151,6 +151,9 @@ mod tests {
     use crate::{execute, sample_session};
     use texturecraft_core::BakeSettings;
 
+    /// A dilation only presets may hold, above what an edit may set
+    const LEGACY_DILATION: u32 = 200;
+
     fn session() -> Session {
         let session = sample_session(128, 32).unwrap();
         assert_eq!(session.set_count(), 2);
@@ -273,5 +276,15 @@ mod tests {
         let patch = json!({ "ts": 0, "patch": { "maps": { "ao": { "parameters": { "rays": { "min_distance": 0.1 } } } } } });
         assert!(execute(&mut session, "bake.settings", &patch).is_err(), "set 1 would get a minimum above its maximum");
         assert_eq!(session.doc.project.texture_sets, before);
+    }
+
+    #[test]
+    fn a_preset_with_a_legacy_value_loads_on_a_set_sharing_it() {
+        let mut session = session();
+        let mut preset = bake(&session, 0).clone();
+        preset.common.dilation = LEGACY_DILATION;
+
+        execute(&mut session, "bake.settings", &json!({ "ts": 0, "model": preset, "preset": true })).unwrap();
+        assert_eq!(bake(&session, 1).common.dilation, LEGACY_DILATION, "set 1 shares Common Settings with set 0");
     }
 }

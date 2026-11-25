@@ -66,8 +66,8 @@ impl SetPicker {
     pub(super) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let Some(mut picker) = ctx.data(|data| data.get_temp::<SetPicker>(Self::id())) else { return };
 
-        let rows = picker.rows(&app.session.doc.project, app.session.ts());
         let active = app.session.ts();
+        let rows = picker.rows(&app.session.doc.project, active);
         let tokens = Tokens::get(ctx);
         let frame = egui::Frame::new()
             .fill(tokens.panel)

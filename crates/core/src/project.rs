@@ -804,6 +804,23 @@ mod tests {
         p
     }
 
+    #[test]
+    fn a_sync_takes_settings_from_a_staying_member_else_the_active_set_else_the_first() {
+        let group = BakeSyncGroup::Common;
+        let mut project = project();
+        for name in ["Legs", "Arms"] {
+            project.texture_sets.push(TextureSet::new(name, 0, 512));
+        }
+        for (index, set) in project.texture_sets.iter_mut().enumerate() {
+            set.bake.sync.set_shares(group, index == 2);
+        }
+
+        assert_eq!(project.bake_sync_source(group, &[0, 1, 2], 0), Some(2), "a member already sharing the group");
+        assert_eq!(project.bake_sync_source(group, &[0, 1], 1), Some(1), "the active set when it joins");
+        assert_eq!(project.bake_sync_source(group, &[0, 1], 2), Some(0), "else the first member");
+        assert_eq!(project.bake_sync_source(group, &[], 0), None);
+    }
+
     fn paint(p: &mut Project, name: &str) -> Layer {
         Layer::new(p.alloc_id(), name, LayerKind::Paint, &Channel::DEFAULT_SET)
     }

@@ -167,6 +167,7 @@ fn a_part_meeting_another_part_takes_its_distances_from_its_own_high_poly_only()
     low.append(&part("right_low", 1.0, 0.0, 4));
     let mut high = part("left_high", -1.0, LOW_HEIGHT, 8);
     high.append(&part("right_high", 1.0, RAISED_HEIGHT, 8));
+    // One material, so the cage shell covers both low parts
     for mesh in [&mut low, &mut high] {
         mesh.materials.truncate(1);
         for submesh in &mut mesh.submeshes {

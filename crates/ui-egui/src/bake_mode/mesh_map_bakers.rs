@@ -99,8 +99,11 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
     ui.data_mut(|data| {
         if let (Some(value), true) = (check_drag, is_held) {
             data.insert_temp(check_drag_id, value);
+            // A pointer back from outside the window starts a new line, so rows it never crossed stay as they were
             if let Some(pointer) = pointer {
                 data.insert_temp(drag_from_id, pointer);
+            } else {
+                data.remove_temp::<Pos2>(drag_from_id);
             }
         } else {
             data.remove_temp::<bool>(check_drag_id);

@@ -137,6 +137,7 @@ impl Session {
         if let Some(map) = only {
             settings.maps.select([map]);
         }
+
         // Read from the maps that bake, so a map baked alone while unchecked still gets the colours
         let needs_low_color = settings.maps.opacity.is_enabled
             || (settings.maps.id.is_enabled && settings.maps.id.parameters.source == texturecraft_core::IdColorSource::MaterialColor);
@@ -775,10 +776,12 @@ fn with_sync_partners(
             }
         }
     }
+
     // A field valid beside the target's other values can be invalid beside a partner's: min above the partner's max
-    for (partner, settings) in &next {
+    for (partner, settings) in next.iter().filter(|(partner, _)| targets.iter().all(|(target, _)| target != *partner)) {
         validate_model_settings(settings, command, from_preset, project.texture_sets.get(*partner).map(|set| &set.bake))?;
     }
+
     next.extend(targets);
     Ok(next.into_iter().collect())
 }
