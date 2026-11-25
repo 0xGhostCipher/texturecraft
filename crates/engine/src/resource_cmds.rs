@@ -24,6 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("resource.list", "List resources", [], None, "{}", always, |s, _| Ok(list(s))),
         cmd!("resource.remove", "Remove resource", [], None, "{name}", always, remove),
+        cmd!("resource.export", "Export resource", [], None, "{name, path} — the resource's file as it was imported", always, export),
         cmd!("file.removeUnused", "Remove unused resources...", ["File"], None, "{}", always, remove_unused),
         cmd!(
             "layer.add.image",
@@ -261,6 +262,24 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(Value::Null)
 }
 
+/// Writes resource `name`'s bytes, as imported, to `path`
+#[cfg(not(target_arch = "wasm32"))]
+fn export(s: &mut Session, p: &Value) -> Result<Value> {
+    let command = "resource.export";
+    let name = strp(p, "name").ok_or_else(|| bad(command, "`name` is required"))?;
+    let path = strp(p, "path").ok_or_else(|| bad(command, "`path` is required"))?;
+    let bytes = s.doc.resources.get(name).ok_or_else(|| bad(command, format!("no resource `{name}`")))?;
+
+    std::fs::write(path, bytes.as_slice()).map_err(|error| bad(command, format!("cannot write {path}: {error}")))?;
+
+    Ok(json!({ "path": path }))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn export(_: &mut Session, _: &Value) -> Result<Value> {
+    Err(bad("resource.export", "file paths are not available in the browser"))
+}
+
 /// Drop resources no layer, mask effect, the brush alpha, the projection stencil, the mask brush or the environment uses (one undo step)
 fn remove_unused(s: &mut Session, _: &Value) -> Result<Value> {
     let mut used = Vec::new();
@@ -330,6 +349,19 @@ fn add_image_fill(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_writes_the_imported_bytes() {
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let bytes = texturecraft_formats::gray16_png(1, 1, [0.5].into_iter()).unwrap();
+        let name = session.import_resource_bytes("icon.png", bytes.clone()).unwrap();
+        let path = std::env::temp_dir().join(format!("texturecraft-export-resource-{}.png", std::process::id()));
+
+        crate::commands::execute(&mut session, "resource.export", &json!({"name": name, "path": path.to_str().unwrap()})).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "the file is the resource as imported");
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn file_reads_obey_the_remaining_byte_budget() {

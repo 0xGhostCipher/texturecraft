@@ -139,6 +139,7 @@ pub mod shader_settings;
 pub mod shelf;
 mod shelf_entry;
 mod shelf_folders;
+mod shelf_menu;
 pub mod shelf_panes;
 pub mod shelf_preview;
 mod shelf_tabs;

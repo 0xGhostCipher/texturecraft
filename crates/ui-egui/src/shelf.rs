@@ -514,7 +514,7 @@ fn library(app: &mut TextureCraftApp, ui: &mut Ui, filter: &str, masks: bool) {
 #[cfg(target_arch = "wasm32")]
 fn library(_: &mut TextureCraftApp, _: &mut Ui, _: &str, _: bool) {}
 
-/// The tile of `entry`, outlined when `selected`: a click applies it, an image resource has a context menu
+/// The tile of `entry`, outlined when `selected`: a click applies it, a right-click opens its menu
 fn entry_tile(app: &mut TextureCraftApp, ui: &mut Ui, ctx: &egui::Context, entry: &ShelfEntry, view: ShelfView, selected: bool) {
     // An image removed this frame has nothing to show
     if let ShelfEntry::Image(name) = entry
@@ -557,18 +557,7 @@ fn entry_tile(app: &mut TextureCraftApp, ui: &mut Ui, ctx: &egui::Context, entry
         entry.activate(app);
     }
 
-    if let ShelfEntry::Image(name) = entry {
-        response.context_menu(|ui| {
-            if ui.button(tr("Add as decal (view center)")).clicked() {
-                app.run("layer.add.decal", json!({"image": name}));
-                ui.close();
-            }
-            if ui.button(tr("Remove resource")).clicked() {
-                app.run("resource.remove", json!({"name": name}));
-                ui.close();
-            }
-        });
-    }
+    crate::shelf_menu::show(app, &response, entry);
 }
 
 /// Asset tile with optional dragging and a larger hover preview, at the medium size
