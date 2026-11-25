@@ -216,6 +216,7 @@ mod tests {
     /// from egui's input, so TextureCraft's own loop never sees it: the fired command reaches the layer clipboard once.
     #[test]
     fn fired_copy_and_paste_from_a_float_reach_the_layer_clipboard_once() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
         let mut h =
             Harness::builder().with_size(egui::vec2(1600.0, 960.0)).with_context_setup(install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
