@@ -256,13 +256,15 @@ const TEXTURE_SET_LIST_SHARE: f32 = 0.4;
 #[derive(Clone, Debug)]
 pub struct Dock {
     workspace: Workspace,
+    /// A panel to bring in front of the other floating windows on the next frame.
+    raise: Option<Panel>,
     /// A saved layout could not be read, so this is the painting default in its place
     replaced_unreadable: bool,
 }
 
 impl Default for Dock {
     fn default() -> Self {
-        Dock { workspace: default_workspace(), replaced_unreadable: false }
+        Dock { workspace: default_workspace(), raise: None, replaced_unreadable: false }
     }
 }
 
@@ -298,7 +300,7 @@ impl Dock {
             return unreadable;
         }
 
-        Dock { workspace, replaced_unreadable: false }
+        Dock { workspace, raise: None, replaced_unreadable: false }
     }
 
     /// Whether a saved layout could not be read and this dock is the painting default instead
@@ -327,7 +329,7 @@ impl Dock {
         let columns_width = BAKERS_COLUMN_WIDTH + gutter_width + SETTINGS_COLUMN_WIDTH;
         let root = split(Axis::X, SplitSize::FixedFirst(columns_width), columns_over_log, tabs(&[Panel::Viewport]));
         let workspace = Workspace::from_parts(Layout::new(Some(root), Vec::new()), hidden, painting.floated().to_vec());
-        Dock { workspace, replaced_unreadable: false }
+        Dock { workspace, raise: None, replaced_unreadable: false }
     }
 
     pub fn workspace(&self) -> &Workspace {
@@ -359,7 +361,10 @@ impl Dock {
     pub fn focus(&mut self, p: Panel) {
         let mut next = self.workspace.clone();
         match next.set_visible(p, true, None, false, permissions) {
-            Ok(()) if validate(&next).is_ok() => self.workspace = next,
+            Ok(()) if validate(&next).is_ok() => {
+                self.workspace = next;
+                self.raise = Some(p);
+            }
             Ok(()) => log::warn!("panel {p:?} was not opened: it would break the viewport's rules"),
             Err(error) => log::warn!("panel {p:?} was not opened: {error}"),
         }
@@ -482,6 +487,7 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     // The specs leave the app while its panels borrow it, and come back with their revision.
     let specs = std::mem::take(&mut app.docks.specs);
     let hand_over = app.docks.continue_move.take();
+    let raise = app.ui.dock.raise.take();
     // Panels arrange in a split tree around the viewport; floating title bars only move windows.
     // Each closable tab has its close button, as each group header had one for its shown panel.
     let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false).tab_close_buttons(true);
@@ -491,6 +497,9 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
         let mut area = DockArea::new("Panels", Bind::given(Arc::clone(&shown)), &specs, &mut panels, config);
         if let Some(hand_over) = hand_over {
             area = area.continue_move(hand_over);
+        }
+        if let Some(panel) = raise {
+            area = area.raise(panel);
         }
         let output = area.show(ui);
         (output, panels.focused_windows)
@@ -793,6 +802,22 @@ mod tests {
         let dock = Dock::from_value(saved);
         assert!(!dock.replaced_unreadable(), "the saved layout is kept");
         assert!(dock.workspace().hidden().iter().any(|(panel, _)| *panel == Panel::Export), "Export joins it, closed");
+    }
+
+    #[test]
+    fn a_focused_panel_is_raised_for_one_frame() {
+        let session = texturecraft_engine::sample_session(128, 32).unwrap();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(1600.0, 1200.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let dock = &mut harness.state_mut().ui.dock;
+        dock.focus(Panel::Display);
+        assert_eq!(dock.raise, Some(Panel::Display));
+
+        harness.run_steps(4);
+
+        assert_eq!(harness.state().ui.dock.raise, None);
     }
 
     #[test]
