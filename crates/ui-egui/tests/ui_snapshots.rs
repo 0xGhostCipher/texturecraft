@@ -3000,3 +3000,89 @@ fn sheet_scroll_end_snapshots() {
     harness.run_steps(30);
     save(&mut harness, &output_dir, "sheet-end-scrolled-medium");
 }
+
+/// The Export textures window on each tab at its mocks' size; TC_SNAPSHOT_THEME=medium (default), dark or light
+#[test]
+#[ignore]
+fn export_window_snapshots() {
+    use texturecraft_ui_egui::state::{FileType, MapExport, SetExport};
+
+    // Below General Export Parameters, where the 1112x662 window draws nothing
+    const EMPTY_SPOT: egui::Pos2 = egui::pos2(736.0, 530.0);
+
+    let Some(output_dir) = std::env::var_os("TC_UI_SNAPSHOTS").map(PathBuf::from) else { return };
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let (brightness, theme) = match std::env::var("TC_SNAPSHOT_THEME").as_deref() {
+        Ok("dark") => (Brightness::Dark, "dark"),
+        Ok("light") => (Brightness::Light, "light"),
+        _ => (Brightness::MediumDark, "medium"),
+    };
+
+    // Ball and Base, then enough texture sets that the set list scrolls
+    let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
+    let template = session.doc.project.texture_sets[0].clone();
+    while session.doc.project.texture_sets.len() < 60 {
+        let mut set = template.clone();
+        set.name = format!("Set {}", session.doc.project.texture_sets.len() + 1);
+        session.doc.project.texture_sets.push(set);
+    }
+    let mut harness =
+        Harness::builder().with_size(egui::vec2(1112.0, 662.0)).with_pixels_per_point(2.0).wgpu().build_eframe(|cc| TextureCraftApp::new(cc, session));
+    harness.state_mut().ui.prefs.language = "en".into();
+    harness.state_mut().ui.prefs.brightness = brightness;
+    harness.set_render_cursor(false);
+    {
+        let e = &mut harness.state_mut().ui.export;
+        e.dir = "/home/user/Documents/TextureCraft/export".into();
+        e.preset = "Document channels + Normal + AO (No Alpha)".into();
+        e.padding = "infinite".into();
+        e.skip = vec![4];
+    }
+    harness.state_mut().ui.windows.export = true;
+    harness.run_steps(4);
+    let color_space = harness.get_all_by_role(egui::Role::ComboBox).find(|combo| combo.value().as_deref() == Some("Default")).unwrap().rect();
+    harness.hover_at(color_space.center());
+    harness.run_steps(30);
+    save(&mut harness, &output_dir, &format!("ep-settings-global-{theme}"));
+    harness.hover_at(egui::pos2(1.0, 1.0));
+
+    harness.get_all_by_role(egui::Role::ComboBox).find(|combo| combo.value().as_deref() == Some("Based on output template")).unwrap().click();
+    harness.run_steps(3);
+    save(&mut harness, &output_dir, &format!("ep-settings-file-type-open-{theme}"));
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+
+    // The closed list keeps the keyboard focus (and its ring) until a click lands on the page's empty column
+    harness.hover_at(EMPTY_SPOT);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton { pos: EMPTY_SPOT, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        harness.step();
+    }
+    harness.hover_at(egui::pos2(1.0, 1.0));
+    harness.run_steps(3);
+
+    // Base with its own size and its height map as 32-bit exr
+    {
+        let e = &mut harness.state_mut().ui.export;
+        e.page = Some(1);
+        let mut set = SetExport { size: Some(1024), ..SetExport::default() };
+        set.maps_template = e.preset.clone();
+        let template = texturecraft_engine::formats::builtin_preset(&e.preset).unwrap();
+        let height = template.maps.iter().position(|map| texturecraft_engine::formats::export::channel_label(map) == "height").unwrap();
+        set.maps.insert(height, MapExport { file_type: Some(FileType { format: "exr".into(), bit_depth: 32, dithering: false }), ..MapExport::default() });
+        set.maps.insert(2, MapExport { enabled: false, ..MapExport::default() });
+        e.sets.insert(1, set);
+    }
+    save(&mut harness, &output_dir, &format!("ep-settings-set-{theme}"));
+
+    harness.state_mut().ui.export.page = None;
+    harness.state_mut().ui.export.tab = 1;
+    harness.state_mut().ui.export.preset = "Unreal Engine (Packed)".into();
+    harness.run_steps(3);
+    harness.get_by_role_and_label(egui::Role::Button, "Unreal Engine (Packed)").scroll_to_me();
+    save(&mut harness, &output_dir, &format!("ep-templates-unreal-{theme}"));
+
+    harness.state_mut().ui.export.preset = "Document channels + Normal + AO (No Alpha)".into();
+    harness.state_mut().ui.export.tab = 2;
+    save(&mut harness, &output_dir, &format!("ep-list-{theme}"));
+}

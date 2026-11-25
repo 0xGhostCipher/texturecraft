@@ -30,7 +30,7 @@ fn click(h: &mut Harness<'_, TextureCraftApp>, label: &str) {
 
 /// Open the General Export Parameters menu
 fn page_menu(h: &mut Harness<'_, TextureCraftApp>) {
-    h.get_all_by_label(egui_phosphor::regular::LIST_CHECKS).nth(1).unwrap().click();
+    h.get_by_label("General Export Parameters menu").click();
     h.run_steps(4);
 }
 

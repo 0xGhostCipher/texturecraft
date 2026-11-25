@@ -2,7 +2,7 @@
 //! name pattern, and its own file type and bit depth.
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::state::{FileType, MapExport, SetExport};
 
@@ -52,13 +52,17 @@ fn the_rows_show_each_map_with_its_pattern_and_file_type() {
     assert!(h.query_all_by_label("png   8 bits").next().is_some());
     assert!(h.query_all_by_label("png   16 bits").next().is_some(), "height is 16-bit in the default template");
 
-    // A pattern longer than the column is cut at the front, the whole one is its tooltip
+    // A pattern longer than the column (the packed template's) is cut at the front, the whole one is its tooltip
+    h.state_mut().ui.export.preset = "Unreal Engine (Packed)".into();
+    h.run_steps(4);
     let preset = texturecraft_engine::formats::builtin_preset(&h.state().ui.export.preset).unwrap();
-    let long =
-        plan(&mut h).iter().map(|f| preset.maps[f["map"].as_u64().unwrap() as usize].file.clone()).find(|p| p.chars().count() > 26).expect("a long pattern");
-    let cut: String = format!("…{}", long.chars().skip(long.chars().count() - 25).collect::<String>());
+    let long = preset.maps.iter().map(|map| map.file.clone()).max_by_key(|file| file.chars().count()).unwrap();
+    let cut = h
+        .query_all_by_label_contains("…")
+        .find_map(|node| node.accesskit_node().value().filter(|text| long.ends_with(text.trim_start_matches('…'))))
+        .expect("the pattern's end, cut at the front");
     assert!(h.query_by_label(&long).is_none(), "{long} is cut");
-    let at = h.get_all_by_label(&cut).next().unwrap().rect().center();
+    let at = h.get_all_by_role_and_label(egui::Role::Label, &cut).next().unwrap().rect().center();
     h.hover_at(at);
     h.run_steps(30);
     assert!(h.query_by_label(&long).is_some(), "the tooltip has the whole {long}");
@@ -78,15 +82,15 @@ fn unticking_a_map_leaves_it_out_and_the_menu_ticks_all() {
     assert_eq!(maps(&h).values().filter(|m| !m.enabled).count(), 1);
     assert!(h.query_by_label("*").is_none(), "a left-out map is not an override");
 
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Output maps menu");
     click(&mut h, "Uncheck all");
     assert_eq!(selected(&h), before - rows);
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Output maps menu");
     click(&mut h, "Invert all");
     assert_eq!(selected(&h), before);
     assert!(!h.state().ui.export.sets.contains_key(&0), "nothing left to remember");
 
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Output maps menu");
     click(&mut h, "Uncheck all");
     click(&mut h, "Include all");
     assert_eq!(selected(&h), before, "Include all ticks the output maps too");
@@ -103,10 +107,10 @@ fn a_map_override_sets_its_own_file_type_and_marks_the_set() {
     assert!(first.file_type.is_some(), "{m:?}");
     assert!(h.query_by_label("*").is_some(), "the set is marked");
 
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Output maps menu");
     click(&mut h, "Override every item");
     assert_eq!(maps(&h).values().filter(|m| m.file_type.is_some()).count(), rows);
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Output maps menu");
     click(&mut h, "Clear all overrides");
     assert!(maps(&h).is_empty());
 }

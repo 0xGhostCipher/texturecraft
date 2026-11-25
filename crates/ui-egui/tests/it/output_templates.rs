@@ -338,12 +338,12 @@ fn a_retained_draft_keeps_overrides_with_maps_after_an_external_reorder() {
 }
 
 #[test]
-fn the_tab_row_holds_the_naming_pattern_and_the_bottom_bar_only_cancels() {
+fn the_tab_row_holds_the_naming_pattern_and_the_bottom_bar_has_no_count_or_reset() {
     let library = TemplateLibrary::new("bottom-bar");
     let h = harness(&library);
 
     let naming = h.get_by_label("Naming pattern").rect();
-    let tabs = h.get_by_label("OUTPUT TEMPLATES").rect();
+    let tabs = h.get_by_role_and_label(egui::Role::Tab, "Output templates").rect();
     let presets = h.get_by_label("Presets").rect();
 
     assert!(naming.center().y < presets.top() && (naming.center().y - tabs.center().y).abs() < tabs.height(), "on the tab row: {naming:?}");
@@ -352,13 +352,12 @@ fn the_tab_row_holds_the_naming_pattern_and_the_bottom_bar_only_cancels() {
         assert!(h.query_by_label(absent).is_none(), "{absent}");
     }
     assert!(h.query_by_label_contains("textures selected for export").is_none());
-    for greyed in ["Save settings", "Export"] {
+    for active in ["Save settings", "Export", "Cancel"] {
         // The rail at the right edge has an Export button of its own
         let button =
-            h.get_all_by_role(egui::Role::Button).rfind(|b| b.rect().max.x < RAIL_LEFT_EDGE && b.accesskit_node().label().as_deref() == Some(greyed)).unwrap();
-        assert!(button.accesskit_node().is_disabled(), "{greyed}");
+            h.get_all_by_role(egui::Role::Button).rfind(|b| b.rect().max.x < RAIL_LEFT_EDGE && b.accesskit_node().label().as_deref() == Some(active)).unwrap();
+        assert!(!button.accesskit_node().is_disabled(), "{active}");
     }
-    assert!(!h.get_all_by_label("Cancel").last().unwrap().accesskit_node().is_disabled());
 }
 
 #[test]

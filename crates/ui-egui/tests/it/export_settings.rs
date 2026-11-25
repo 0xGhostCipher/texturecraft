@@ -145,14 +145,14 @@ fn a_saved_legacy_preset_name_resolves_to_its_current_name() {
 fn the_set_list_menu_checks_unchecks_and_inverts() {
     let mut h = harness();
     let sets = h.state().session.set_count();
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Texture set list menu");
     click(&mut h, "Uncheck all");
     assert_eq!(h.state().ui.export.skip.len(), sets);
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Texture set list menu");
     click(&mut h, "Invert all");
     assert!(h.state().ui.export.skip.is_empty());
     h.state_mut().ui.export.skip = vec![0];
-    click(&mut h, egui_phosphor::regular::LIST_CHECKS);
+    click(&mut h, "Texture set list menu");
     click(&mut h, "Check all");
     assert!(h.state().ui.export.skip.is_empty());
 }
@@ -163,9 +163,7 @@ fn the_output_directory_resets_and_the_dilation_follows_the_padding() {
     let default = h.state().ui.export.dir.clone();
     h.state_mut().ui.export.dir = "/somewhere/else".into();
     h.run_steps(3);
-    hover(&mut h, "R");
-    assert!(h.query_by_label("Reset to default").is_some());
-    click(&mut h, "R");
+    click(&mut h, "Reset to default");
     assert_eq!(h.state().ui.export.dir, default);
 
     hover(&mut h, "16");

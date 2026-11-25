@@ -112,9 +112,10 @@ fn the_export_panel_leads_to_export_textures_and_the_mesh_options() {
     harness.run_steps(SETTLE_FRAMES);
 
     assert!(harness.state().ui.windows.export, "Export Textures... opens the Export textures window");
-    for label in
-        ["SETTINGS", "OUTPUT TEMPLATES", "LIST OF EXPORTS", "Include all", "Global settings", "General Export Parameters", "Reset all", "Save settings"]
-    {
+    for tab in ["Settings", "Output templates", "List of exports"] {
+        assert!(harness.query_by_role_and_label(egui::Role::Tab, tab).is_some(), "{tab}");
+    }
+    for label in ["Include all", "Global settings", "General Export Parameters", "Reset all", "Save settings"] {
         assert!(harness.query_by_label(label).is_some(), "{label}");
     }
     assert!(harness.query_by_label_contains("textures selected for export").is_some());
