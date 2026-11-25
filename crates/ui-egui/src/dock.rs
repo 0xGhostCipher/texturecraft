@@ -2881,24 +2881,6 @@ fn mask_anchor_enabled(app: &TextureCraftApp, anchor: LayerId) -> Option<bool> {
     mask.effects.iter().any(|effect| effect.id == anchor).then_some(mask.enabled)
 }
 
-/// The anchor points of `anchors` as menu entries under their own heading (a note when there
-/// are none); returns the one clicked.
-pub(crate) fn anchor_entries(ui: &mut Ui, anchors: &[(LayerId, String)], current: Option<LayerId>) -> Option<LayerId> {
-    ui.separator();
-    ui.label(caption(tr("Anchor points")));
-    if anchors.is_empty() {
-        ui.label(RichText::new(tr("No anchor point below this layer")).color(Tokens::get(ui.ctx()).text_dim));
-    }
-
-    let mut picked = None;
-    for (anchor, label) in anchors {
-        if ui.selectable_label(current == Some(*anchor), trf("Anchor: {name}", &[("name", label)])).clicked() {
-            picked = Some(*anchor);
-        }
-    }
-    picked
-}
-
 pub(crate) fn anchor_label(app: &TextureCraftApp, anchor: LayerId, channel: Channel) -> String {
     let name = app.session.doc.project.effect(anchor).map(|(_, e)| e.name.clone()).unwrap_or_else(|| tr("missing").into());
     let label = trf("Anchor: {name} ({channel})", &[("name", &name), ("channel", &tr(channel.label()))]);
@@ -3115,7 +3097,7 @@ fn effect_properties(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, effe
 
     // Property sheets keep the panel's own edges; only the rows not yet laid out by one get the legacy margin
     match &effect.kind {
-        EffectKind::Generator(generator) => legacy_body(ui, |ui| crate::generator_panel::generator_properties(app, ui, layer.id, id, generator)),
+        EffectKind::Generator(generator) => crate::generator_panel::generator_properties(app, ui, layer.id, id, generator),
         EffectKind::Levels(levels) => crate::levels_properties::levels_properties(app, ui, layer, effect_id, levels),
         EffectKind::Fill { source, projection, .. } => legacy_body(ui, |ui| {
             ui.label(caption(tr("Fill")));
