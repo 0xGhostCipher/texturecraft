@@ -83,6 +83,7 @@ mod shelf_drop;
 mod shelf_hover_preview;
 mod shelf_menu;
 mod shelf_panel;
+mod shelf_updates;
 mod shift_lines_2d;
 mod shift_lines_3d;
 mod shortcut_keys;

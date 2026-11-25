@@ -1,0 +1,91 @@
+//! The Assets panel's refresh popup: automatic updates of the panel and of the project's images
+
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
+use serde_json::json;
+use texturecraft_engine::brush_preset_cmds::UserBrush;
+use texturecraft_ui_egui::TextureCraftApp;
+
+/// A little more than the shortest update interval, in seconds
+const PAST_A_MINUTE: f64 = 61.0;
+
+/// The sample project with the Assets panel open and its refresh popup shown
+fn refresh_popup() -> Harness<'static, TextureCraftApp> {
+    let session = texturecraft_engine::sample_session(256, 64).unwrap();
+    let mut harness = Harness::builder().with_size(egui::vec2(1920.0, 1032.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    harness.run_steps(2);
+    harness.get_all_by_label("Refresh").next().unwrap().click();
+    harness.run_steps(2);
+    harness
+}
+
+/// Moves the app's clock on by more than a minute in one frame, then lets the frames after it settle
+fn pass_a_minute(harness: &mut Harness<'_, TextureCraftApp>) {
+    let now = harness.ctx.input(|input| input.time);
+    harness.input_mut().time = Some(now + PAST_A_MINUTE);
+    harness.run_steps(2);
+}
+
+/// A grey one-pixel PNG of `value`
+fn grey_png(value: f32) -> Vec<u8> {
+    texturecraft_engine::formats::gray16_png(1, 1, [value].into_iter()).unwrap()
+}
+
+#[test]
+fn turning_on_project_resources_reads_a_changed_image_file_again_every_minute() {
+    let mut harness = refresh_popup();
+    let path = std::env::temp_dir().join(format!("texturecraft-auto-update-{}.png", std::process::id()));
+    std::fs::write(&path, grey_png(0.2)).unwrap();
+    let name = harness.state_mut().run("resource.import", json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+    let before = harness.state().session.images[&name].rgba.clone();
+    std::fs::write(&path, grey_png(0.8)).unwrap();
+
+    pass_a_minute(&mut harness);
+    let while_off = harness.state().session.images[&name].rgba.clone();
+    harness.get_by_label("Resources used in project").click();
+    harness.run_steps(2);
+    pass_a_minute(&mut harness);
+    let after = harness.state().session.images[&name].rgba.clone();
+    std::fs::remove_file(path).unwrap();
+
+    assert_eq!(while_off, before, "nothing is read again while automatic updates are off");
+    assert!(harness.state().ui.shelf_updates.resources, "the switch turned the update on");
+    assert_ne!(after, before, "the changed file was read again within a minute");
+}
+
+#[test]
+fn turning_on_the_assets_panel_reads_the_saved_brushes_again_every_minute() {
+    let mut harness = refresh_popup();
+    let stale = UserBrush { name: "Stale brush marker".into(), brush: Default::default(), channels: None, file: None };
+    harness.state_mut().session.brush_presets.list.push(stale);
+
+    harness.get_by_label("Assets panel").click();
+    harness.run_steps(2);
+    pass_a_minute(&mut harness);
+
+    assert!(harness.state().session.brush_presets.find("Stale brush marker").is_none(), "the brushes folder was read again");
+}
+
+#[test]
+fn an_automatic_update_waits_for_the_stroke_under_way_to_end() {
+    let mut harness = refresh_popup();
+    let path = std::env::temp_dir().join(format!("texturecraft-auto-update-stroke-{}.png", std::process::id()));
+    std::fs::write(&path, grey_png(0.2)).unwrap();
+    let name = harness.state_mut().run("resource.import", json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+    let before = harness.state().session.images[&name].rgba.clone();
+    harness.get_by_label("Resources used in project").click();
+    harness.run_steps(2);
+    std::fs::write(&path, grey_png(0.8)).unwrap();
+
+    harness.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
+    pass_a_minute(&mut harness);
+    let during_stroke = harness.state().session.images[&name].rgba.clone();
+    harness.state_mut().session.end_stroke().unwrap();
+    harness.run_steps(2);
+    let after_stroke = harness.state().session.images[&name].rgba.clone();
+    std::fs::remove_file(path).unwrap();
+
+    assert_eq!(during_stroke, before, "nothing is read again while a stroke is under way");
+    assert_ne!(after_stroke, before, "the update runs once the stroke ended");
+    assert_eq!(harness.state().session.doc.resources[&name].as_slice(), grey_png(0.8).as_slice(), "the stroke's undo state didn't swallow the update");
+}

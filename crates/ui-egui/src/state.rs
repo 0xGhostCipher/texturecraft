@@ -593,6 +593,9 @@ pub struct UiState {
     /// The asset shelf shows only favorites (the Favorites saved search)
     #[serde(default)]
     pub shelf_favorites_only: bool,
+    /// The asset shelf's automatic updates (its refresh popup)
+    #[serde(default)]
+    pub shelf_updates: crate::shelf_updates::ShelfUpdates,
     /// Pictures the user picked to show on asset tiles instead of their thumbnails
     #[serde(default)]
     pub shelf_custom_previews: Vec<ShelfCustomPreview>,
@@ -755,6 +758,7 @@ impl UiState {
         self.shelf_favorites = keep.shelf_favorites;
         self.shelf_favorites_only = keep.shelf_favorites_only;
         self.shelf_custom_previews = keep.shelf_custom_previews;
+        self.shelf_updates = keep.shelf_updates;
     }
 }
 
@@ -792,6 +796,7 @@ impl Default for UiState {
             shelf_favorites: Vec::new(),
             shelf_favorites_only: false,
             shelf_custom_previews: Vec::new(),
+            shelf_updates: crate::shelf_updates::ShelfUpdates::default(),
             shelf_panes_split: default_shelf_panes_split(),
             props_tab: PropsTab::Brush,
             text: TextUi::default(),
@@ -928,6 +933,7 @@ mod tests {
         ui.shelf_favorites.push(favorite.clone());
         let preview = crate::shelf_custom_preview::ShelfCustomPreview { kind: "material".into(), id: "gold".into(), file: "gold.png".into() };
         ui.shelf_custom_previews.push(preview.clone());
+        ui.shelf_updates.resources = true;
 
         ui.adopt_layout(UiState::default());
 
@@ -936,6 +942,7 @@ mod tests {
         assert_eq!(ui.shelf_favorites, [favorite], "favorites are the user's own too");
         assert!(ui.shelf_favorites_only, "the Favorites search is part of the query");
         assert_eq!(ui.shelf_custom_previews, [preview], "custom previews are the user's own");
+        assert!(ui.shelf_updates.resources, "automatic updates are a setting, not part of a layout");
     }
 
     #[test]

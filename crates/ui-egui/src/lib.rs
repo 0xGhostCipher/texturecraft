@@ -146,6 +146,7 @@ pub mod shelf_panes;
 pub mod shelf_preview;
 mod shelf_tabs;
 mod shelf_toolbar;
+pub mod shelf_updates;
 pub mod shelf_view;
 mod slot_thumbnail;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1090,6 +1091,7 @@ impl eframe::App for TextureCraftApp {
         self.ui.prefs.apply_resource_limits();
 
         control::poll(self, ctx);
+        shelf_updates::tick(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.run_file_dialog_answers();
         web_files::poll(self);

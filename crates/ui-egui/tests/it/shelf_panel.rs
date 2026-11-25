@@ -152,6 +152,8 @@ fn refresh_reads_the_saved_brushes_again() {
     harness.run_steps(1);
 
     button(&harness, "Refresh").click();
+    harness.run_steps(2);
+    button(&harness, "Update Assets panel").click();
     harness.run_steps(3);
 
     assert!(harness.state().session.brush_presets.find("Stale brush marker").is_none(), "the brushes folder was read again");

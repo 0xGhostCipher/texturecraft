@@ -68,6 +68,7 @@ pub(crate) use section_tabs::{
 pub(crate) use sheet::PropertySheet;
 pub(crate) use slot_response::SlotResponse;
 pub(crate) use stack_slider::StackSlider;
+pub(crate) use switch_control::TOGGLE_ROOM;
 
 /// Side padding: every row starts and ends this far inside the panel
 pub(crate) const SIDE_PADDING_POINTS: f32 = 12.0;
@@ -103,7 +104,7 @@ const VALUE_MIN_WIDTH: f32 = 26.0;
 const TRACK_TO_VALUE: f32 = 14.0;
 
 /// Size of regular labels and SemiBold values
-const TEXT_SIZE: f32 = 12.0;
+pub(crate) const TEXT_SIZE: f32 = 12.0;
 
 /// Size of captions, pill names and the switch's words
 const SMALL_TEXT_SIZE: f32 = 11.0;
