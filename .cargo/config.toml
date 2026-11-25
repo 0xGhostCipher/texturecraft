@@ -1,2 +1,67 @@
 [alias]
 xtask = "run -p xtask --"
+
+# Test builds compile the craft UI framework below the workspace's opt-level 2: the Windows test
+# build spends most of its time on these crates and the generics they share, and their tests run
+# no heavy pixel code. Crates whose tests run on the 2 MiB Windows test stack stay at 1; the rest
+# and ui-egui use 0. `cargo run` and `cargo build` use the dev profile and are unaffected.
+
+[profile.test.package.craft-ui]
+opt-level = 1
+
+[profile.test.package.craft-ui-contract]
+opt-level = 1
+
+[profile.test.package.craft-ui-shell]
+opt-level = 1
+
+[profile.test.package.craft-ui-canvas]
+opt-level = 1
+
+[profile.test.package.craft-ui-panels]
+opt-level = 1
+
+[profile.test.package.craft-ui-widgets]
+opt-level = 1
+
+[profile.test.package.craft-host]
+opt-level = 1
+
+[profile.test.package.craft-theme]
+opt-level = 1
+
+[profile.test.package.craft-behavior]
+opt-level = 1
+
+[profile.test.package.craft-font-catalog]
+opt-level = 1
+
+[profile.test.package.craft-ui-patterns]
+opt-level = 0
+
+[profile.test.package.craft-update]
+opt-level = 0
+
+[profile.test.package.craft-keymap]
+opt-level = 0
+
+[profile.test.package.craft-dialogs]
+opt-level = 0
+
+[profile.test.package.craft-settings]
+opt-level = 0
+
+[profile.test.package.craft-platform]
+opt-level = 0
+
+[profile.test.package.craft-window]
+opt-level = 0
+
+[profile.test.package.craft-cloud-ui]
+opt-level = 0
+
+[profile.test.package.craft-pdf]
+opt-level = 0
+
+[profile.test.package.texturecraft-ui-egui]
+opt-level = 0
