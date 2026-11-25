@@ -475,7 +475,7 @@ impl Default for ExportUi {
 
 /// The LIST OF EXPORTS console's width when the window opens, as in the reference
 fn default_console_width() -> f32 {
-    300.0
+    crate::export_window::CONSOLE_WIDTH
 }
 
 fn default_export_dir() -> String {

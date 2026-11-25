@@ -12,7 +12,7 @@ use crate::TextureCraftApp;
 use crate::file_dialogs::{Bound, FileDialog};
 use crate::i18n::{n_, tr, trf};
 use crate::state::{ConsoleLine, ExportSetPlan, ExportUi, FileType, MapExport, SIZE_OF_LARGEST_SET, SetExport};
-use crate::theme::{Tokens, caption, semibold};
+use crate::theme::{Tokens, semibold};
 use crate::unavailable::NOT_AVAILABLE;
 
 pub(crate) mod drawn;
@@ -20,10 +20,12 @@ pub(crate) mod export_look;
 mod inherited_settings;
 mod map_row;
 mod page_place;
+mod tree_file;
 pub(crate) use export_look::ExportLook;
 use inherited_settings::InheritedSettings;
 use map_row::MapRow;
 use page_place::PagePlace;
+use tree_file::TreeFile;
 
 /// The reference window's size; a smaller screen gets a smaller window
 const REFERENCE_WINDOW_SIZE_POINTS: egui::Vec2 = egui::vec2(1100.0, 740.0);
@@ -159,6 +161,39 @@ const BITS_TEXT_OFFSET: f32 = 32.0;
 const MAP_FORMAT_WIDTH: f32 = 61.2;
 /// Width of a map's own size list
 const MAP_SIZE_WIDTH: f32 = 100.0;
+
+/// The console's least width: the reference's 300 at TextureCraft's narrower window
+pub(crate) const CONSOLE_WIDTH: f32 = 284.0;
+/// The file tree's least width
+const MIN_TREE_WIDTH: f32 = 300.0;
+/// Width of the strip that folds the console
+const STRIP_WIDTH: f32 = 17.9;
+/// Gap between the file tree and the strip
+const STRIP_GAP: f32 = 1.9;
+/// Size of the strip's glyph
+const STRIP_GLYPH_SIZE: f32 = 13.0;
+/// The console text's indent
+const CONSOLE_TEXT_INDENT: f32 = 18.0;
+/// Middle of the console's header
+const CONSOLE_HEADER_Y: f32 = 66.0;
+/// Where the console's lines start
+const CONSOLE_BODY_TOP: f32 = 89.0;
+/// Air above and below the console's lines
+const CONSOLE_PADDING: f32 = 6.0;
+/// Air above the file tree's first row
+const TREE_TOP_PADDING: f32 = 3.0;
+/// Height of a file tree row
+const TREE_ROW_HEIGHT: f32 = 21.0;
+/// Centre of a set's chevron
+const TREE_CHEVRON_X: f32 = 13.2;
+/// Where a set's name starts
+const TREE_NAME_INDENT: f32 = 26.3;
+/// Where its files start
+const TREE_FILE_INDENT: f32 = 45.1;
+/// Gap after the name and size columns
+const TREE_COLUMN_GAP: f32 = 28.0;
+/// Gap after the file type column
+const TREE_BITS_GAP: f32 = 14.0;
 
 /// The output sizes the Size list offers, in texels per side
 pub(crate) const SIZES: [u32; 7] = [128, 256, 512, 1024, 2048, 4096, 8192];
@@ -1254,49 +1289,36 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, place: PagePlace,
     }
 }
 
-/// The LIST OF EXPORTS console's and file tree's least width, as in the reference
-const CONSOLE_WIDTH: f32 = 300.0;
-const MIN_TREE_WIDTH: f32 = 300.0;
-/// Width of the strip between the file tree and the console
-const SPLITTER_WIDTH: f32 = 14.0;
-/// Padding of the CONSOLE header band, about 45 points high as in the reference
-const CONSOLE_HEADER_MARGIN_X: i8 = 12;
-const CONSOLE_HEADER_MARGIN_Y: i8 = 14;
-/// The file tree: indent of the file rows under their texture set, and the row height
-const TREE_INDENT: f32 = 35.0;
-const TREE_ROW_HEIGHT: f32 = 17.0;
-/// Half the width of the tree's chevron
-const CHEVRON_HALF_WIDTH: f32 = 4.0;
-
 /// Green of the console's success lines
 fn success(tk: &Tokens) -> egui::Color32 {
     if tk.dark { egui::Color32::from_rgb(110, 200, 120) } else { egui::Color32::from_rgb(30, 130, 50) }
 }
 
-/// The LIST OF EXPORTS tab: a tree of the files each ticked texture set exports (file, size,
-/// file type, bit depth; the full path as tooltip), and the console
-fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui) {
+/// The LIST OF EXPORTS tab in `body`: the file tree with each file's path as tooltip, the fold strip and the console
+fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui, body: egui::Rect) {
+    let look = ExportLook::get(ui.ctx());
     let tk = Tokens::get(ui.ctx());
     let hidden = app.ui.export.console_hidden;
 
-    // Tree and console keep at least their reference width
-    let spacing = ui.spacing().item_spacing.x;
-    let room = ui.available_width() - SPLITTER_WIDTH - 2.0 * spacing;
+    // The console keeps at least its least width, the tree at least its own
+    let room = body.width() - STRIP_WIDTH - STRIP_GAP - 1.0;
     let console_width = app.ui.export.console_width.min(room - MIN_TREE_WIDTH).max(CONSOLE_WIDTH);
-    let tree_width = if hidden { room } else { room - console_width };
-    ui.vertical(|ui| {
-        ui.set_width(tree_width);
+    let console_left = if hidden { body.right() + 1.0 } else { body.right() - console_width };
+    let strip = egui::Rect::from_min_max(egui::pos2(console_left - 1.0 - STRIP_WIDTH, body.top() + 1.0), egui::pos2(console_left - 1.0, body.bottom()));
+    let tree = egui::Rect::from_min_max(egui::pos2(body.left(), body.top() + 1.0), egui::pos2(strip.left() - STRIP_GAP, body.bottom()));
+    ui.painter().rect_filled(tree, 0.0, look.chrome);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(tree), |ui| {
         egui::ScrollArea::vertical().id_salt("exp_list").auto_shrink([false; 2]).show(ui, |ui| export_tree(app, ui, &tk));
     });
 
     // The strip at the console's left edge: a click hides or shows the console, a drag resizes it
-    let (strip, response) = ui.allocate_exact_size(vec2(SPLITTER_WIDTH, ui.available_height()), egui::Sense::click_and_drag());
+    drawn::divider(ui, egui::Rect::from_min_max(strip.right_top(), egui::pos2(strip.right() + 1.0, strip.bottom())));
+    let response = ui.interact(strip, ui.scope_id().with("exp_console_strip"), egui::Sense::click_and_drag());
     let tooltip = if hidden { tr("Show Console") } else { tr("Hide Console") };
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tooltip));
     let glyph = if hidden { ic::CARET_DOUBLE_LEFT } else { ic::CARET_DOUBLE_RIGHT };
-    let glyph_color = if response.hovered() { tk.text_strong } else { tk.text };
-    ui.painter().rect_filled(strip, 0.0, tk.chrome);
-    ui.painter().text(strip.center(), egui::Align2::CENTER_CENTER, glyph, egui::TextStyle::Body.resolve(ui.style()), glyph_color);
+    let glyph_color = if response.hovered() { look.text } else { look.text_dim };
+    drawn::glyph(ui, strip.center(), glyph, STRIP_GLYPH_SIZE, glyph_color);
     drawn::paint_focus(ui, &response);
     let response = response.on_hover_text(tooltip);
     if !hidden && (response.hovered() || response.dragged()) {
@@ -1307,31 +1329,35 @@ fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui) {
     } else if response.clicked() {
         app.ui.export.console_hidden = !hidden;
     }
-    if !hidden {
-        ui.vertical(|ui| {
-            ui.set_width(console_width);
-            egui::Frame::new().fill(tk.row).inner_margin(egui::Margin::symmetric(CONSOLE_HEADER_MARGIN_X, CONSOLE_HEADER_MARGIN_Y)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(caption(&tr("Console").to_uppercase()).strong());
-            });
-            let console = egui::ScrollArea::vertical().id_salt("exp_console").auto_shrink([false; 2]).stick_to_bottom(true);
-            console.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible).show(ui, |ui| {
-                for line in &app.ui.export.console {
-                    match line {
-                        ConsoleLine::Step(t) => {
-                            ui.label(t);
-                        }
-                        ConsoleLine::Done(t) => {
-                            ui.label(RichText::new(t).color(success(&tk)));
-                        }
-                        ConsoleLine::Set(name) => {
-                            ui.label(set_line(ui, name, &tk));
-                        }
+    if hidden {
+        return;
+    }
+
+    // The console: its header on the window colour, its lines on the frame colour below
+    let top = body.top() - TAB_ROW_HEIGHT;
+    let console = egui::Rect::from_min_max(egui::pos2(console_left, body.top() + 1.0), body.max);
+    drawn::label_at(ui, console.left() + CONSOLE_TEXT_INDENT, top + CONSOLE_HEADER_Y, tr("Console"), look.text, true);
+    let lines = egui::Rect::from_min_max(egui::pos2(console.left(), top + CONSOLE_BODY_TOP), console.max);
+    ui.painter().rect_filled(lines, 0.0, look.chrome);
+    let inner = lines.shrink2(vec2(0.0, CONSOLE_PADDING)).with_min_x(lines.left() + CONSOLE_TEXT_INDENT);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        let console = egui::ScrollArea::vertical().id_salt("exp_console").auto_shrink([false; 2]).stick_to_bottom(true);
+        console.show(ui, |ui| {
+            for line in &app.ui.export.console {
+                match line {
+                    ConsoleLine::Step(t) => {
+                        ui.label(t);
+                    }
+                    ConsoleLine::Done(t) => {
+                        ui.label(RichText::new(t).color(success(&tk)));
+                    }
+                    ConsoleLine::Set(name) => {
+                        ui.label(set_line(ui, name, &tk));
                     }
                 }
-            });
+            }
         });
-    }
+    });
 }
 
 /// "Texture set <name>" with the name in bold
@@ -1347,22 +1373,53 @@ fn set_line(ui: &Ui, name: &str, tk: &Tokens) -> egui::text::LayoutJob {
     job
 }
 
-/// One expandable node per ticked texture set, a row per file
+/// One foldable node per ticked texture set, a row per file; the columns start after the longest file name
 fn export_tree(app: &mut TextureCraftApp, ui: &mut Ui, tk: &Tokens) {
-    if let Some(job) = &app.ui.export.job
-        && !job.preview.is_empty()
-    {
-        for (index, set) in job.preview.iter().enumerate() {
-            export_tree_set(ui, index, set, &job.directory, tk);
+    let (sets, directory): (Vec<(usize, ExportSetPlan)>, String) = match &app.ui.export.job {
+        Some(job) if !job.preview.is_empty() => (job.preview.iter().cloned().enumerate().collect(), job.directory.clone()),
+        _ => {
+            let planned = export_selection(app).into_iter().filter_map(|ts| {
+                let params = set_params(app, ts);
+                plan_set(app, ts, &params).map(|set| (ts, set))
+            });
+            (planned.collect(), app.ui.export.dir.clone())
         }
-        return;
-    }
+    };
+    let rows: Vec<Vec<TreeFile>> = sets.iter().map(|(_, set)| tree_files(set, &directory)).collect();
+    let longest = |text: fn(&TreeFile) -> &str| rows.iter().flatten().map(|file| drawn::text_width(ui, text(file), false)).fold(0.0, f32::max);
+    let columns = {
+        let size = TREE_FILE_INDENT + longest(|f| &f.name) + TREE_COLUMN_GAP;
+        let format = size + longest(|f| &f.size) + TREE_COLUMN_GAP;
+        [size, format, format + longest(|f| &f.format) + TREE_BITS_GAP]
+    };
 
-    for ts in export_selection(app) {
-        let params = set_params(app, ts);
-        if let Some(set) = plan_set(app, ts, &params) {
-            export_tree_set(ui, ts, &set, &app.ui.export.dir, tk);
+    // Each set takes its header row, its files when open and a blank row
+    let open: Vec<bool> = sets.iter().map(|(index, _)| ui.data(|d| d.get_temp::<bool>(tree_id(ui, *index))).unwrap_or(true)).collect();
+    let row_count: usize = sets
+        .iter()
+        .zip(&rows)
+        .zip(&open)
+        .map(|(((_, set), files), open)| 1 + 1 + if *open { files.len().max(usize::from(set.files.is_err())) } else { 0 })
+        .sum();
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), TREE_TOP_PADDING + row_count as f32 * TREE_ROW_HEIGHT), egui::Sense::hover());
+    let mut y = area.top() + TREE_TOP_PADDING;
+    for (((index, set), files), open) in sets.iter().zip(&rows).zip(open) {
+        let header = egui::Rect::from_min_max(egui::pos2(area.left(), y), egui::pos2(area.right(), y + TREE_ROW_HEIGHT));
+        if tree_header(ui, header, &set.name, open, tree_id(ui, *index)) {
+            ui.data_mut(|d| d.insert_temp(tree_id(ui, *index), !open));
         }
+        y += TREE_ROW_HEIGHT;
+        if open {
+            if let Err(error) = &set.files {
+                drawn::label_at(ui, area.left() + TREE_FILE_INDENT, y + TREE_ROW_HEIGHT / 2.0, error, tk.danger, false);
+                y += TREE_ROW_HEIGHT;
+            }
+            for file in files {
+                tree_file(ui, area.left(), y + TREE_ROW_HEIGHT / 2.0, columns, file);
+                y += TREE_ROW_HEIGHT;
+            }
+        }
+        y += TREE_ROW_HEIGHT;
     }
 }
 
@@ -1374,47 +1431,59 @@ fn plan_set(app: &mut TextureCraftApp, index: usize, params: &serde_json::Value)
     Some(ExportSetPlan { index: Some(index), name, files })
 }
 
-fn export_tree_set(ui: &mut Ui, index: usize, set: &ExportSetPlan, directory: &str, tokens: &Tokens) {
-    ui.spacing_mut().indent = TREE_INDENT;
-    let header = egui::CollapsingHeader::new(&set.name).id_salt(("exp_tree", index)).default_open(true).icon(chevron);
-    header.show(ui, |ui| match &set.files {
-        Ok(files) => {
-            egui::Grid::new(("exp_tree_grid", index)).num_columns(4).min_row_height(TREE_ROW_HEIGHT).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
-                for output in files.as_array().into_iter().flatten() {
-                    let file = output.get("file").and_then(serde_json::Value::as_str).unwrap_or_default();
-                    let format = FileFormat::from_extension(output.get("format").and_then(serde_json::Value::as_str).unwrap_or_default());
-                    let depth = output.get("bitDepth").and_then(serde_json::Value::as_u64).unwrap_or(8) as u8;
-                    let dithering = output.get("dithering").and_then(serde_json::Value::as_bool).unwrap_or(false);
-                    let size = output["size"].as_u64().unwrap_or_default() as u32;
-                    let source_size = output["sourceSize"].as_u64().unwrap_or_default() as u32;
-                    let path = std::path::Path::new(directory).join(file).display().to_string();
-                    ui.label(file).on_hover_text(&path);
-                    ui.label(set_size_label(size, source_size)).on_hover_text(&path);
-                    ui.label(format.map_or("", FileFormat::name)).on_hover_text(&path);
-                    ui.label(depth_label(format, depth, dithering)).on_hover_text(&path);
-                    ui.end_row();
-                }
-            });
-        }
-        Err(error) => {
-            ui.label(RichText::new(error).color(tokens.danger));
-        }
-    });
+/// Where a texture set's node keeps whether it is open
+fn tree_id(ui: &Ui, index: usize) -> egui::Id {
+    ui.scope_id().with(("exp_tree", index))
 }
 
-/// The tree's outline chevron: pointing down when open, right (left in right-to-left) when closed
-fn chevron(ui: &mut Ui, openness: f32, response: &egui::Response) {
-    let color = Tokens::get(ui.ctx()).text;
-    let center = response.rect.center();
-    let half = CHEVRON_HALF_WIDTH;
-    let points = if openness > 0.5 {
-        [center + vec2(-half, -half / 2.0), center + vec2(0.0, half / 2.0), center + vec2(half, -half / 2.0)]
-    } else if ui.style().right_to_left {
-        [center + vec2(half / 2.0, -half), center + vec2(-half / 2.0, 0.0), center + vec2(half / 2.0, half)]
-    } else {
-        [center + vec2(-half / 2.0, -half), center + vec2(half / 2.0, 0.0), center + vec2(-half / 2.0, half)]
+/// The texts of each file `set` plans: name, size, file type, bit depth and its whole path
+fn tree_files(set: &ExportSetPlan, directory: &str) -> Vec<TreeFile> {
+    let Ok(files) = &set.files else { return Vec::new() };
+
+    let to_text = |output: &serde_json::Value| {
+        let file = output.get("file").and_then(serde_json::Value::as_str).unwrap_or_default();
+        let format = FileFormat::from_extension(output.get("format").and_then(serde_json::Value::as_str).unwrap_or_default());
+        let depth = output.get("bitDepth").and_then(serde_json::Value::as_u64).unwrap_or(8) as u8;
+        let dithering = output.get("dithering").and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let size = output["size"].as_u64().unwrap_or_default() as u32;
+        let source_size = output["sourceSize"].as_u64().unwrap_or_default() as u32;
+        TreeFile {
+            name: file.to_string(),
+            size: set_size_label(size, source_size),
+            format: format.map_or("", FileFormat::name).to_string(),
+            bits: depth_label(format, depth, dithering),
+            path: std::path::Path::new(directory).join(file).display().to_string(),
+        }
     };
-    ui.painter().add(egui::Shape::line(points.to_vec(), egui::Stroke::new(1.5, color)));
+    files.as_array().into_iter().flatten().map(to_text).collect()
+}
+
+/// A texture set's node row: the chevron and its name in bold; true when clicked
+fn tree_header(ui: &mut Ui, rect: egui::Rect, name: &str, open: bool, id: egui::Id) -> bool {
+    let look = ExportLook::get(ui.ctx());
+    let response = ui.interact(rect, id, egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+    let y = rect.center().y;
+    let chevron = if open {
+        ic::CARET_DOWN
+    } else if ui.style().right_to_left {
+        ic::CARET_LEFT
+    } else {
+        ic::CARET_RIGHT
+    };
+    drawn::glyph(ui, egui::pos2(rect.left() + TREE_CHEVRON_X, y), chevron, drawn::CHEVRON_SIZE, look.text);
+    drawn::text_at(ui, rect.left() + TREE_NAME_INDENT, y, name, look.text, true);
+    drawn::paint_focus(ui, &response);
+    response.clicked()
+}
+
+/// A file's row at `y`: its name, then size, file type and bit depth in `columns`, each with the whole path as tooltip
+fn tree_file(ui: &mut Ui, left: f32, y: f32, columns: [f32; 3], file: &TreeFile) {
+    let look = ExportLook::get(ui.ctx());
+    let texts = [(TREE_FILE_INDENT, &file.name), (columns[0], &file.size), (columns[1], &file.format), (columns[2], &file.bits)];
+    for (x, text) in texts {
+        drawn::label_at(ui, left + x, y, text, look.text, false).on_hover_text(&file.path);
+    }
 }
 
 /// Show the output folder in the system's file manager (created first when missing)
@@ -1791,11 +1860,9 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
         body_ui.shrink_clip_rect(body);
         let ui = &mut body_ui;
-        let mut row = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::left_to_right(egui::Align::Min)));
-        row.set_height(body.height());
         match app.ui.export.tab {
             1 => crate::export_templates::tab(app, ui, body, &presets),
-            2 => list_tab(app, &mut row),
+            2 => list_tab(app, ui, body),
             _ => settings_tab(app, ui, window, body, &presets),
         }
     });
