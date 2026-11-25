@@ -545,10 +545,13 @@ fn enlarged_preview_snapshots() {
     let (mut harness, _) = harness_with(true, json!({"generator": "edgeWear", "seed": 12}));
     click_live(&mut harness, Role::Button, "Enlarge preview");
 
-    // The pictures render on the preview worker
-    for _ in 0..60 {
-        harness.run_steps(4);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    // The pictures render on the preview worker: up to three seconds of frames
+    const WAITS: usize = 60;
+    const STEPS_PER_WAIT: usize = 4;
+    const WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+    for _ in 0..WAITS {
+        harness.run_steps(STEPS_PER_WAIT);
+        std::thread::sleep(WAIT);
     }
     for (brightness, name) in [(Brightness::MediumDark, "medium"), (Brightness::Dark, "dark"), (Brightness::Light, "light")] {
         harness.state_mut().ui.prefs.brightness = brightness;

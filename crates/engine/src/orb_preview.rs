@@ -16,7 +16,6 @@ use texturecraft_texel::TILE;
 
 pub use crate::mask_preview_pixel::MaskPreviewPixel;
 pub use crate::material_preview_pixel::MaterialPreviewPixel;
-
 use crate::orb_camera::OrbCamera;
 use crate::preview::Sample;
 use crate::session::Document;
@@ -123,13 +122,14 @@ impl OrbPreview {
         let replaced: Vec<_> = images.iter().map(|(name, image)| (name.clone(), self.session.images.insert(name.clone(), image.clone()))).collect();
         let pixels = self.generator_of(with_sample_image(generator), size);
 
-        // The orb's own images come back: the next preview reads only what it brings
-        for (name, previous) in replaced {
+        // The orb's own images come back, last replaced first so a name given twice ends as it began: the next preview reads only what it brings
+        for (name, previous) in replaced.into_iter().rev() {
             match previous {
                 Some(previous) => self.session.images.insert(name, previous),
                 None => self.session.images.remove(&name),
             };
         }
+
         pixels
     }
 

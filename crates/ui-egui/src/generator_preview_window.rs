@@ -1,6 +1,6 @@
 //! A generator's preview enlarged in a tool window, following its settings while they change
 
-use egui::{Rect, Sense, pos2};
+use egui::{Align2, Color32, CornerRadius, Rect, Role, Sense, WidgetInfo, pos2, vec2};
 use texturecraft_engine::core::{EffectKind, LayerId};
 
 use crate::TextureCraftApp;
@@ -30,6 +30,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         Some(EffectKind::Generator(generator)) => generator.clone(),
         _ => {
             app.ui.windows.generator_preview = None;
+            app.thumbs.forget_generator_pictures(effect);
             return;
         }
     };
@@ -37,24 +38,28 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let set = ShelfPreview::generator_set(&generator, &app.session.images);
     let texture = app.thumbs.generator_set_picture(ctx, effect, set, PICTURE_PX);
     let tokens = Tokens::get(ctx);
+
+    // It first opens beside the small preview it was asked from, then stays where it is moved
     let mut open = true;
     let beside =
         ctx.data(|data| data.get_temp::<Rect>(anchor_id())).map_or(ctx.content_rect().center(), |small| pos2(small.left() - BESIDE_GAP, small.center().y));
     let window = crate::windows::window("generator_preview", tr(generator.kind.label()), &mut open).default_width(DEFAULT_WIDTH);
-    window.default_pos(beside).pivot(egui::Align2::RIGHT_CENTER).show(ctx, |ui| {
+    window.default_pos(beside).pivot(Align2::RIGHT_CENTER).show(ctx, |ui| {
         let side = ui.available_width().max(MIN_SIDE);
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), Sense::hover());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, tr("Preview")));
+        let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
+        response.widget_info(|| WidgetInfo::labeled(Role::Image, true, tr("Preview")));
+
         match &texture {
             Some(texture) => {
-                ui.painter().image(texture.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+                ui.painter().image(texture.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }
             None => {
-                ui.painter().rect_filled(rect, 0.0, tokens.button);
+                ui.painter().rect_filled(rect, CornerRadius::ZERO, tokens.button);
                 ctx.request_repaint_after(PICTURE_POLL);
             }
         }
     });
+
     if !open {
         app.ui.windows.generator_preview = None;
     }

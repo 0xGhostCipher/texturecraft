@@ -330,6 +330,11 @@ impl Thumbs {
         shown
     }
 
+    /// Drops the pictures kept for generator effect `effect`, gone from the project
+    pub fn forget_generator_pictures(&mut self, effect: u64) {
+        self.set_pictures.retain(|(kept, _), _| *kept != effect);
+    }
+
     /// Sphere thumbnail of library filter `id` applied to a sample material
     pub fn filter(&mut self, ctx: &egui::Context, id: &'static str) -> Option<TextureHandle> {
         self.shelf(ctx, ShelfPreview::Filter(id), SPHERE_PX)

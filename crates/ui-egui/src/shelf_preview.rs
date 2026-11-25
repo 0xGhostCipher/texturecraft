@@ -65,13 +65,17 @@ impl ShelfPreview {
 
     /// `generator` as set, with the images it reads from `store`
     pub fn generator_set(generator: &Generator, store: &ImageStore) -> ShelfPreview {
-        let images = generator
-            .sources()
-            .filter_map(|source| match source {
-                texturecraft_engine::core::Source::Image { name, .. } => store.get(name).map(|image| (name.clone(), image.clone())),
-                _ => None,
-            })
-            .collect();
+        // An image read in two slots goes once
+        let mut images: Vec<(String, Arc<ImageRes>)> = Vec::new();
+        for source in generator.sources() {
+            if let texturecraft_engine::core::Source::Image { name, .. } = source
+                && let Some(image) = store.get(name)
+                && !images.iter().any(|(taken, _)| taken == name)
+            {
+                images.push((name.clone(), image.clone()));
+            }
+        }
+
         ShelfPreview::GeneratorSet { generator: Box::new(generator.clone()), images }
     }
 
@@ -192,6 +196,31 @@ mod tests {
     use texturecraft_engine::paint::presets::PRESETS;
 
     use super::*;
+
+    #[test]
+    fn a_generator_preview_is_keyed_by_its_settings_and_reads_an_image_once() {
+        let image = Arc::new(ImageRes::new(1, 1, vec![[0.5; 4]], false));
+        let store: ImageStore = [("grunge.png".to_owned(), image)].into();
+        let dirt = |grunge: Option<&str>, invert| Generator {
+            grunge: grunge.map(texturecraft_engine::core::Source::image),
+            micro: None,
+            invert,
+            ..Generator::new(GeneratorKind::Dirt)
+        };
+
+        let plain = ShelfPreview::generator_set(&dirt(None, false), &store);
+        assert_eq!(plain.key(), ShelfPreview::generator_set(&dirt(None, false), &store).key(), "the same settings share a picture");
+        assert_ne!(plain.key(), ShelfPreview::generator_set(&dirt(None, true), &store).key(), "another setting is another picture");
+        assert_ne!(plain.key(), ShelfPreview::generator_set(&dirt(Some("grunge.png"), false), &store).key(), "so is an image read");
+
+        let mut both = dirt(Some("grunge.png"), false);
+        both.texture = Some(Box::new(texturecraft_engine::core::TextureLayer {
+            source: Some(texturecraft_engine::core::Source::image("grunge.png")),
+            ..Default::default()
+        }));
+        let ShelfPreview::GeneratorSet { images, .. } = ShelfPreview::generator_set(&both, &store) else { panic!("a generator preview") };
+        assert_eq!(images.len(), 1, "an image in two slots goes once");
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

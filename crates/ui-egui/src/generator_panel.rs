@@ -1,6 +1,6 @@
 //! A generator effect's properties, laid out like the reference app's: its slot, Parameters, Image inputs, Resolution, Attributes
 
-use egui::{CursorIcon, Painter, Rect, Role, Sense, Stroke, StrokeKind, TextureHandle, WidgetInfo};
+use egui::{CornerRadius, CursorIcon, Painter, Rect, Role, Sense, Stroke, StrokeKind, TextureHandle, WidgetInfo};
 use serde_json::json;
 use texturecraft_engine::core::{
     CookResolution, Generator, GeneratorKind, KindControls, LayerId, LightParameters, ResolutionMode, SectionParameters, WearParameters,
@@ -17,6 +17,9 @@ use crate::i18n::tr;
 use crate::property_sheet::PropertySheet;
 use crate::shelf_preview::ShelfPreview;
 use crate::theme::Tokens;
+
+/// The outline on the preview while it can open enlarged under the pointer, or is open, in points
+const ENLARGE_OUTLINE_WIDTH: f32 = 1.0;
 
 /// The width the preview's orb is rendered at, in pixels: sharp at twice the preview's size
 const PREVIEW_ORB_PX: usize = 256;
@@ -133,10 +136,12 @@ fn enlarge_on_click(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, id
     let response = sheet.ui.interact(rect, sheet.ui.make_persistent_id(("generator_preview_enlarge", id)), Sense::click()).on_hover_cursor(CursorIcon::ZoomIn);
     let open = app.ui.windows.generator_preview == Some(id);
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, open, tr("Enlarge preview")));
+
     if response.hovered() || response.has_focus() || open {
         let tokens = Tokens::get(sheet.ui.ctx());
-        sheet.ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, tokens.text_dim), StrokeKind::Inside);
+        sheet.ui.painter().rect_stroke(rect, CornerRadius::ZERO, Stroke::new(ENLARGE_OUTLINE_WIDTH, tokens.text_dim), StrokeKind::Inside);
     }
+
     if response.clicked() {
         let ctx = sheet.ui.ctx().clone();
         crate::generator_preview_window::toggle(app, &ctx, id, rect);
