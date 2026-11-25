@@ -29,6 +29,8 @@ pub(crate) use shown_group_tab::HEADER_TITLE_LEFT;
 pub enum Panel {
     Viewport,
     Assets,
+    /// A second Assets panel with its own search, type and folder (the Assets panel's folder button)
+    AssetsSecond,
     // Saved layouts name the bake panels by their earlier names
     #[serde(rename = "BakeMaps")]
     MeshMapSettings,
@@ -82,7 +84,7 @@ impl Panel {
         use crate::state::Mode;
         match self {
             Self::MeshMapSettings | Self::CommonSettings | Self::MeshMapBakers | Self::BakingLog => mode == Mode::Baking,
-            Self::Assets | Self::Layers | Self::Properties | Self::TextureSetSettings | Self::Export => mode == Mode::Painting,
+            Self::Assets | Self::AssetsSecond | Self::Layers | Self::Properties | Self::TextureSetSettings | Self::Export => mode == Mode::Painting,
             Self::History => mode != Mode::Rendering,
             Self::Shader => mode != Mode::Baking,
             Self::Renderer => mode == Mode::Rendering,
@@ -90,9 +92,10 @@ impl Panel {
         }
     }
 
-    pub const ALL: [Panel; 16] = [
+    pub const ALL: [Panel; 17] = [
         Panel::Viewport,
         Panel::Assets,
+        Panel::AssetsSecond,
         Panel::MeshMapSettings,
         Panel::CommonSettings,
         Panel::MeshMapBakers,
@@ -113,6 +116,8 @@ impl Panel {
         match self {
             Panel::Viewport => "Viewport",
             Panel::Assets => "Assets",
+            // The second panel shows every type at first, so it's named for that, as the reference names it
+            Panel::AssetsSecond => "All",
             Panel::MeshMapSettings => "Mesh Map Settings",
             Panel::CommonSettings => "Common Settings",
             Panel::MeshMapBakers => "Mesh Map Bakers",
@@ -194,12 +199,12 @@ pub fn default_workspace() -> Workspace {
         }
     }
 
-    for panel in [MeshMapSettings, CommonSettings, MeshMapBakers] {
+    for (panel, anchor) in [(MeshMapSettings, TextureSetList), (CommonSettings, TextureSetList), (MeshMapBakers, TextureSetList), (AssetsSecond, Assets)] {
         workspace.hidden.push((
             panel,
             Location {
                 floating: None,
-                anchor: Some(TextureSetList),
+                anchor: Some(anchor),
                 placement: Placement::Tab { before: None },
                 size: None,
                 stack: None,
@@ -328,7 +333,7 @@ impl Dock {
     /// Texture sets over the bakers, the two settings tabs, the log under both, then the viewport
     pub(crate) fn for_baking() -> Self {
         let mut workspace = default_workspace();
-        for panel in [Panel::Assets, Panel::Layers, Panel::TextureSetSettings, Panel::Properties] {
+        for panel in [Panel::Assets, Panel::AssetsSecond, Panel::Layers, Panel::TextureSetSettings, Panel::Properties] {
             if let Ok(location) = workspace.layout.location(&panel) {
                 workspace.hidden.push((panel, location));
             }
@@ -558,7 +563,8 @@ fn min_size(panel: Panel) -> Vec2 {
 /// The body of every panel except the viewport, in the dock or on the rail
 pub(crate) fn panel_body(app: &mut TextureCraftApp, ui: &mut Ui, panel: Panel) {
     // No project open: the library and the log work, the other panels about a project stay empty
-    let works_empty = matches!(panel, Panel::Assets | Panel::Log | Panel::Layers | Panel::TextureSetList | Panel::Properties | Panel::Export);
+    let works_empty =
+        matches!(panel, Panel::Assets | Panel::AssetsSecond | Panel::Log | Panel::Layers | Panel::TextureSetList | Panel::Properties | Panel::Export);
     if !app.session.project_open && !works_empty {
         return;
     }
@@ -568,6 +574,7 @@ pub(crate) fn panel_body(app: &mut TextureCraftApp, ui: &mut Ui, panel: Panel) {
     egui::Frame::new().inner_margin(margin).show(ui, |ui| match panel {
         Panel::MeshMapSettings => crate::bake_mode::mesh_map_settings_panel(app, ui),
         Panel::Assets => crate::shelf::body(app, ui),
+        Panel::AssetsSecond => crate::shelf_second::body(app, ui),
         Panel::CommonSettings => crate::bake_mode::common_settings_panel(app, ui),
         Panel::MeshMapBakers => crate::bake_mode::mesh_map_bakers_panel(app, ui),
         Panel::TextureSetList if app.ui.mode == crate::state::Mode::Baking => crate::bake_mode::texture_sets(app, ui),

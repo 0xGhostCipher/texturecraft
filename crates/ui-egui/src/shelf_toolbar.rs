@@ -1,4 +1,4 @@
-//! The shelf's bottom toolbar: the side pane toggles on the left; refresh with its update settings, reset query and import on the right
+//! The shelf's bottom toolbar: the side pane toggles on the left; refresh, reset query, new panel and import on the right
 
 use egui::Ui;
 use egui_phosphor::regular as ic;
@@ -25,6 +25,9 @@ pub(crate) fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icon_button(ui, ic::PLUS, tr("Import resources..."), false, size).clicked() {
                 crate::menus::invoke(app, &ui.ctx().clone(), "resource.import");
+            }
+            if icon_button(ui, ic::FOLDER, tr("New Assets panel"), false, size).clicked() {
+                app.ui.dock.focus(crate::docking::Panel::AssetsSecond);
             }
             if icon_button(ui, ic::X_CIRCLE, tr("Reset query"), false, size).clicked() {
                 reset_query(app);

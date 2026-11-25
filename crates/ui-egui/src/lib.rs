@@ -146,6 +146,8 @@ mod shelf_folders;
 mod shelf_menu;
 pub mod shelf_panes;
 pub mod shelf_preview;
+pub mod shelf_query;
+pub mod shelf_second;
 mod shelf_tabs;
 mod shelf_toolbar;
 pub mod shelf_updates;

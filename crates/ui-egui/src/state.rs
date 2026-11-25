@@ -593,6 +593,9 @@ pub struct UiState {
     /// The asset shelf shows only favorites (the Favorites saved search)
     #[serde(default)]
     pub shelf_favorites_only: bool,
+    /// The second Assets panel's search, type and folder, swapped in while it draws
+    #[serde(default)]
+    pub shelf_second: crate::shelf_query::ShelfQuery,
     /// The asset shelf's automatic updates (its refresh popup)
     #[serde(default)]
     pub shelf_updates: crate::shelf_updates::ShelfUpdates,
@@ -757,6 +760,7 @@ impl UiState {
         self.shelf_saved_searches = keep.shelf_saved_searches;
         self.shelf_favorites = keep.shelf_favorites;
         self.shelf_favorites_only = keep.shelf_favorites_only;
+        self.shelf_second = keep.shelf_second;
         self.shelf_custom_previews = keep.shelf_custom_previews;
         self.shelf_updates = keep.shelf_updates;
     }
@@ -795,6 +799,7 @@ impl Default for UiState {
             shelf_saved_searches: Vec::new(),
             shelf_favorites: Vec::new(),
             shelf_favorites_only: false,
+            shelf_second: crate::shelf_query::ShelfQuery::default(),
             shelf_custom_previews: Vec::new(),
             shelf_updates: crate::shelf_updates::ShelfUpdates::default(),
             shelf_panes_split: default_shelf_panes_split(),
