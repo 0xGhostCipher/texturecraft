@@ -65,9 +65,9 @@ pub(crate) fn grunge(kind: GeneratorKind, wear: &WearParameters, seed: u32, coor
 /// Where a custom grunge image is read: repeated grunge-scale times across the UV square (or the mesh's bounds, triplanar)
 pub(crate) fn custom_grunge_placement(wear: &WearParameters) -> SlotPlacement {
     if wear.triplanar {
-        SlotPlacement { scale: wear.grunge_scale, offset: 0.0, triplanar_contrast: Some(wear.triplanar_contrast) }
+        SlotPlacement { scale: wear.grunge_scale, offset: 0.0, triplanar_contrast: Some(wear.triplanar_contrast), mirrored_about_centre: false }
     } else {
-        SlotPlacement { scale: wear.grunge_scale, offset: CUSTOM_GRUNGE_UV_OFFSET, triplanar_contrast: None }
+        SlotPlacement { scale: wear.grunge_scale, offset: CUSTOM_GRUNGE_UV_OFFSET, triplanar_contrast: None, mirrored_about_centre: false }
     }
 }
 

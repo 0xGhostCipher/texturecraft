@@ -2,6 +2,14 @@
 
 /// `value` scanned at `position` (0 all black, 1 all white) over a ramp `1 − contrast` wide; contrast 1 is a hard step
 pub(crate) fn histogram_scan(value: f32, position: f32, contrast: f32) -> f32 {
+    // The ends hold at a hard step too, where the ramp has no width to reach them
+    if position <= 0.0 {
+        return 0.0;
+    }
+    if position >= 1.0 {
+        return 1.0;
+    }
+
     let width = 1.0 - contrast.clamp(0.0, 1.0);
     // The ramp's low end runs from 1 at position 0 to −width at position 1, so the ends are wholly black or white
     let low = (1.0 - position.clamp(0.0, 1.0)) * (1.0 + width) - width;
@@ -21,6 +29,12 @@ mod tests {
             assert_eq!(histogram_scan(value, 0.0, 0.5), 0.0, "{value}");
             assert_eq!(histogram_scan(value, 1.0, 0.5), 1.0, "{value}");
         }
+    }
+
+    #[test]
+    fn the_ends_of_the_position_hold_at_a_hard_step() {
+        assert_eq!(histogram_scan(1.0, 0.0, 1.0), 0.0, "position 0 is all black, even for white");
+        assert_eq!(histogram_scan(0.0, 1.0, 1.0), 1.0, "position 1 is all white, even for black");
     }
 
     #[test]

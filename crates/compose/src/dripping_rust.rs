@@ -144,11 +144,64 @@ fn drips(inp: &Inputs, rust: &DrippingRustParameters, field: &[f32], (width, hei
                 let along = step as f32 / samples as f32;
                 let distance = reach * along;
                 let (sample_x, sample_y) = (x as f32 + distance * uphill.0 / length, y as f32 + distance * uphill.1 / length);
-                match field_at(sample_x.round() as i64, sample_y.round() as i64) {
+                let (sample_x, sample_y) = (sample_x.round() as i64, sample_y.round() as i64);
+
+                // Rust drips down: a tap the ray reaches past a ridge, lower on the axis, gives none
+                let above = axis_at(sample_x, sample_y).is_some_and(|axis| axis >= axis_here);
+                match field_at(sample_x, sample_y).filter(|_| above) {
                     Some(value) => most.max(value * (1.0 - DRIP_FADE * along.powf(DRIP_FADE_POWER))),
                     None => most,
                 }
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use texturecraft_core::{Project, TextureSet};
+    use texturecraft_geom::{UvGBuffer, primitives};
+
+    use super::*;
+    use crate::{BakedMaps, PixelStore};
+
+    const RES: u32 = 256;
+
+    #[test]
+    fn a_drip_takes_no_rust_from_past_a_ridge_lower_on_the_axis() {
+        // A strip rising gently to a ridge at its middle, then falling steeply
+        let mut mesh = primitives::plane(2.0, 64);
+        for position in &mut mesh.positions {
+            position.y = if position.z <= 0.0 { 1.0 + position.z } else { 1.0 - 8.0 * position.z };
+        }
+        let gbuf = UvGBuffer::new(&mesh, 0, RES, RES);
+        let mut project = Project::new("t", "strip");
+        project.texture_sets.push(TextureSet::new("A", 0, RES));
+        let (pixels, baked, images) = (PixelStore::default(), BakedMaps::default(), Default::default());
+        let inputs = Inputs {
+            project: &project,
+            ts: 0,
+            mesh: &mesh,
+            gbuf: &gbuf,
+            pixels: &pixels,
+            baked: &baked,
+            block_scales: project.texture_sets[0].block_scales(),
+            preview: None,
+            images: &images,
+            bounds: mesh.bounds(),
+        };
+
+        // Rust only on the steep side, all lower than the gentle side's texel just below the ridge
+        let rusted = |surface: &texturecraft_geom::Surface| surface.pos.z > 0.01;
+        let field: Vec<f32> = (0..RES * RES).map(|texel| gbuf.surface(&mesh, texel as usize).filter(rusted).map_or(0.0, |_| 1.0)).collect();
+        let rust = DrippingRustParameters { drips_intensity: 1.0, drips_samples: DrippingRustParameters::MAX_SAMPLES, axis: 1, ..Default::default() };
+        let dripped = drips(&inputs, &rust, &field, (RES, RES), &|_, _| RES as f32);
+
+        let below_ridge = (0..RES * RES)
+            .find(|texel| {
+                gbuf.surface(&mesh, *texel as usize).is_some_and(|surface| (surface.pos.z + 0.04).abs() < 1.0 / RES as f32 && surface.pos.x.abs() < 0.1)
+            })
+            .expect("a texel just below the ridge");
+        assert_eq!(dripped[below_ridge as usize], 0.0);
+    }
 }

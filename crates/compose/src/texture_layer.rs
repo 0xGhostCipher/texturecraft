@@ -13,7 +13,12 @@ const MIN_NORMAL_COMPONENT: f32 = 1e-6;
 
 /// The texture is scaled about the centre of the UV square (or of the mesh's bounds)
 pub(crate) fn texture_placement(texture: &TextureLayer) -> SlotPlacement {
-    SlotPlacement { scale: texture.scale, offset: 0.5 * (1.0 - texture.scale), triplanar_contrast: texture.triplanar.then_some(texture.triplanar_contrast) }
+    SlotPlacement {
+        scale: texture.scale,
+        offset: 0.5 * (1.0 - texture.scale),
+        triplanar_contrast: texture.triplanar.then_some(texture.triplanar_contrast),
+        mirrored_about_centre: true,
+    }
 }
 
 /// Where a slot is read in UV
@@ -24,7 +29,8 @@ pub(crate) fn uv_coordinates(placement: &SlotPlacement, uv: Vec2) -> Vec2 {
 /// Where a slot is read on each of the three projections (facing X, Y and Z) for `position` across the mesh's bounds (0..1)
 pub(crate) fn triplanar_coordinates(placement: &SlotPlacement, position: Vec3) -> [Vec2; 3] {
     let placed = |u: f32, v: f32| Vec2::new(u, v) * placement.scale + Vec2::splat(placement.offset);
-    [placed(-position.z, position.y), placed(position.x, position.z), placed(position.x, position.y)]
+    let mirrored_z = if placement.mirrored_about_centre { 1.0 - position.z } else { -position.z };
+    [placed(mirrored_z, position.y), placed(position.x, position.z), placed(position.x, position.y)]
 }
 
 /// How much each projection (facing X, Y and Z) counts for a surface facing `normal` at triplanar `contrast`, summing to 1
@@ -152,5 +158,13 @@ mod tests {
         let placement = texture_placement(&TextureLayer { scale: 2.0, ..texture() });
         assert_eq!(uv_coordinates(&placement, Vec2::splat(0.5)), Vec2::splat(0.5));
         assert_eq!(uv_coordinates(&placement, Vec2::new(0.75, 0.25)), Vec2::new(1.0, 0.0));
+    }
+
+    #[test]
+    fn every_triplanar_projection_is_scaled_about_the_centre_of_the_bounds() {
+        let placement = texture_placement(&TextureLayer { scale: 1.5, triplanar: true, ..texture() });
+        for (axis, at) in triplanar_coordinates(&placement, Vec3::splat(0.5)).into_iter().enumerate() {
+            assert!((at - Vec2::splat(0.5)).abs().max_element() < 1e-6, "projection {axis} reads {at} at the centre");
+        }
     }
 }
