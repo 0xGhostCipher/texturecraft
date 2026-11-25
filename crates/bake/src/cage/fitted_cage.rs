@@ -22,13 +22,15 @@ pub(crate) struct FittedCage {
 }
 
 impl FittedCage {
-    /// Fit the cage of `request`'s low poly around `high` along `ray_normals`: each low-poly vertex reaches the high poly straight in front of or behind it, and each high-poly vertex pushes the corners of its nearest low-poly triangle out (or in) to its height. Vertices neither finds take their neighbours' distances; a part the high poly reaches nowhere gets none
+    /// Fit the cage of `request`'s low poly around `high` along `ray_normals` (where parts welded back to back cancelled a vertex's normal out, along its own): each low-poly vertex reaches the high poly straight in front of or behind it, and each high-poly vertex pushes the corners of its nearest low-poly triangle out (or in) to its height. Vertices neither finds take their neighbours' distances; a part the high poly reaches nowhere gets none
     pub(crate) fn new(request: &BakeRequest, high: HighPoly, welded_indices: &[u32], ray_normals: &[Vec3], extent: MeshExtent) -> FittedCage {
         let low = request.mesh;
         let keys = NameKeys::of(request, high);
         let welded_indices = welded_within_groups(welded_indices, &keys.low_vertices);
         let welded = |vertex: usize| welded_indices.get(vertex).copied().unwrap_or(0) as usize;
         let welded_count = welded_indices.iter().max().map_or(0, |last| *last as usize + 1);
+
+        let fitting_normals = fitting_normals(low, ray_normals);
         let mut reach: Vec<Option<(f32, f32)>> = vec![None; welded_count];
         let mut widen = |vertex: usize, height: f32| {
             if let Some(distances) = reach.get_mut(welded(vertex)) {
@@ -37,12 +39,12 @@ impl FittedCage {
             }
         };
 
-        for (vertex, height) in heights_at_low_vertices(low, high, ray_normals, &keys, extent.diagonal).into_iter().enumerate() {
+        for (vertex, height) in heights_at_low_vertices(low, high, &fitting_normals, &keys, extent.diagonal).into_iter().enumerate() {
             if let Some(height) = height {
                 widen(vertex, height);
             }
         }
-        for (triangle, height) in heights_of_high_vertices(request, high, ray_normals, &keys).into_iter().flatten() {
+        for (triangle, height) in heights_of_high_vertices(request, high, &fitting_normals, &keys).into_iter().flatten() {
             for corner in low.tri(triangle).into_iter().flatten() {
                 widen(corner, height);
             }
@@ -85,6 +87,21 @@ fn welded_within_groups(welded_indices: &[u32], vertex_keys: &[u32]) -> Vec<u32>
         .map(|(vertex, &welded)| {
             let next = indices.len() as u32;
             *indices.entry((welded, vertex_keys.get(vertex).copied())).or_insert(next)
+        })
+        .collect()
+}
+
+/// `ray_normals`, except where parts welded back to back cancelled a vertex's normal out: there, the vertex's own normal, the direction its transfer rays fall back to
+fn fitting_normals(low: &Mesh, ray_normals: &[Vec3]) -> Vec<Vec3> {
+    ray_normals
+        .iter()
+        .enumerate()
+        .map(|(vertex, &welded_normal)| {
+            if welded_normal != Vec3::ZERO {
+                return welded_normal;
+            }
+
+            low.normals.get(vertex).and_then(|normal| normal.try_normalize()).unwrap_or(welded_normal)
         })
         .collect()
 }

@@ -1,6 +1,6 @@
 use super::{covered_values, settings, transfer};
 use crate::{BakeRequest, CageShell, HighPoly, HighPolyReach};
-use texturecraft_core::{BakeSettings, BakedMap, CageType};
+use texturecraft_core::{BakeSettings, BakedMap, CageType, MeshMatchMode};
 use texturecraft_geom::glam::Vec3;
 use texturecraft_geom::{Bvh, Mesh, primitives};
 
@@ -34,6 +34,14 @@ fn cage_heights(low: &Mesh, high: &Mesh, bake_settings: &BakeSettings) -> Vec<(V
     let shell = CageShell::new(&request).unwrap();
     let corners = shell.corners(bake_settings.cage.max_frontal);
     shell.positions.iter().zip(corners).map(|(position, corner)| (*position, corner.y - position.y)).collect()
+}
+
+/// Every submesh on the first material, so the cage shell of material 0 covers all the parts
+fn one_material(mesh: &mut Mesh) {
+    mesh.materials.truncate(1);
+    for submesh in &mut mesh.submeshes {
+        submesh.material = 0;
+    }
 }
 
 #[test]
@@ -142,7 +150,7 @@ fn a_part_no_high_poly_part_matches_keeps_the_distance_settings() {
     low.submeshes[0].name = "panel_low".into();
     high.submeshes[0].name = "door_high".into();
     let mut bake_settings = automatic(&[BakedMap::Normal]);
-    bake_settings.high_poly.match_mode = texturecraft_core::MeshMatchMode::ByMeshName;
+    bake_settings.high_poly.match_mode = MeshMatchMode::ByMeshName;
 
     let heights = cage_heights(&low, &high, &bake_settings);
 
@@ -167,15 +175,11 @@ fn a_part_meeting_another_part_takes_its_distances_from_its_own_high_poly_only()
     low.append(&part("right_low", 1.0, 0.0, 4));
     let mut high = part("left_high", -1.0, LOW_HEIGHT, 8);
     high.append(&part("right_high", 1.0, RAISED_HEIGHT, 8));
-    // One material, so the cage shell covers both low parts
     for mesh in [&mut low, &mut high] {
-        mesh.materials.truncate(1);
-        for submesh in &mut mesh.submeshes {
-            submesh.material = 0;
-        }
+        one_material(mesh);
     }
     let mut bake_settings = automatic(&[BakedMap::Normal]);
-    bake_settings.high_poly.match_mode = texturecraft_core::MeshMatchMode::ByMeshName;
+    bake_settings.high_poly.match_mode = MeshMatchMode::ByMeshName;
 
     let heights = cage_heights(&low, &high, &bake_settings);
 
@@ -183,5 +187,61 @@ fn a_part_meeting_another_part_takes_its_distances_from_its_own_high_poly_only()
     let left_corners = low.submeshes[0].count as usize;
     for (position, height) in &heights[..left_corners] {
         assert!(*height < RAISED_HEIGHT / 2.0, "the left part's cage at {position} stays near the left high poly: {height}");
+    }
+}
+
+#[test]
+fn parts_back_to_back_fit_their_cages_along_their_own_normals() {
+    const SHEET_DISTANCE: f32 = 0.2;
+
+    // A plane facing up and the same plane facing down, each facing its own high-poly sheet: welded, their normals cancel out
+    let named = |mut mesh: Mesh, name: &str| {
+        mesh.submeshes[0].name = name.into();
+        mesh
+    };
+    let facing_down = |mut mesh: Mesh| {
+        for normal in &mut mesh.normals {
+            *normal = -*normal;
+        }
+        for triangle in mesh.indices.chunks_exact_mut(3) {
+            triangle.swap(1, 2);
+        }
+        mesh
+    };
+    let sheet = |height: f32| {
+        let mut sheet = primitives::plane(1.0, 8);
+        for position in &mut sheet.positions {
+            position.y = height;
+        }
+        sheet
+    };
+    let mut low = named(primitives::plane(1.0, 4), "front_low");
+    low.append(&named(facing_down(primitives::plane(1.0, 4)), "back_low"));
+    let mut high = named(sheet(SHEET_DISTANCE), "front_high");
+    high.append(&named(facing_down(sheet(-SHEET_DISTANCE)), "back_high"));
+    for mesh in [&mut low, &mut high] {
+        one_material(mesh);
+    }
+
+    for match_mode in [MeshMatchMode::Always, MeshMatchMode::ByMeshName] {
+        let mut bake_settings = automatic(&[BakedMap::Normal]);
+        bake_settings.high_poly.match_mode = match_mode;
+
+        let heights = cage_heights(&low, &high, &bake_settings);
+
+        // The front part's triangles come first, three corners each
+        let front_corners = low.submeshes[0].count as usize;
+        for (position, height) in &heights[..front_corners] {
+            assert!(
+                (SHEET_DISTANCE..UNFITTED_DISTANCE).contains(height),
+                "{match_mode:?}: the front part's cage at {position} reaches the sheet above it, fitted: {height}"
+            );
+        }
+        for (position, height) in &heights[front_corners..] {
+            assert!(
+                (-UNFITTED_DISTANCE..=-SHEET_DISTANCE).contains(height),
+                "{match_mode:?}: the back part's cage at {position} reaches the sheet below it, fitted: {height}"
+            );
+        }
     }
 }
