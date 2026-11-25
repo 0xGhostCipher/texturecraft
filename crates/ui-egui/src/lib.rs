@@ -248,9 +248,6 @@ pub struct TextureCraftApp {
     /// The folder File > Open Sample Project starts in, under the data folder
     #[cfg(not(target_arch = "wasm32"))]
     pub samples_folder: std::path::PathBuf,
-    /// The sample project being written in the background
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) sample_preparation: Option<sample_project::SamplePreparation>,
     viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
@@ -406,8 +403,6 @@ impl TextureCraftApp {
             session_log_file: None,
             #[cfg(not(target_arch = "wasm32"))]
             samples_folder: std::path::PathBuf::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            sample_preparation: None,
             viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds::default(),
             ui,
             ui_store,
@@ -1101,10 +1096,7 @@ impl eframe::App for TextureCraftApp {
 
         control::poll(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.run_file_dialog_answers();
-            self.poll_sample_project();
-        }
+        self.run_file_dialog_answers();
         web_files::poll(self);
         let dropped = ctx.input(|input| input.raw.dropped_files.clone());
 

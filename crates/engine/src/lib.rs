@@ -97,7 +97,7 @@ pub use fill_hit_test::FillHitTest;
 pub use fill_mode::FillMode;
 pub use log::{LogEntry, LogLevel, SessionLog};
 pub use path_tool::PathState;
-pub use project_cmds::{SAMPLE_BAKE_RESOLUTION_PX, SAMPLE_PROJECT_NAME, SAMPLE_RESOLUTION_PX, sample_session};
+pub use project_cmds::sample_session;
 pub use session::{
     CloneFrom, CloneSource, Document, HISTORY_TEMPLATES, NORMAL_HEIGHT_MESH_LABEL, Session, SetCache, StackTarget, StencilLook, StencilState, Tool, ToolState,
     ViewMode, history_label, stroke_template,

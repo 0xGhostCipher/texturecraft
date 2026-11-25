@@ -31,41 +31,26 @@ fn answer_with(harness: &mut Harness<'static, TextureCraftApp>, pick: impl Fn(Op
     started_in
 }
 
-fn click_open_sample_project(harness: &mut Harness<'static, TextureCraftApp>) {
+fn open_sample_menu_entry(harness: &mut Harness<'static, TextureCraftApp>) {
     let ctx = harness.ctx.clone();
     menus::invoke(harness.state_mut(), &ctx, "project.sample");
-}
-
-/// Clicks the menu entry and lets a background preparation end, so no test waits on a timer
-fn open_sample_menu_entry(harness: &mut Harness<'static, TextureCraftApp>) {
-    click_open_sample_project(harness);
-    harness.state_mut().wait_for_sample_project();
     harness.run_steps(3);
 }
 
 #[test]
-fn the_menu_entry_writes_the_sample_and_the_dialog_starts_in_its_folder() {
+fn the_menu_entry_copies_the_shipped_sample_and_the_dialog_starts_in_its_folder() {
     let root = super::temp_dir::TempDir::new("sample-project");
     let samples_folder = root.join("Samples");
     let mut harness = closed_app(&samples_folder);
     let started_in = answer_with(&mut harness, |folder| Answer::Paths(vec![folder.unwrap().join(SAMPLE_FILE_NAME)]));
 
-    click_open_sample_project(&mut harness);
+    open_sample_menu_entry(&mut harness);
 
-    assert!(harness.state().sample_project_pending(), "the sample is written in the background");
-    assert!(started_in.borrow().is_empty(), "the dialog waits for the sample");
-    assert!(harness.state().toasts.iter().any(|toast| !toast.error && toast.text.contains("Preparing")));
-
-    harness.state_mut().wait_for_sample_project();
-    harness.run_steps(3);
-
-    assert!(!harness.state().sample_project_pending());
-    assert!(samples_folder.join(SAMPLE_FILE_NAME).is_file(), "the sample is written on first use");
+    assert!(samples_folder.join(SAMPLE_FILE_NAME).is_file(), "the shipped sample is copied on first use");
     assert_eq!(*started_in.borrow(), vec![Some(samples_folder.clone())], "the dialog starts in the Samples folder");
     assert!(harness.state().session.project_open, "the picked sample opens");
     assert_eq!(harness.state().session.doc.project.name, "Material Ball");
-    let reference = texturecraft_engine::sample_session(128, 16).unwrap();
-    assert_eq!(harness.state().session.set_count(), reference.set_count(), "the sample keeps its texture sets");
+    assert_eq!(harness.state().session.set_count(), 2, "the sample keeps its texture sets");
     assert!(!harness.state().session.modified, "an opened sample is a clean file");
 }
 
@@ -79,10 +64,7 @@ fn a_file_already_in_the_samples_folder_is_not_overwritten() {
     let mut harness = closed_app(&samples_folder);
     let started_in = answer_with(&mut harness, |_| Answer::Cancelled);
 
-    click_open_sample_project(&mut harness);
-
-    assert!(!harness.state().sample_project_pending(), "nothing is written when the file is there");
-    harness.run_steps(3);
+    open_sample_menu_entry(&mut harness);
 
     assert_eq!(std::fs::read(&existing).unwrap(), b"the user's own file");
     assert_eq!(*started_in.borrow(), vec![Some(samples_folder)], "the dialog still starts in the Samples folder");
@@ -101,21 +83,4 @@ fn a_samples_folder_that_cannot_be_made_is_reported_and_the_dialog_still_opens()
     assert!(harness.state().toasts.iter().any(|toast| toast.error), "the failure is shown");
     assert_eq!(*started_in.borrow(), vec![None], "the dialog opens without a start folder");
     assert!(!harness.state().session.project_open);
-}
-
-#[test]
-fn a_second_click_while_the_sample_is_written_does_not_start_another_job() {
-    let root = super::temp_dir::TempDir::new("sample-project-twice");
-    let samples_folder = root.join("Samples");
-    let mut harness = closed_app(&samples_folder);
-    let started_in = answer_with(&mut harness, |_| Answer::Cancelled);
-
-    click_open_sample_project(&mut harness);
-    click_open_sample_project(&mut harness);
-    harness.state_mut().wait_for_sample_project();
-    harness.run_steps(3);
-
-    let preparing = harness.state().toasts.iter().filter(|toast| toast.text.contains("Preparing")).count();
-    assert_eq!(preparing, 1, "one job was started");
-    assert_eq!(started_in.borrow().len(), 1, "one dialog was asked");
 }
