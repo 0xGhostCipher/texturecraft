@@ -1,4 +1,4 @@
-//! An asset tile's right-click menu: what the asset is (name, usages, path, category), then what can be done with it
+//! An asset tile's right-click menu: what the asset is (name, usages, path, category), then what can be done with it; the Name of an asset the user owns is a field that renames it
 
 use egui::{Align2, Color32, CornerRadius, FontId, Response, Sense, Ui, pos2, vec2};
 use serde_json::json;
@@ -22,36 +22,74 @@ const LABEL_GAP: f32 = 12.0;
 const MAX_VALUE_WIDTH: f32 = 220.0;
 /// The menu's text size, in points
 const TEXT_SIZE: f32 = 12.0;
+/// The Name field's row and field heights, and the air before its text, in points
+const FIELD_ROW_HEIGHT: f32 = 28.0;
+const FIELD_HEIGHT: f32 = 24.0;
+const FIELD_TEXT_INSET: f32 = 8.0;
 /// The air above and below the separators, in points
 const SEPARATOR_SPACE: f32 = 3.0;
 
 /// The right-click menu on the tile whose response is `response`
 pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &ShelfEntry) {
-    response.context_menu(|ui| {
+    // Clicks inside keep the menu open, so the Name field can be typed in; its rows close it themselves
+    let menu = egui::Popup::context_menu(response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    menu.show(|ui| {
         let tokens = Tokens::get(ui.ctx());
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         let info = info_rows(entry);
         let width = menu_width(ui, &info, &row_labels(entry));
         ui.set_width(width);
-        info_block(ui, width, &info, &tokens);
+        let column = label_column(ui, &info);
+
+        // A saved brush is the user's own: its Name row is a field that renames it
+        let mut shown_info = info.as_slice();
+        if let ShelfEntry::SavedBrush { name, .. } = entry
+            && let Some((_, rest)) = info.split_first()
+        {
+            shown_info = rest;
+            let field_id = ui.make_persistent_id(("asset_name", entry.identity()));
+            if let Some(renamed) = name_field(ui, width, column, field_id, name, &tokens) {
+                app.run("brush.preset.rename", json!({"name": name, "to": renamed}));
+            }
+        }
+        info_block(ui, width, column, shown_info, &tokens);
         separator(ui, &tokens);
 
-        if let ShelfEntry::Image(name) = entry {
-            if row(ui, width, tr("Export resource..."), true, &tokens).clicked() {
-                export_image(app, name);
-                ui.close();
+        match entry {
+            ShelfEntry::Image(name) => {
+                if row(ui, width, tr("Delete"), true, &tokens).clicked() {
+                    app.run("resource.remove", json!({"name": name}));
+                    ui.close();
+                }
+                separator(ui, &tokens);
+                if row(ui, width, tr("Export resource..."), true, &tokens).clicked() {
+                    export_image(app, name);
+                    ui.close();
+                }
+                separator(ui, &tokens);
+                if row(ui, width, tr("Add as decal (view center)"), true, &tokens).clicked() {
+                    app.run("layer.add.decal", json!({"image": name}));
+                    ui.close();
+                }
             }
-            separator(ui, &tokens);
-            if row(ui, width, tr("Add as decal (view center)"), true, &tokens).clicked() {
-                app.run("layer.add.decal", json!({"image": name}));
-                ui.close();
+            ShelfEntry::SavedBrush { name, .. } => {
+                if row(ui, width, tr("Replace with the current brush"), true, &tokens).clicked() {
+                    app.run("brush.preset.store", json!({"name": name, "overwrite": true}));
+                    ui.close();
+                }
+                if row(ui, width, tr("Delete"), true, &tokens).clicked() {
+                    app.run("brush.preset.delete", json!({"name": name}));
+                    ui.close();
+                }
+                separator(ui, &tokens);
+                if row(ui, width, tr("Export resource..."), true, &tokens).clicked() {
+                    export_brush(app, name);
+                    ui.close();
+                }
             }
-            if row(ui, width, tr("Remove resource"), true, &tokens).clicked() {
-                app.run("resource.remove", json!({"name": name}));
-                ui.close();
+            _ => {
+                row(ui, width, tr("Export resource..."), false, &tokens).on_hover_text(tr("Built-in assets have no file to export"));
             }
-        } else {
-            row(ui, width, tr("Export resource..."), false, &tokens).on_hover_text(tr("Built-in assets have no file to export"));
         }
 
         separator(ui, &tokens);
@@ -76,8 +114,10 @@ fn info_rows(entry: &ShelfEntry) -> Vec<(&'static str, String)> {
 /// The labels of the rows under the info block, for the menu's width
 fn row_labels(entry: &ShelfEntry) -> Vec<&'static str> {
     let mut labels = vec![tr("Export resource..."), tr("Close")];
-    if matches!(entry, ShelfEntry::Image(_)) {
-        labels.extend([tr("Add as decal (view center)"), tr("Remove resource")]);
+    match entry {
+        ShelfEntry::Image(_) => labels.extend([tr("Delete"), tr("Add as decal (view center)")]),
+        ShelfEntry::SavedBrush { .. } => labels.extend([tr("Replace with the current brush"), tr("Delete")]),
+        _ => {}
     }
     labels
 }
@@ -98,9 +138,8 @@ fn menu_width(ui: &Ui, info: &[(&str, String)], labels: &[&str]) -> f32 {
     TEXT_X + (label_column(ui, info) + widest_value).max(widest_row) + RIGHT_PADDING
 }
 
-/// The label (dim) and value rows; a value too wide is cut in the middle with "…"
-fn info_block(ui: &mut Ui, width: f32, info: &[(&str, String)], tokens: &Tokens) {
-    let column = label_column(ui, info);
+/// The label (dim) and value rows, values `column` points after the labels; a value too wide is cut in the middle with "…"
+fn info_block(ui: &mut Ui, width: f32, column: f32, info: &[(&str, String)], tokens: &Tokens) {
     let value_width = width - TEXT_X - column - RIGHT_PADDING;
     for (label, value) in info {
         let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
@@ -110,6 +149,44 @@ fn info_block(ui: &mut Ui, width: f32, info: &[(&str, String)], tokens: &Tokens)
         painter.text(pos2(rect.left() + TEXT_X, rect.center().y), Align2::LEFT_CENTER, *label, FontId::proportional(TEXT_SIZE), tokens.text_dim);
         painter.text(pos2(rect.left() + TEXT_X + column, rect.center().y), Align2::LEFT_CENTER, shown, FontId::proportional(TEXT_SIZE), tokens.text);
     }
+}
+
+/// The Name row of an asset the user owns: a field in the value column that returns the new name once typing ends (Enter or a click elsewhere) with a changed, non-blank name. Escape keeps the old one
+fn name_field(ui: &mut Ui, width: f32, column: f32, field_id: egui::Id, name: &str, tokens: &Tokens) -> Option<String> {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_ROW_HEIGHT), Sense::hover());
+    let label = tr("Name");
+    ui.painter().text(pos2(rect.left() + TEXT_X, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(TEXT_SIZE), tokens.text_dim);
+
+    // Check raw Escape even if the menu consumed it
+    let escaped = ui.input(|input| input.raw.events.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })));
+    if escaped {
+        ui.data_mut(|data| data.remove::<String>(field_id));
+    }
+    let mut text = ui.data(|data| data.get_temp::<String>(field_id)).unwrap_or_else(|| name.to_owned());
+
+    // The field's text lines up with the values below it
+    let field = egui::Rect::from_min_max(
+        pos2(rect.left() + TEXT_X + column - FIELD_TEXT_INSET, rect.center().y - FIELD_HEIGHT / 2.0),
+        pos2(rect.right() - TEXT_X, rect.center().y + FIELD_HEIGHT / 2.0),
+    );
+    ui.painter().rect(field, CornerRadius::same(HOVER_ROUNDING), tokens.field, egui::Stroke::new(1.0, tokens.field_border), egui::StrokeKind::Inside);
+    let edit = egui::TextEdit::singleline(&mut text)
+        .id(field_id)
+        .font(FontId::proportional(TEXT_SIZE))
+        .text_color(tokens.text)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(FIELD_TEXT_INSET as i8, 0)))
+        .align(Align2::LEFT_CENTER);
+    let response = ui.new_child(egui::UiBuilder::new().max_rect(field.shrink(1.0))).add_sized(field.shrink(1.0).size(), edit);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, label));
+
+    if response.has_focus() {
+        ui.data_mut(|data| data.insert_temp(field_id, text));
+        return None;
+    }
+
+    ui.data_mut(|data| data.remove::<String>(field_id));
+    let typed = text.trim();
+    (response.lost_focus() && !escaped && !typed.is_empty() && typed != name).then(|| typed.to_owned())
 }
 
 /// `text`, or its start and end around "…" so it fits `width` points
@@ -169,5 +246,25 @@ fn export_image(app: &mut TextureCraftApp, name: &str) {
 
 #[cfg(target_arch = "wasm32")]
 fn export_image(app: &mut TextureCraftApp, _: &str) {
+    app.toast(tr("Exporting resources needs the desktop app"), true);
+}
+
+/// Asks where to save saved brush `name`, then writes it there as a brush preset file
+#[cfg(not(target_arch = "wasm32"))]
+fn export_brush(app: &mut TextureCraftApp, name: &str) {
+    use crate::file_dialogs::{Bound, FileDialog};
+    use texturecraft_engine::brush_preset_cmds::BRUSH_EXT;
+
+    let name = name.to_owned();
+    let dialog = FileDialog::save().filter(tr("Brush preset"), &[BRUSH_EXT]).file_name(format!("{name}.{BRUSH_EXT}"));
+    app.ask_file(dialog, Bound::App, move |app, paths| {
+        if let Some(path) = paths.first() {
+            app.run("brush.preset.export", json!({"name": name, "path": path.to_string_lossy()}));
+        }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn export_brush(app: &mut TextureCraftApp, _: &str) {
     app.toast(tr("Exporting resources needs the desktop app"), true);
 }
