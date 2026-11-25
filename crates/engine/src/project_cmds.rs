@@ -57,9 +57,18 @@ fn material(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "layer": l.0 }))
 }
 
+/// Name of the sample project, which is also the stem of its project file
+pub const SAMPLE_PROJECT_NAME: &str = "Material Ball";
+
+/// Texture size of the sample project the Open Sample Project menu entry offers
+pub const SAMPLE_RESOLUTION_PX: u32 = 2048;
+
+/// Bake size of the sample project the Open Sample Project menu entry offers
+pub const SAMPLE_BAKE_RESOLUTION_PX: u32 = 1024;
+
 /// A baked material ball with smart materials on both texture sets
 pub fn sample_session(resolution: u32, bake_resolution: u32) -> Result<Session> {
-    let mut session = Session::new_project("Material Ball", primitives::material_ball(), "builtin:material_ball", None, resolution)?;
+    let mut session = Session::new_project(SAMPLE_PROJECT_NAME, primitives::material_ball(), "builtin:material_ball", None, resolution)?;
     for set_index in 0..session.set_count() {
         let set = session.doc.project.texture_set_mut(set_index)?;
         set.bake.common.resolution = BakeResolution::from_pixels(bake_resolution).ok_or_else(|| bad("project.sample", "invalid bake resolution"))?;
@@ -91,7 +100,7 @@ pub fn sample_session(resolution: u32, bake_resolution: u32) -> Result<Session> 
 }
 
 fn sample(s: &mut Session, _: &Value) -> Result<Value> {
-    let next = sample_session(2048, 1024)?;
+    let next = sample_session(SAMPLE_RESOLUTION_PX, SAMPLE_BAKE_RESOLUTION_PX)?;
     s.switch_to(next);
     Ok(crate::inspect::session(s))
 }

@@ -539,19 +539,15 @@ pub(crate) fn import_materialx(app: &mut TextureCraftApp, path: &str) -> bool {
 
 /// File menu actions that need dialogs. Returns true when handled.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) -> bool {
+pub fn file_action(app: &mut TextureCraftApp, ctx: &egui::Context, id: &str) -> bool {
     match id {
-        "file.open" | "project.sample" => {
-            let dialog = if id == "project.sample" {
-                FileDialog::open().title(tr("Open Sample Project")).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT])
-            } else {
-                FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS)
-            };
-            app.ask_file(dialog, Bound::App, |app, paths| {
-                if let Some(path) = paths.first() {
-                    open_path(app, &path.display().to_string());
-                }
-            });
+        "file.open" => {
+            let dialog = FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS);
+            app.ask_file(dialog, Bound::App, open_picked);
+            true
+        }
+        "project.sample" => {
+            app.open_sample_project(ctx);
             true
         }
         "file.save" if app.session.path.is_some() => {
@@ -628,6 +624,14 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             true
         }
         _ => false,
+    }
+}
+
+/// Opens the project or mesh a file dialog picked
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn open_picked(app: &mut TextureCraftApp, paths: Vec<std::path::PathBuf>) {
+    if let Some(path) = paths.first() {
+        open_path(app, &path.display().to_string());
     }
 }
 

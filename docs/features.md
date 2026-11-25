@@ -114,8 +114,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 ## Files and texture sets
 
 - **Open** glTF/GLB, FBX (binary and ASCII), COLLADA, **USD** (usda, usdc, usdz), **Alembic**,
-  OBJ, PLY and STL, or a built-in mesh (the `project.new` command; *File › Open sample project...* opens the
-  material ball); UVs are generated when a mesh has none. A `.gltf`'s buffers
+  OBJ, PLY and STL, or a built-in mesh (the `project.new` command; *File › Open sample project...* asks for a
+  `.tcraft` file, starting in the `Samples` folder of the data folder, which holds the material ball); UVs are generated when a mesh has none. A `.gltf`'s buffers
   and images and a loose USD layer's textures are read from its folder and kept in the project.
   Reimport a changed mesh and your painted strokes stay on the surface. The
   `file.changeMesh` command (trusted local command API and the control channel) moves the project onto a different mesh file and keeps its layers.
