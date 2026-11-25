@@ -6,8 +6,10 @@
 //!
 //! The runtime takes Escape, Tab and the clipboard events for the whole window unless one of TextureCraft's own egui
 //! widgets has the keyboard. The window's Escape is read with [`escape_pressed`] and taken with
-//! [`take_window_cancel`], its plain Enter taken with [`take_window_submit`]; the 3D/2D viewport is declared to the runtime with [`host_canvas`], which keeps Tab (Hide
-//! UI), the edit chords and the clipboard events in egui's input for TextureCraft's shortcuts.
+//! [`take_window_cancel`], its plain Enter taken with [`take_window_submit`]; the 3D/2D viewport is declared to the runtime with [`host_canvas`], which keeps the edit
+//! chords and the clipboard events in egui's input for TextureCraft's shortcuts. A bare Tab with nothing focused
+//! toggles the window's chrome in the runtime ([`RootEnv::tab_toggles_chrome`]), which `frame_input` turns into Hide UI;
+//! with the viewport focused, Tab stays in egui for the shortcut table's `ui.hideUi`.
 
 use std::sync::{Arc, OnceLock};
 
@@ -18,7 +20,7 @@ use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
 use craft_ui::runtime::commands::{CommandInput, CommandSet as _, NavCommand, QuitCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
 use craft_ui::runtime::focus::{EditSet, KeepKeys, KeyUse};
-use craft_ui::runtime::frame::{FrameInput, FrameOutput};
+use craft_ui::runtime::frame::{ChromeToggle, FrameInput, FrameOutput};
 use craft_ui::runtime::keys::{Intent, with_window_intents};
 use craft_ui::shell::embed::{self, CloseDecision};
 use craft_window::policy::Decision;
@@ -102,16 +104,24 @@ impl TextureCraftApp {
     }
 
     /// The root values of this frame. TextureCraft registers no commands with the runtime (its own shortcut table
-    /// runs every key, [`command_overrides`]) and lets it toggle no chrome (Tab is Hide UI, kept in egui by the
-    /// viewport's [`host_canvas`]), so the output carries nothing it acts on. While one of TextureCraft's own egui
-    /// modals shows in the root window, the runtime blocks the panels floated into windows of their own.
-    pub(crate) fn frame_input(&mut self, ctx: &egui::Context, _output: FrameOutput, scale: f32) -> FrameInput {
+    /// runs every key, [`command_overrides`]). The runtime toggles the chrome on a bare Tab with nothing focused
+    /// (`tab_toggles_chrome`, the viewport being the registered canvas), and each panels toggle it recorded for the
+    /// root window flips Hide UI, as the `ui.hideUi` command does; with the viewport focused, Tab stays in egui for
+    /// that command ([`host_canvas`]), so one Tab flips Hide UI once. While one of TextureCraft's own egui modals
+    /// shows in the root window, the runtime blocks the panels floated into windows of their own.
+    pub(crate) fn frame_input(&mut self, ctx: &egui::Context, output: FrameOutput, scale: f32) -> FrameInput {
+        for (viewport, toggle) in &output.chrome_toggles {
+            if *viewport == ViewportId::ROOT && matches!(toggle, ChromeToggle::Panels | ChromeToggle::PanelsKeepTools) {
+                self.ui.hide_ui = !self.ui.hide_ui;
+            }
+        }
         use crate::theme::Brightness;
         let mode = match self.ui.prefs.brightness {
             Brightness::Light | Brightness::MediumLight => craft_theme::Mode::Light,
             Brightness::Dark | Brightness::MediumDark => craft_theme::Mode::Dark,
         };
-        let root = RootEnv::new().mode(mode).scale(Scale::new(scale));
+        let mut root = RootEnv::new().mode(mode).scale(Scale::new(scale));
+        root.tab_toggles_chrome = true;
         let app_modal = crate::docking::input_blocked(self, ctx).then_some(ViewportId::ROOT);
         FrameInput::new(root).commands(CommandInput::new().overrides(command_overrides())).host(Arc::clone(&self.framework_host)).app_modal(app_modal)
     }
@@ -125,8 +135,9 @@ impl TextureCraftApp {
 }
 
 /// Declares the viewport `id`, drawn in this pass, as the window's document canvas. With nothing focused it is the
-/// window's key target: Tab (Hide UI), the edit chords and the clipboard events stay in egui's input for TextureCraft's
-/// shortcuts.
+/// window's key target: the edit chords and the clipboard events stay in egui's input for TextureCraft's shortcuts.
+/// A bare Tab with nothing focused is the runtime's chrome toggle (`frame_input`); with the viewport focused, the
+/// canvas keeps Tab in egui for the shortcut table's Hide UI.
 pub(crate) fn host_canvas(ctx: &egui::Context, id: egui::Id) {
     const KEYS: KeyUse = KeyUse::CANVAS.with_keep(KeepKeys::Tab).with_edits(EditSet::ALL);
     craft_ui::runtime::focus::host_canvas(ctx, id, KEYS);
