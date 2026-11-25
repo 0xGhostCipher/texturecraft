@@ -311,6 +311,15 @@ pub const DEFAULT_PRESET: &str = "Document channels + Normal + AO (No Alpha)";
 /// scripts still use it).
 const OLD_DEFAULT_PRESET: &str = "Document channels + Normal + AO";
 
+/// Names introduced with the export update, which could previously belong to saved user presets.
+pub const NEW_BUILTIN_PRESET_NAMES: [&str; 5] = [
+    "Unreal Engine Subsurface Profile (Packed)",
+    "glTF Specular Glossiness (archived extension)",
+    "Redshift Standard Material (separate maps)",
+    "Roblox SurfaceAppearance (separate maps)",
+    "Sketchfab Metalness (separate maps)",
+];
+
 /// The immutable built-in templates shared by menu and command lookups.
 pub fn builtin_preset_catalog() -> &'static [ExportPreset] {
     static CATALOG: std::sync::LazyLock<Vec<ExportPreset>> = std::sync::LazyLock::new(builtin_presets);

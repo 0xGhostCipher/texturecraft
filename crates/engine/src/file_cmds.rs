@@ -288,30 +288,51 @@ impl Session {
     /// named like one an earlier set exports is left out, with a warning (see
     /// [`texturecraft_formats::skip_repeated_names`]).
     pub fn export_files(&mut self, sets: &[usize], opts: &ExportOptions) -> Result<Vec<ExportedFile>> {
-        let mut files = self.render_export_files(sets, opts, |_, plans| plans)?;
+        self.export_file_jobs(sets.iter().map(|&set| (set, opts)))
+    }
+
+    /// Render one in-memory batch, using each set's own export settings when supplied.
+    pub fn export_file_jobs<'a>(&mut self, jobs: impl IntoIterator<Item = (usize, &'a ExportOptions)>) -> Result<Vec<ExportedFile>> {
+        let mut files = self.render_export_jobs(jobs, |_, plans| plans)?;
         texturecraft_formats::skip_repeated_names(&mut files);
         Ok(files)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn render_export_files(
         &mut self,
         sets: &[usize],
         options: &ExportOptions,
+        select: impl FnMut(usize, Vec<PlannedFile>) -> Vec<PlannedFile>,
+    ) -> Result<Vec<ExportedFile>> {
+        self.render_export_jobs(sets.iter().map(|&set| (set, options)), select)
+    }
+
+    fn render_export_jobs<'a>(
+        &mut self,
+        jobs: impl IntoIterator<Item = (usize, &'a ExportOptions)>,
         mut select: impl FnMut(usize, Vec<PlannedFile>) -> Vec<PlannedFile>,
     ) -> Result<Vec<ExportedFile>> {
+        let project = &self.doc.project;
+        let mesh_name = stem_of(project.mesh.trim_start_matches("builtin:"));
+        let mut psd_bytes = 0;
+        let mut pending = Vec::new();
+        for (set_index, options) in jobs {
+            let plans = texturecraft_formats::list_outputs(project, set_index, &mesh_name, options).map_err(fe)?;
+            let plans = select(set_index, plans);
+            if !plans.is_empty() {
+                let set = project.texture_set(set_index).map_err(|error| EngineError::Other(error.to_string()))?;
+                texturecraft_formats::export::check_psd_batch(set, options, &plans, &mut psd_bytes).map_err(fe)?;
+                pending.push((set_index, options, plans));
+            }
+        }
+
         if self.solo.is_none() {
             self.update();
         }
 
-        let mesh_name = stem_of(self.doc.project.mesh.trim_start_matches("builtin:"));
         let mut out = Vec::new();
-        for &set_index in sets {
-            let plans = texturecraft_formats::list_outputs(&self.doc.project, set_index, &mesh_name, options).map_err(fe)?;
-            let plans = select(set_index, plans);
-            if plans.is_empty() {
-                continue;
-            }
-
+        for (set_index, options, plans) in pending {
             let files = self.with_export_input(
                 set_index,
                 &mesh_name,

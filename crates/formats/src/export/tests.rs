@@ -2191,3 +2191,129 @@ fn the_sketchfab_template_writes_directx_normals_and_one_map_per_channel() {
 
     assert!((green - (255 - open_gl_green)).abs() <= 1, "DirectX normal: green {green}");
 }
+
+#[test]
+fn feedback_psd_preview_matches_layer_rgba() {
+    let fx = Fx::new(&[Channel::Roughness, Channel::BaseColor]);
+    let mut gray_alpha = roughness();
+    gray_alpha.push((Dest::A, SourceRef::Constant(0.5)));
+
+    for channels in [roughness(), gray_alpha, rgba_half_alpha()] {
+        let options = one_map(FileFormat::Psd, 8, channels);
+
+        let preview = MapPreview::sample(&fx.input(), &options, 0, RES).unwrap().unwrap();
+        let files = fx.render(&options);
+        let psd = craft_psd::PsdFile::from_bytes(&files[0].bytes).unwrap();
+        let layer = psd.iter_layers().next().unwrap().rgba8().unwrap();
+
+        assert_eq!(preview.channels, [Dest::R, Dest::G, Dest::B, Dest::A]);
+        assert!(preview.pixels == layer.data, "the preview shows the layer's stored channels");
+    }
+}
+
+#[test]
+fn feedback_psd_layer_names_keep_literal_and_explicit_tile_numbers() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.texture_sets[0].uv_tiles = vec![1001];
+    let mut options = one_map(FileFormat::Psd, 8, roughness());
+    let literal = format!("{}.1001", "a".repeat(MAX_STEM - ".1001".len()));
+    options.preset.maps[0].file = literal.clone();
+
+    let plan = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+
+    assert_eq!(plan[0].layers[0].name, literal);
+
+    options.preset.maps[0].file = "Group/Map.$udim".into();
+    let plan = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+    assert_eq!(plan[0].layers[0].name, "Group/Map.1001");
+
+    options.preset.maps[0].file = "Map".into();
+    options.format_override = Some(FileFormat::Png);
+    let plan = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+    assert_eq!(plan[0].name, "Map.1001.png");
+}
+
+#[test]
+fn feedback_psd_tiled_and_untiled_sets_keep_both_documents() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.texture_sets[0].name = "Body".into();
+    fx.project.texture_sets[0].uv_tiles = vec![1001, 1002];
+    for name in ["body.1001", "Body.1001_1", "Trim"] {
+        let mut untiled = fx.project.texture_sets[0].clone();
+        untiled.name = name.into();
+        untiled.uv_tiles.clear();
+        fx.project.texture_sets.push(untiled);
+    }
+    let options = one_map(FileFormat::Psd, 8, roughness());
+
+    let plans = list_set_outputs(&fx.project, &[1, 0, 2, 3], "sphere", &options).unwrap();
+
+    assert_eq!(plans.len(), 5);
+    assert_eq!(plans[1].1.name, "sphere_Body.1001.psd");
+    assert_eq!(plans[2].1.name, "sphere_Body.1002.psd");
+    assert_eq!(plans[3].1.name, "sphere_Body.1001_1.psd");
+    assert_eq!(plans[4].1.name, "sphere_Trim.psd");
+    let separate = list_outputs(&fx.project, 1, "sphere", &options).unwrap();
+    assert_eq!(plans[0].1.name, separate[0].name, "individual desktop jobs agree with selection planning");
+}
+
+#[test]
+fn feedback_psd_batch_rejects_large_retained_output_before_rendering() {
+    let mut fx = Fx::new(&default_channels());
+    let mut options = one_map(FileFormat::Psd, 8, roughness());
+    options.padding = Padding::None;
+    options.size = Some(4096);
+    fx.project.texture_sets[0].uv_tiles = (1001..1008).collect();
+
+    let smaller = list_set_outputs(&fx.project, &[0], "sphere", &options).unwrap();
+    assert_eq!(smaller.len(), 7, "seven 128 MiB payloads fit with record overhead");
+    fx.project.texture_sets[0].uv_tiles.extend(1008..1034);
+
+    let oversized = list_set_outputs(&fx.project, &[0], "sphere", &options);
+    assert!(matches!(&oversized, Err(error) if error.to_string().contains("total PSD")), "the 33 individually valid tiles must be rejected as a batch");
+
+    let set = &fx.project.texture_sets[0];
+    let (width, height) = set.size();
+    fx.comp = Composite::with_size(&default_channels(), width, height);
+    fx.coverage.resize((width * height) as usize, true);
+    let error = render_maps(&fx.input(), &options).unwrap_err();
+    assert!(error.to_string().contains("total PSD"), "{error}");
+
+    let (_, estimated_bytes) = check_psd_size([(4096, 4096)], 0, 8).unwrap();
+    println!("PSD preflight: {estimated_bytes} estimated bytes per tile; {} across 33 tiles; batch limit {MAX_PSD_BATCH_BYTES}", estimated_bytes * 33);
+
+    let mut small = fx.project.texture_sets[0].clone();
+    small.uv_tiles = (1001..1006).collect();
+    fx.project.texture_sets[0] = small.clone();
+    small.name = "Other".into();
+    fx.project.texture_sets.push(small);
+    assert!(list_set_outputs(&fx.project, &[0], "sphere", &options).is_ok());
+    assert!(list_set_outputs(&fx.project, &[1], "sphere", &options).is_ok());
+    assert!(list_set_outputs(&fx.project, &[0, 1], "sphere", &options).is_err(), "the budget includes all selected sets");
+}
+
+#[test]
+fn feedback_j2k_warns_for_explicit_gray_and_rgb_colour_spaces() {
+    let fx = Fx::new(&default_channels());
+    let base = |component| SourceRef::Channel { channel: Channel::BaseColor, component };
+    let gray = vec![(Dest::L, base(0))];
+    let rgb = vec![(Dest::R, base(0)), (Dest::G, base(1)), (Dest::B, base(2))];
+
+    for (channels, selected, expected) in [
+        (gray.clone(), Some(ColorSpace::LinearRec709), Some(ColorSpace::LinearRec709)),
+        (gray, Some(ColorSpace::AcesCg), Some(ColorSpace::LinearRec709)),
+        (rgb, Some(ColorSpace::Srgb), Some(ColorSpace::Srgb)),
+        (roughness(), None, None),
+    ] {
+        let mut options = one_map(FileFormat::J2k, 8, channels);
+        options.color_space = selected;
+
+        let files = fx.render(&options);
+        let warnings: Vec<_> = files[0].warnings.iter().filter(|warning| warning.contains("J2K export does not embed")).collect();
+
+        assert_eq!(warnings.len(), usize::from(expected.is_some()), "warnings: {:?}", files[0].warnings);
+        if let Some(space) = expected {
+            assert!(warnings[0].ends_with(space.name()));
+        }
+    }
+}

@@ -360,14 +360,14 @@ mod web {
     }
 
     fn export(app: &mut TextureCraftApp, jobs: &[(usize, Value)]) -> Result<String, String> {
-        let mut files = Vec::new();
-        for (set_index, params) in jobs {
-            let options = texturecraft_engine::file_cmds::export_options(&app.session, params, "file.exportTextures").map_err(|e| e.to_string())?;
-            files.extend(app.session.export_files(&[*set_index], &options).map_err(|e| e.to_string())?);
-        }
+        let options = jobs
+            .iter()
+            .map(|(_, params)| texturecraft_engine::file_cmds::export_options(&app.session, params, "file.exportTextures"))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let jobs_with_options = jobs.iter().zip(&options).map(|((set_index, _), options)| (*set_index, options));
+        let mut files = app.session.export_file_jobs(jobs_with_options).map_err(|error| error.to_string())?;
 
-        // Keep one file for each case-insensitive name in the download
-        texturecraft_engine::formats::skip_repeated_names(&mut files);
         if app.ui.export.shader_parameters {
             let sets: Vec<usize> = jobs.iter().map(|(set_index, _)| *set_index).collect();
             match shader_parameters_sidecar(&app.session.doc.project, &sets, &files) {

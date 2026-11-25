@@ -216,3 +216,24 @@ fn the_page_reset_puts_the_parameters_back() {
     assert_eq!((e.size, e.padding.as_str()), (0, "infinite"));
     assert_eq!(e.skip, vec![0], "the texture set ticks are not parameters of the page");
 }
+
+#[test]
+fn feedback_escape_clears_a_pick_before_cancelling_export() {
+    let mut h = harness();
+    let pick = egui::Id::unique("export_escape_screen_color_pick");
+    h.state_mut().picking_color = Some(pick);
+    h.state_mut().ui.export.size = 512;
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+
+    assert!(h.state().picking_color.is_none(), "the armed pick receives Escape first");
+    assert!(h.query_by_role_and_label(egui::Role::Button, "Save settings").is_some());
+    assert_eq!(h.state().ui.export.size, 512);
+
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+
+    assert!(!h.state().ui.windows.export);
+    assert_eq!(h.state().ui.export.size, 0);
+}

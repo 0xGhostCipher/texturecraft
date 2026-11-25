@@ -335,31 +335,47 @@ fn file_type_name(format: &str) -> String {
 }
 
 /// The label shown for a stored template name. Custom template names pass through unchanged.
-pub(super) fn template_label(name: &str) -> &str {
-    match name {
+pub(super) fn template_label<'a>(session: &texturecraft_engine::Session, name: &'a str) -> &'a str {
+    use texturecraft_engine::preset_cmds::unqualified_preset_name;
+
+    let label = match unqualified_preset_name(name) {
         "Unreal Engine Subsurface Profile (Packed)" => tr("Packed maps with a scattering mask"),
         "Redshift Standard Material (separate maps)" => tr("Separate coat, sheen and scattering maps"),
         "Roblox SurfaceAppearance (separate maps)" => tr("Four maps with opacity in color"),
         "Sketchfab Metalness (separate maps)" => tr("Six maps with a negative-Y normal"),
-        _ => name,
-    }
+        _ => return name,
+    };
+
+    if session.has_user_export_preset(name) { name } else { label }
 }
 
 /// The template list: the first group (name, whether TextureCraft has it), then the others
 /// (built-in and user templates) sorted by name.
 pub(crate) fn template_groups(app: &TextureCraftApp, builtins: &[ExportPreset]) -> (Vec<(&'static str, bool)>, Vec<String>) {
     let first = FIRST_GROUP.iter().map(|name| (*name, builtins.iter().any(|p| p.name == *name))).collect();
-    let mut rest: Vec<String> = builtins.iter().map(|p| p.name.clone()).filter(|n| !FIRST_GROUP.contains(&n.as_str())).collect();
+    let mut rest: Vec<String> = builtins
+        .iter()
+        .filter(|preset| !FIRST_GROUP.contains(&preset.name.as_str()))
+        .map(|preset| app.session.builtin_export_preset_id(&preset.name).into_owned())
+        .collect();
     rest.extend(app.session.export_presets.list.iter().map(|p| p.name.clone()));
-    rest.sort_by(|left, right| template_label(left).cmp(template_label(right)).then_with(|| left.cmp(right)));
+    rest.sort_by(|left, right| template_label(&app.session, left).cmp(template_label(&app.session, right)).then_with(|| left.cmp(right)));
     rest.dedup();
     (first, rest)
 }
 
 /// A template dropdown in `rect` over `first` and `rest`; true when `current` changed
-fn template_combo(ui: &mut Ui, rect: egui::Rect, id: &str, current: &mut String, first: &[(&str, bool)], rest: &[String]) -> bool {
+fn template_combo(
+    session: &texturecraft_engine::Session,
+    ui: &mut Ui,
+    rect: egui::Rect,
+    id: &str,
+    current: &mut String,
+    first: &[(&str, bool)],
+    rest: &[String],
+) -> bool {
     let mut changed = false;
-    drawn::combo(ui, rect, id, template_label(current).to_owned(), |ui| {
+    drawn::combo(ui, rect, id, template_label(session, current).to_owned(), |ui| {
         for (name, have) in first {
             if *have {
                 changed |= ui.selectable_value(current, (*name).to_string(), *name).on_hover_text(*name).changed();
@@ -369,7 +385,7 @@ fn template_combo(ui: &mut Ui, rect: egui::Rect, id: &str, current: &mut String,
         }
         ui.separator().on_hover_text(tr("Some templates in this list are unavailable"));
         for name in rest {
-            changed |= ui.selectable_value(current, name.clone(), template_label(name)).on_hover_text(name).changed();
+            changed |= ui.selectable_value(current, name.clone(), template_label(session, name)).on_hover_text(name).changed();
         }
     });
     changed
@@ -1013,7 +1029,7 @@ fn global_page(app: &mut TextureCraftApp, ui: &mut Ui, place: PagePlace, builtin
     row_label(ui, place, y, tr("Output template"));
     let (first, rest) = template_groups(app, builtins);
     let mut picked = app.ui.export.preset.clone();
-    if template_combo(ui, drawn::control_rect(left, right, y), "exp_preset", &mut picked, &first, &rest) {
+    if template_combo(&app.session, ui, drawn::control_rect(left, right, y), "exp_preset", &mut picked, &first, &rest) {
         crate::export_templates::select(app, picked);
     }
 
@@ -1237,9 +1253,9 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, place: PagePlace,
 
     let row_y = |row: usize| place.y(SET_FIRST_ROW_Y + row as f32 * SET_ROW_PITCH);
     let mut toggled = None;
-    if override_row(ui, place, row_y(0), tr("Output template"), overrides.preset.is_some(), template_label(&from.preset), |ui, rect| {
+    if override_row(ui, place, row_y(0), tr("Output template"), overrides.preset.is_some(), template_label(&app.session, &from.preset), |ui, rect| {
         if let Some(preset) = &mut overrides.preset {
-            template_combo(ui, rect, "exp_set_preset", preset, &first, &rest);
+            template_combo(&app.session, ui, rect, "exp_set_preset", preset, &first, &rest);
         }
     }) {
         toggled = Some(0);
@@ -1687,13 +1703,8 @@ fn cancel(app: &mut TextureCraftApp) {
     app.ui.windows.export = false;
 }
 
-/// Escape closes the window as Cancel does, read in `menus::shortcuts`; an open dropdown, channel question, template rename or text field takes it first
-pub(crate) fn keys_in(app: &mut TextureCraftApp, input: &mut egui::InputState, popup_open: bool) {
-    let export = &app.ui.export;
-    if popup_open || export.field_had_keyboard || export.pending_drop.is_some() || export.renaming.is_some() {
-        return;
-    }
-
+/// Escape closes the window as Cancel does after shortcut routing checks higher-priority inputs.
+pub(crate) fn keys_in(app: &mut TextureCraftApp, input: &mut egui::InputState) {
     if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
         app.ui.export.job = None;
         cancel(app);
@@ -1804,7 +1815,8 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     }
 
     // Settings saved under the default template's old name
-    if let Some(b) = texturecraft_engine::formats::builtin_preset(&app.ui.export.preset)
+    if !app.session.has_user_export_preset(&app.ui.export.preset)
+        && let Some(b) = texturecraft_engine::formats::builtin_preset(&app.ui.export.preset)
         && b.name != app.ui.export.preset
     {
         app.ui.export.preset = b.name;

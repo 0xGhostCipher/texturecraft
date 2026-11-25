@@ -18,14 +18,14 @@ const ALPHA_INDEX: usize = 3;
 /// Budget for the pixel buffers of one PSD export, including the renderer's padding and encoder
 const MAX_PSD_WORKING_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-/// Check file limits and pixel-buffer working memory before constructing the renderer.
+/// Check file and working memory limits, returning the canvas size and estimated encoded bytes.
 pub(super) fn preflight<'a>(
     set: &TextureSet,
     options: &ExportOptions,
     tile: Option<u32>,
     depth: u8,
     layers: impl Iterator<Item = &'a PlannedLayer> + Clone,
-) -> Result<(u32, u32)> {
+) -> Result<((u32, u32), u64)> {
     let texels = |(width, height)| u64::from(width) * u64::from(height);
     let folder_count = layers.clone().map(|layer| layer.name.matches('/').count()).sum();
     let sizes = layers.map(|layer| psd_size(set, tile, options.map_size(layer.map)));
@@ -63,7 +63,7 @@ pub(super) fn preflight<'a>(
         )));
     }
 
-    Ok(canvas)
+    Ok((canvas, file_bytes))
 }
 
 /// Render each layer at its requested size, aligned to the upper-left corner of the PSD canvas.

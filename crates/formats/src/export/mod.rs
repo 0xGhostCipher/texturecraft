@@ -45,6 +45,8 @@ const HEIGHT_SPAN: f32 = 16.0;
 const JPEG_QUALITY: u8 = 95;
 const PSD_MAX_SIDE_PIXELS: u32 = 30_000;
 const PSD_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Bound retained PSD payloads before rendering, with headroom for a document's working buffers and ZIP packaging
+const MAX_PSD_BATCH_BYTES: u64 = 1024 * 1024 * 1024;
 /// Planes of a PSD image or layer: red, green, blue and alpha
 const PSD_RGBA_PLANES: usize = 4;
 /// Preset limits (user presets are untrusted JSON).
@@ -651,6 +653,44 @@ fn psd_stem(mesh_name: &str, set_name: &str, set_index: usize, max_len: usize) -
     format!("{mesh}_{set}_{set_index}")
 }
 
+/// Keep tiled names stable even when the export window plans each texture set separately.
+fn untiled_psd_stem(project: &Project, mesh_name: &str, set_index: usize, set: &TextureSet, atlas: bool) -> String {
+    let stem = psd_stem(mesh_name, &set.name, set_index, MAX_STEM);
+    if atlas {
+        return stem;
+    }
+
+    let Some((base, tile)) = stem.rsplit_once('.') else { return stem };
+    let Ok(number) = tile.parse::<u32>() else { return stem };
+
+    let suffix_len = tile.len() + 1;
+    let collides = number.to_string() == tile
+        && project.texture_sets.iter().enumerate().any(|(index, other)| {
+            other.uv_tiles.contains(&number) && base.eq_ignore_ascii_case(&psd_stem(mesh_name, &other.name, index, MAX_STEM - suffix_len))
+        });
+    if !collides {
+        return stem;
+    }
+
+    // Reserve the ordinary untiled names, including names that already end in an index
+    let untiled_names: BTreeSet<_> = project
+        .texture_sets
+        .iter()
+        .enumerate()
+        .filter(|(_, other)| other.uv_tiles.is_empty())
+        .map(|(index, other)| psd_stem(mesh_name, &other.name, index, MAX_STEM).to_ascii_lowercase())
+        .collect();
+    let mut attempt = 0usize;
+    loop {
+        let suffix = if attempt == 0 { format!("_{set_index}") } else { format!("-{attempt}_{set_index}") };
+        let name = format!("{}{suffix}", &stem[..stem.len().min(MAX_STEM - suffix.len())]);
+        if !untiled_names.contains(&name.to_ascii_lowercase()) {
+            return name;
+        }
+        attempt += 1;
+    }
+}
+
 /// [`sanitize_file_stem`] for each `/`-separated folder name and the file stem.
 pub fn sanitize_file_path(s: &str) -> String {
     s.split('/').map(sanitize_file_stem).collect::<Vec<_>>().join("/")
@@ -697,8 +737,12 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
         // Integer files clamp wide-gamut linear color to 0–1
         let clamps = color_map && !format.holds_float(bit_depth) && matches!(space, ColorSpace::AcesCg | ColorSpace::Aces2065);
 
-        // Append `$udim` to names for separate UV tiles
-        let template = if tiles.iter().any(Option::is_some) && !map.file.contains("$udim") { format!("{}.$udim", map.file) } else { map.file.clone() };
+        // A PSD layer needs only explicit tile tokens because its document name already holds the tile number
+        let template = if format != FileFormat::Psd && tiles[0].is_some() && !map.file.contains("$udim") {
+            std::borrow::Cow::Owned(format!("{}.$udim", map.file))
+        } else {
+            std::borrow::Cow::Borrowed(map.file.as_str())
+        };
         let expand_stem = |udim: &str| {
             let expanded = template
                 .replace("$udim", udim)
@@ -737,16 +781,13 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
                     .then(|| format!("\"{name}\" packs colour into one channel (L), so it is written in linear Rec.709, not {}", requested_space.name()))
             };
 
-            // The PSD's own name holds the tile number, so its layers are named without the one appended
             if format == FileFormat::Psd {
                 if enabled {
-                    let appended = tile.filter(|_| template != map.file).map(|number| format!(".{number}"));
-                    let name = appended.as_deref().and_then(|suffix| stem.strip_suffix(suffix)).unwrap_or(&stem).to_string();
-                    warnings.extend(packs_colour(&name));
+                    warnings.extend(packs_colour(&stem));
                     if psd_layers.is_empty() {
                         psd_layers.resize_with(tiles.len(), Vec::new);
                     }
-                    psd_layers[tile_index].push((PlannedLayer { map: map_index, name, dither }, bit_depth, warnings));
+                    psd_layers[tile_index].push((PlannedLayer { map: map_index, name: stem, dither }, bit_depth, warnings));
                 }
                 continue;
             }
@@ -800,7 +841,7 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
             let base = psd_stem(mesh_name, &set.name, ts, MAX_STEM - suffix.len());
             (format!("{base}{suffix}"), Some(format!("{base}.<UDIM>")))
         } else {
-            (psd_stem(mesh_name, &set.name, ts, MAX_STEM), None)
+            (untiled_psd_stem(project, mesh_name, ts, set, opts.atlas), None)
         };
         let (name, renamed) = unique_name(&mut used, &stem, ext, &mut warnings);
         claim_path(&mut active_files, &mut active_dirs, &name)?;
@@ -870,9 +911,12 @@ fn psd_size(set: &TextureSet, tile: Option<u32>, export_size: Option<u32>) -> (u
 
 /// Plan a selection in export order, keeping only the first case-insensitive use of a name.
 pub fn list_set_outputs(project: &Project, sets: &[usize], mesh_name: &str, opts: &ExportOptions) -> Result<Vec<(usize, PlannedFile)>> {
+    let mut psd_bytes = 0;
     let mut files = Vec::new();
-    for &set in sets {
-        files.extend(list_outputs(project, set, mesh_name, opts)?.into_iter().map(|file| (set, file)));
+    for &index in sets {
+        let planned = list_outputs(project, index, mesh_name, opts)?;
+        check_psd_batch(project.texture_set(index)?, opts, &planned, &mut psd_bytes)?;
+        files.extend(planned.into_iter().map(|file| (index, file)));
     }
 
     Ok(keep_first_names(files, |(_, file)| &file.name, |(_, file)| &mut file.warnings))
@@ -1048,6 +1092,28 @@ pub fn render_maps(input: &ExportInput, options: &ExportOptions) -> Result<Vec<E
     render_planned_maps(input, options, planned)
 }
 
+/// Add one set's PSD output estimate to a batch that holds encoded files in memory.
+pub fn check_psd_batch(set: &TextureSet, options: &ExportOptions, planned: &[PlannedFile], total_bytes: &mut u64) -> Result<()> {
+    let mut estimate = *total_bytes;
+    for file in planned.iter().filter(|file| file.format == FileFormat::Psd) {
+        let (_, file_bytes) = layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter())?;
+        add_psd_batch_bytes(&mut estimate, file_bytes)?;
+    }
+
+    *total_bytes = estimate;
+    Ok(())
+}
+
+fn add_psd_batch_bytes(total_bytes: &mut u64, file_bytes: u64) -> Result<()> {
+    let estimate = total_bytes.saturating_add(file_bytes);
+    if estimate > MAX_PSD_BATCH_BYTES {
+        return Err(FormatError::TooLarge("total PSD output would exceed 1 GiB; use a smaller export size, fewer PSD maps or separate exports".into()));
+    }
+
+    *total_bytes = estimate;
+    Ok(())
+}
+
 /// Render the retained plans from `list_outputs` for this input and these options.
 pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned: Vec<PlannedFile>) -> Result<Vec<ExportedFile>> {
     if planned.is_empty() {
@@ -1066,10 +1132,15 @@ pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned
             )));
         }
 
+        let mut psd_bytes = 0;
         for file in &planned {
-            let size =
-                (file.format == FileFormat::Psd).then(|| layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter())).transpose()?;
-            psd_sizes.push(size);
+            if file.format == FileFormat::Psd {
+                let (size, file_bytes) = layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter())?;
+                add_psd_batch_bytes(&mut psd_bytes, file_bytes)?;
+                psd_sizes.push(Some(size));
+            } else {
+                psd_sizes.push(None);
+            }
         }
     }
 

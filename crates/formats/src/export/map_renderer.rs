@@ -126,8 +126,8 @@ impl<'a> MapRenderer<'a> {
         }
         let srgb = channel_layout.iter().map(|(d, _)| *d != Dest::A && !float && space == ColorSpace::Srgb).collect();
 
-        // A colour space the user chose is written into the colour maps (data maps have none)
-        let embed = (options.color_space.is_some() && map.is_color() && component_count >= 3).then_some(space);
+        // Raw J2K reports the missing tag even for a grayscale colour map
+        let embed = (options.color_space.is_some() && map.is_color() && (component_count >= 3 || format == FileFormat::J2k)).then_some(space);
         Ok(RenderedMap { data, size, component_count, srgb, embed })
     }
 }

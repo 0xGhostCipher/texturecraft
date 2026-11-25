@@ -63,10 +63,13 @@ impl MapPreview {
         }
 
         let gray_source = channel_layout.first().filter(|(dest, _)| *dest == Dest::L);
-        let rgb_from_gray =
-            gray_source.filter(|_| file.format == FileFormat::Hdr || (file.format == FileFormat::Tiff && (file.bit_depth == 32 || channel_layout.len() == 2)));
+        let psd = file.format == FileFormat::Psd;
+        let rgb_from_gray = gray_source
+            .filter(|_| psd || file.format == FileFormat::Hdr || (file.format == FileFormat::Tiff && (file.bit_depth == 32 || channel_layout.len() == 2)));
         let channels = if grayscale {
             vec![Dest::L]
+        } else if psd {
+            vec![Dest::R, Dest::G, Dest::B, Dest::A]
         } else if rgb_from_gray.is_some() {
             [Dest::R, Dest::G, Dest::B].into_iter().chain(channel_layout.iter().skip(1).map(|(dest, _)| *dest)).collect()
         } else {
@@ -108,12 +111,15 @@ impl MapPreview {
                 } else if let (Some(gray), [red, green, blue, alpha @ ..]) = (rgb_from_gray, &mut *pixel) {
                     let value = preview_sample(sample(gray), Dest::L);
                     (*red, *green, *blue) = (value, value, value);
-                    if let ([alpha], Some(source)) = (alpha, channel_layout.get(1)) {
-                        *alpha = preview_sample(sample(source), Dest::A);
+                    if let [alpha] = alpha {
+                        *alpha = channel_layout.get(1).map_or(u8::MAX, |source| preview_sample(sample(source), Dest::A));
                     }
                 } else {
                     for (output, channel) in pixel.iter_mut().zip(&channel_layout) {
                         *output = preview_sample(sample(channel), channel.0);
+                    }
+                    if psd && channel_layout.len() < component_count {
+                        pixel[component_count - 1] = u8::MAX;
                     }
                 }
             }

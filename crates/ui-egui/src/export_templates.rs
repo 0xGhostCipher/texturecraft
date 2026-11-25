@@ -584,7 +584,8 @@ fn preset_list(app: &mut TextureCraftApp, ui: &mut Ui, column: Rect, top: f32, n
                         }
                     }
                     None => {
-                        let response = preset_row(ui, rect, name, *name == selected_name, is_user).on_hover_text(name);
+                        let label = template_label(&app.session, name);
+                        let response = preset_row(ui, rect, name, label, *name == selected_name, is_user).on_hover_text(name);
                         if response.double_clicked() && is_user {
                             act = Some(ListAction::StartRename(name.clone()));
                         } else if response.clicked() {
@@ -633,11 +634,10 @@ fn template_file_items(ui: &mut Ui, act: &mut Option<ListAction>, with_export: b
 }
 
 /// A Presets row: a locked file glyph for a built-in template, the name cut with "…", the selected one in bold
-fn preset_row(ui: &mut Ui, rect: Rect, name: &str, selected: bool, is_user: bool) -> egui::Response {
+fn preset_row(ui: &mut Ui, rect: Rect, name: &str, label: &str, selected: bool, is_user: bool) -> egui::Response {
     let look = ExportLook::get(ui.ctx());
     let response = ui.interact(rect, ui.scope_id().with(("exp_preset_row", name)), egui::Sense::click());
-    let name = template_label(name);
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, name));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, 0.0, look.chrome);
@@ -646,7 +646,7 @@ fn preset_row(ui: &mut Ui, rect: Rect, name: &str, selected: bool, is_user: bool
     }
     let icon = if is_user { ic::FILE_TEXT } else { ic::FILE_LOCK };
     drawn::glyph(ui, pos2(rect.left() + PRESET_ICON_X, rect.center().y), icon, PRESET_ROW_ICON_SIZE, look.text_dim);
-    let shown = drawn::fitted(ui, name, rect.width() - PRESET_NAME_LEFT, false, selected);
+    let shown = drawn::fitted(ui, label, rect.width() - PRESET_NAME_LEFT, false, selected);
     let color = if selected { look.text } else { look.list_text };
     drawn::text_at(ui, rect.left() + PRESET_NAME_LEFT, rect.center().y, &shown, color, selected);
     drawn::paint_focus(ui, &response);
@@ -683,7 +683,7 @@ fn perform(app: &mut TextureCraftApp, ctx: &egui::Context, act: ListAction) {
         }
         ListAction::Duplicate(name) => {
             if let Some(p) = app.session.export_preset(&name) {
-                let name = format!("{}_copy", template_label(&p.name)).chars().take(MAX_PRESET_NAME).collect();
+                let name = format!("{}_copy", template_label(&app.session, &name)).chars().take(MAX_PRESET_NAME).collect();
                 save_new(app, &ExportPreset { name, ..p });
             }
         }
@@ -867,9 +867,9 @@ pub fn load_library(app: &mut TextureCraftApp, storage: Option<&dyn eframe::Stor
         app.session.log.warnings(texturecraft_engine::log::LIBRARY_SOURCE, skipped.into_iter().map(|w| format!("Export template skipped: {w}")));
     }
     #[cfg(target_arch = "wasm32")]
-    for p in storage.and_then(|s| eframe::get_value::<Vec<ExportPreset>>(s, STORAGE_KEY)).unwrap_or_default() {
-        if let Ok(v) = serde_json::to_value(&p) {
-            app.run("export.preset.save", json!({ "preset": v, "unique": true }));
+    for preset in storage.and_then(|s| eframe::get_value::<Vec<ExportPreset>>(s, STORAGE_KEY)).unwrap_or_default() {
+        if let Err(error) = app.session.export_presets.restore(preset) {
+            app.session.log.warnings(texturecraft_engine::log::LIBRARY_SOURCE, [format!("Export template skipped: {error}")]);
         }
     }
 }
@@ -913,7 +913,7 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui, column: Rect, top: f32) {
     let title = tr("Current preset:");
     let name_left = column.left() + drawn::text_width(ui, title, true) + NAME_GAP;
     drawn::label_at(ui, column.left(), y, title, look.text, true);
-    let name = drawn::label_at(ui, name_left, y, template_label(&preset.name), look.text, false);
+    let name = drawn::label_at(ui, name_left, y, template_label(&app.session, &app.ui.export.preset), look.text, false);
     if !editable {
         let lock_at = pos2(name.rect.right() + LOCK_GAP, y);
         drawn::glyph(ui, lock_at, ic::LOCK_SIMPLE, CARD_ICON_SIZE, look.text_dim);
@@ -1069,12 +1069,23 @@ fn commit(app: &mut TextureCraftApp, preset: ExportPreset, mut origin: Vec<Optio
 /// The `export.plan` and `export.preview` params of `preset` for the current texture set with the window's settings
 fn plan_params(app: &TextureCraftApp, preset: &ExportPreset) -> Result<Value, String> {
     let mut params = crate::export_window::set_params(app, app.session.ts());
-    params["preset"] = serde_json::to_value(preset).map_err(|e| e.to_string())?;
+    let export = &app.ui.export;
+    let same_template = params.get("preset").and_then(Value::as_str) == Some(export.preset.as_str());
 
-    // The set's map overrides apply only to its own template
-    if let Some(params) = params.as_object_mut() {
+    if !same_template && let Some(params) = params.as_object_mut() {
         params.remove("maps");
+    } else if let (Some(_), Some(maps)) = (&export.draft, params.get_mut("maps").and_then(Value::as_array_mut)) {
+        // Draft positions have no override until they map to a saved output
+        maps.retain_mut(|settings| {
+            let Some(saved_index) = settings["map"].as_u64().and_then(|index| usize::try_from(index).ok()) else { return false };
+            let Some(draft_index) = export.draft_maps.iter().position(|origin| *origin == Some(saved_index)) else { return false };
+
+            settings["map"] = json!(draft_index);
+            true
+        });
     }
+
+    params["preset"] = serde_json::to_value(preset).map_err(|error| error.to_string())?;
     Ok(params)
 }
 
@@ -1503,7 +1514,8 @@ fn preview_pictures(ui: &mut Ui, map: &MapSpec, pictures: &MapPreviewPictures) {
                     Dest::R | Dest::G | Dest::B if source_of(map, gray).is_some() => gray,
                     _ => target,
                 };
-                let source = source_of(map, source_target).unwrap_or(&SourceRef::Constant(CLEARED_VALUE));
+                let fallback = SourceRef::Constant(if *dest == Dest::A { CLEARED_ALPHA } else { CLEARED_VALUE });
+                let source = source_of(map, source_target).unwrap_or(&fallback);
                 let inverted = source_target.dests().iter().any(|dest| map.inverted.contains(dest));
 
                 ui.horizontal(|ui| {
@@ -1853,6 +1865,40 @@ mod tests {
 
     fn ch(channel: Channel, component: u8) -> SourceRef {
         SourceRef::Channel { channel, component }
+    }
+
+    #[test]
+    fn feedback_preview_follows_draft_maps_to_their_saved_overrides() {
+        use crate::state::{MapExport, SetExport};
+        use egui_kittest::Harness;
+
+        let session = texturecraft_engine::sample_session(256, 64).unwrap();
+        let mut harness = Harness::builder().build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let app = harness.state_mut();
+        let ts = app.session.ts();
+        let saved = app.session.export_preset("Unreal Engine (Packed)").unwrap();
+        let mut draft = saved.clone();
+        draft.maps = vec![saved.maps[1].clone(), new_map(Layout::Gray, "New"), saved.maps[0].clone()];
+        let resized = MapExport { size: Some(128), ..MapExport::default() };
+        let disabled = MapExport { enabled: false, ..MapExport::default() };
+        app.ui.export.preset = saved.name.clone();
+        app.ui.export.sets.insert(
+            ts,
+            SetExport {
+                maps_template: saved.name,
+                maps: [(0, resized), (1, disabled), (2, MapExport { size: Some(512), ..MapExport::default() })].into(),
+                ..SetExport::default()
+            },
+        );
+        app.ui.export.draft = Some(draft.clone());
+        app.ui.export.draft_maps = vec![Some(1), None, Some(0)];
+
+        let params = plan_params(app, &draft).unwrap();
+        let outputs = planned_outputs(app, &params).unwrap();
+
+        assert!(outputs[0].is_none(), "the disabled map stays disabled in its new position");
+        assert_eq!(outputs[2].as_ref().unwrap().size, 128);
+        assert_eq!(params["maps"].as_array().unwrap().len(), 2, "the new map and the removed map get no override");
     }
 
     #[test]

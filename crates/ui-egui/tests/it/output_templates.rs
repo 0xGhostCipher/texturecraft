@@ -763,3 +763,22 @@ fn leaving_output_templates_releases_pictures_from_each_hovered_map() {
     assert!(!h.state().ui.windows.export);
     assert_eq!(previews(&h), 0);
 }
+
+#[test]
+fn feedback_template_preview_counts_overrides_only_for_its_own_maps() {
+    let library = TemplateLibrary::new("preview-map-overrides");
+    let mut h = harness(&library);
+    let ts = h.state().session.ts();
+    let plan = h.state_mut().run("export.plan", json!({"ts": ts, "preset": "Mine"})).unwrap();
+    let initial = plan.as_array().unwrap().len();
+    assert!(initial > 0);
+    let disabled = MapExport { enabled: false, ..MapExport::default() };
+    h.state_mut().ui.export.sets.insert(ts, SetExport { maps_template: "Mine".into(), maps: [(0, disabled)].into(), ..SetExport::default() });
+
+    h.run_steps(4);
+
+    assert!(h.query_by_label(&format!("{} output maps will be exported", initial - 1)).is_some());
+    h.state_mut().ui.export.sets.get_mut(&ts).unwrap().preset = Some("Separate maps".into());
+    h.run_steps(4);
+    assert!(h.query_by_label(&format!("{initial} output maps will be exported")).is_some());
+}

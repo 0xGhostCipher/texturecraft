@@ -142,7 +142,7 @@ Built-in presets (each one lists the public specification its packing follows in
 | USD Preview Surface (separate maps) | one map per UsdPreviewSurface input the set has, named like it: `diffuseColor`, `emissiveColor`, `metallic`, `roughness`, `normal` (OpenGL), `occlusion`, `opacity`, `clearcoat`, `clearcoatRoughness` |
 | Unreal Engine Subsurface Profile (Packed) | `BaseColor` (no alpha), `OcclusionRoughnessMetallic`, `Normal` (DirectX), `SubsurfaceMask` (scatter weight, for the Opacity input) |
 | glTF Specular Glossiness (archived extension) | `Diffuse` (A = opacity), `SpecularGlossiness` (RGB specular, A glossiness, from the set's own channels), `Normal` (OpenGL), `Occlusion`, `Emissive` |
-| Redshift Standard Material (separate maps) | one map per Standard Material input the set has: `BaseColor`, `Metalness`, `ReflectionRoughness`, `Normal` (OpenGL), `EmissionColor`, `Opacity`, `SubsurfaceWeight`, `CoatWeight`, `CoatRoughness`, `SheenWeight`, `SheenColor`, `SheenRoughness` |
+| Redshift Standard Material (separate maps) | separate maps for the listed inputs when the set supplies their sources: `BaseColor`, `Metalness`, `ReflectionRoughness`, `Normal` (OpenGL), `EmissionColor`, `Opacity`, `SubsurfaceWeight`, `CoatWeight`, `CoatRoughness`, `SheenWeight`, `SheenColor`, `SheenRoughness` |
 | Roblox SurfaceAppearance (separate maps) | `Color` (A = opacity), `Normal` (OpenGL), `Metalness`, `Roughness` |
 | Sketchfab Metalness (separate maps) | `BaseColor` (no alpha), `Metalness`, `Roughness`, `Normal` (DirectX), `AmbientOcclusion`, `Emission` |
 | Separate maps | one file per channel, gray where scalar, height 16-bit |
