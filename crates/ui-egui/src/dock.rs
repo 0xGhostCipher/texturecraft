@@ -556,6 +556,9 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
     if content_response.clicked() {
         let modifiers = ui.input(|input| input.modifiers);
         click_layer(app, modifiers, layer.id.0, Some("content"));
+        if matches!(app.session.view, texturecraft_engine::ViewMode::Mask(_)) {
+            app.run("viewport.view", json!({"mode": "material"}));
+        }
     }
     thumbnail_context_menu(ui, &content_response, content_label, &layer.name, content_target, |ui| layer_context_menu(app, ui, layer, true));
     x = thumbnail.right() + THUMBNAIL_SPACING;
@@ -594,17 +597,25 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
         if !mask_enabled {
             painter.line_segment([mask_rect.left_top(), mask_rect.right_bottom()], Stroke::new(HIDDEN_STRIKE_WIDTH, tokens.danger));
         }
-        let mask_label = tr("Select the mask (Alt+click: show it in the viewport)");
+        let mask_label = tr("Select the mask (Alt+click: show it in the viewport, Shift+click: switch it on or off)");
         let mask_response = ui.interact(mask_rect, ui.scope_id().with(("mask", layer.id.0)), Sense::click()).on_hover_text(mask_label);
         if mask_response.clicked() {
-            app.run("layer.select", json!({"layer": layer.id.0, "target": "mask"}));
-            if ui.input(|input| input.modifiers.alt) {
+            let modifiers = ui.input(|input| input.modifiers);
+            if modifiers.shift && !modifiers.alt {
+                app.run("mask.toggle", json!({"layer": layer.id.0}));
+            } else {
+                app.run("layer.select", json!({"layer": layer.id.0, "target": "mask"}));
+            }
+            if modifiers.alt {
                 let showing = app.session.view == texturecraft_engine::ViewMode::Mask(layer.id);
                 let view = if showing { json!({"mode": "material"}) } else { json!({"mode": "mask", "layer": layer.id.0}) };
                 app.run("viewport.view", view);
             }
         }
         thumbnail_context_menu(ui, &mask_response, mask_label, &layer.name, mask_target, |ui| mask_management_menu(app, ui, layer, true));
+        if !mask_enabled {
+            ui.ctx().accesskit_node_builder(mask_response.id, |node| node.set_description(tr("Mask off")));
+        }
         if app.session.view == texturecraft_engine::ViewMode::Mask(layer.id) {
             painter.rect_stroke(
                 mask_rect.expand(HIGHLIGHT_OUTSET),
