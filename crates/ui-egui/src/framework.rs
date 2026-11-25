@@ -121,7 +121,8 @@ impl TextureCraftApp {
             Brightness::Dark | Brightness::MediumDark => craft_theme::Mode::Dark,
         };
         let mut root = RootEnv::new().mode(mode).scale(Scale::new(scale));
-        root.tab_toggles_chrome = true;
+        // Hide UI on another key leaves Tab to focus traversal and the shortcuts
+        root.tab_toggles_chrome = crate::keymap::shortcut_of(&self.ui.keymap, "ui.hideUi") == Some("Tab");
         let app_modal = crate::docking::input_blocked(self, ctx).then_some(ViewportId::ROOT);
         FrameInput::new(root).commands(CommandInput::new().overrides(command_overrides())).host(Arc::clone(&self.framework_host)).app_modal(app_modal)
     }

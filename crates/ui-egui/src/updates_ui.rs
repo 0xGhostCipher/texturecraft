@@ -110,6 +110,8 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         dialogs.open(UpdateCheckDialog::new(env!("CARGO_PKG_VERSION")));
     } else if !shows && dialogs.is_open::<UpdateCheckDialog>() {
         dialogs.cancel::<UpdateCheckDialog>(ctx);
+        // Hidden for the prompt, not dismissed: the outcome shows again after it
+        let _ = dialogs.take::<UpdateCheckDialog>();
     }
     if let Some(dialog) = dialogs.get_mut::<UpdateCheckDialog>() {
         dialog.set_status(status);

@@ -464,7 +464,9 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
         if taken {
             let escape = craft_ui::runtime::keys::escape_mods(ctx).filter(|_| key == Key::Escape);
             ctx.input_mut(|i| {
-                let modifiers = escape.map_or(i.modifiers, |held| Modifiers { shift: held.shift, alt: held.alt, ..Modifiers::NONE });
+                // A submit's Enter had no Ctrl or Cmd; one that came down later in the pass is not its own
+                let (shift, alt) = escape.map_or((i.modifiers.shift, i.modifiers.alt), |held| (held.shift, held.alt));
+                let modifiers = Modifiers { shift, alt, ..Modifiers::NONE };
                 i.events.insert(0, egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers });
             });
         }
