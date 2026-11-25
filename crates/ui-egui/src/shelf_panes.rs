@@ -17,8 +17,10 @@ const COLUMN_FRACTION: f32 = 0.45;
 const COLUMN_MIN_WIDTH_POINTS: f32 = 110.0;
 const SPLITTER_HEIGHT_POINTS: f32 = 6.0;
 const PANE_MIN_HEIGHT_POINTS: f32 = 40.0;
-/// The reference's built-in saved searches after "All", shown greyed until they work
-const BUILT_IN_SEARCHES: [&str; 3] = [n_("Favorites"), n_("3D Assets"), n_("Flattened layers")];
+/// The built-in saved search after "All" that shows only the favorite assets
+const FAVORITES: &str = n_("Favorites");
+/// The reference's other built-in saved searches, shown greyed until they work
+const UNAVAILABLE_SEARCHES: [&str; 2] = [n_("3D Assets"), n_("Flattened layers")];
 /// The reference's font libraries after the asset libraries, shown greyed until they work
 const FONT_LIBRARIES: [&str; 2] = [n_("System fonts"), n_("User fonts")];
 /// The pane header's caption size in points
@@ -191,7 +193,12 @@ fn header(ui: &mut Ui, title: &str, button: impl FnOnce(&mut Ui)) {
     });
 }
 
-/// "All", then the saved queries; the header's button saves the current one, a right-click deletes one
+/// Saved searches' first rows: "All", then Favorites, then the searches that aren't available
+const ALL_ROW: usize = 0;
+const FAVORITES_ROW: usize = 1;
+const FIXED_SEARCH_ROWS: usize = 2;
+
+/// "All", Favorites, then the saved queries; the header's button saves the current one, a right-click deletes one
 fn saved_searches(app: &mut TextureCraftApp, ui: &mut Ui) {
     let size = ui.spacing().interact_size.y;
     header(ui, tr("Saved searches"), |ui| {
@@ -203,8 +210,9 @@ fn saved_searches(app: &mut TextureCraftApp, ui: &mut Ui) {
         }
     });
 
-    let all_selected = app.ui.shelf_filter.is_empty() && app.ui.shelf_path.is_empty() && app.ui.shelf_tab == crate::shelf_tabs::NO_TYPE;
-    let first_saved_row = 1 + BUILT_IN_SEARCHES.len();
+    let favorites_only = app.ui.shelf_favorites_only;
+    let all_selected = !favorites_only && app.ui.shelf_filter.is_empty() && app.ui.shelf_path.is_empty() && app.ui.shelf_tab == crate::shelf_tabs::NO_TYPE;
+    let first_saved_row = FIXED_SEARCH_ROWS + UNAVAILABLE_SEARCHES.len();
     let row_height = ui.spacing().interact_size.y;
     let total_rows = first_saved_row + app.ui.shelf_saved_searches.len();
     let mut deleted_index = None;
@@ -216,14 +224,22 @@ fn saved_searches(app: &mut TextureCraftApp, ui: &mut Ui) {
         total_rows,
         |ui, visible_rows| {
             for row in visible_rows {
-                if row == 0 {
+                if row == ALL_ROW {
                     if ui.selectable_label(all_selected, tr("All")).clicked() {
                         crate::shelf_toolbar::reset_query(app);
                     }
                     continue;
                 }
 
-                if let Some(name) = BUILT_IN_SEARCHES.get(row - 1) {
+                if row == FAVORITES_ROW {
+                    if ui.selectable_label(favorites_only, tr(FAVORITES)).clicked() {
+                        crate::shelf_toolbar::reset_query(app);
+                        app.ui.shelf_favorites_only = true;
+                    }
+                    continue;
+                }
+
+                if let Some(name) = UNAVAILABLE_SEARCHES.get(row - FIXED_SEARCH_ROWS) {
                     ui.add_enabled(false, egui::Button::selectable(false, tr(name))).on_disabled_hover_text(tr(NOT_AVAILABLE));
                     continue;
                 }
@@ -231,10 +247,11 @@ fn saved_searches(app: &mut TextureCraftApp, ui: &mut Ui) {
                 let saved_index = row - first_saved_row;
                 let Some(saved) = app.ui.shelf_saved_searches.get(saved_index) else { continue };
 
-                let selected = saved.filter == app.ui.shelf_filter && saved.tab == app.ui.shelf_tab && saved.path == app.ui.shelf_path;
+                let selected = !favorites_only && saved.filter == app.ui.shelf_filter && saved.tab == app.ui.shelf_tab && saved.path == app.ui.shelf_path;
                 let response = ui.selectable_label(selected, &saved.name);
                 if response.clicked() {
                     (app.ui.shelf_filter, app.ui.shelf_tab, app.ui.shelf_path) = (saved.filter.clone(), saved.tab, saved.path.clone());
+                    app.ui.shelf_favorites_only = false;
                 }
 
                 response.context_menu(|ui| {

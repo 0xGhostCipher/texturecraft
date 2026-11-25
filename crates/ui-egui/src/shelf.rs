@@ -273,6 +273,10 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         Vec::new()
     };
 
+    if app.ui.shelf_favorites_only {
+        matching.retain(|entry| crate::shelf_favorite::rank(&app.ui.shelf_favorites, entry).is_some());
+    }
+
     // All libraries includes every result without constructing an asset path
     if !folder.is_empty() {
         matching.retain(|entry| entry.in_folder(&folder));
@@ -280,8 +284,9 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
 
     let mut counts: Vec<usize> = TABS.iter().map(|(tab, _, _)| matching.iter().filter(|entry| entry.tab() == *tab).count()).collect();
 
-    // Saved smart materials and masks count toward their tabs even without tiles
-    let in_user_library = folder.len() <= 1 && folder.first().is_none_or(|library| library == crate::shelf_entry::USER);
+    // Saved smart materials and masks count toward their tabs even without tiles; they can't be favorites yet
+    let favorites_only = app.ui.shelf_favorites_only;
+    let in_user_library = !favorites_only && folder.len() <= 1 && folder.first().is_none_or(|library| library == crate::shelf_entry::USER);
     let saved_materials_matching = saved_matching(app, &filter, false);
     let saved_masks_matching = saved_matching(app, &filter, true);
     for (tab, saved) in [(Tab::Smart, saved_materials_matching), (Tab::Masks, saved_masks_matching)] {
@@ -300,11 +305,14 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
 
     let tab = app.ui.shelf_tab;
     let shown_tab = TABS.get(tab).map(|(shown, _, _)| *shown);
-    let show_user_brushes = crate::shelf_tabs::shows(tab, Tab::Brushes)
+    let show_user_brushes = !favorites_only
+        && crate::shelf_tabs::shows(tab, Tab::Brushes)
         && folder.len() <= 2
         && folder.iter().zip([crate::shelf_entry::USER, "Brushes"]).all(|(selected, part)| selected == part);
     let mut entries: Vec<ShelfEntry> = matching.into_iter().filter(|entry| crate::shelf_tabs::shows(tab, entry.tab())).collect();
-    entries.sort_by_cached_key(|entry| entry.label().to_lowercase());
+    // Favorites first, the most recently added first, then by name
+    let favorites = &app.ui.shelf_favorites;
+    entries.sort_by_cached_key(|entry| (crate::shelf_favorite::rank(favorites, entry).unwrap_or(usize::MAX), entry.label().to_lowercase()));
 
     // The toolbar has its own strip at the panel's bottom, so nothing above it can push it out
     let area = ui.available_rect_before_wrap();
@@ -547,6 +555,10 @@ fn entry_tile(app: &mut TextureCraftApp, ui: &mut Ui, ctx: &egui::Context, entry
 
     if entry.includes_randomness() {
         randomness_badge(ui.painter(), view.thumbnail_rect(response.rect));
+    }
+    if crate::shelf_favorite::rank(&app.ui.shelf_favorites, entry).is_some() {
+        crate::shelf_favorite::star(ui.painter(), view.thumbnail_rect(response.rect), Tokens::get(ctx).warning);
+        ctx.accesskit_node_builder(response.id, |node| node.set_description(tr("Favorite")));
     }
 
     if response.clicked() || response.secondary_clicked() {

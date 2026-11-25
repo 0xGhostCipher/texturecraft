@@ -40,6 +40,7 @@ pub(crate) fn reset_query(app: &mut TextureCraftApp) {
     app.ui.shelf_filter.clear();
     app.ui.shelf_tab = crate::shelf_tabs::NO_TYPE;
     app.ui.shelf_path.clear();
+    app.ui.shelf_favorites_only = false;
 }
 
 /// Read the user's saved assets from disk again and redraw their thumbnails

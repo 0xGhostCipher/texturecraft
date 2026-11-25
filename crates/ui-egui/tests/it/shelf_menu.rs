@@ -193,3 +193,38 @@ fn shift_f10_opens_the_menu_of_the_focused_tile_on_its_first_row_and_escape_retu
     assert!(harness.query_by_label("Usages texture").is_none(), "Escape closes it");
     assert!(harness.get_all_by_label(&name).next().unwrap().accesskit_node().is_focused(), "the focus is back on the tile");
 }
+
+/// Whether the tile `first` comes before the tile `second` in the grid (rows top to bottom, each left to right)
+fn comes_before(harness: &Harness<'_, TextureCraftApp>, first: &str, second: &str) -> bool {
+    let place = |label: &str| {
+        let rect = harness.get_by_label(label).rect();
+        (rect.top(), rect.left())
+    };
+    place(first) < place(second)
+}
+
+fn pick_from_menu(harness: &mut Harness<'_, TextureCraftApp>, tile: &str, row: &str) {
+    right_click(harness, tile);
+    harness.get_by_label(row).click();
+    harness.run_steps(3);
+}
+
+#[test]
+fn favorites_come_first_newest_first_with_a_star_until_removed() {
+    let mut plain: Vec<_> = MATERIALS.iter().filter(|material| !material.smart).collect();
+    plain.sort_by_key(|material| material.label.to_lowercase());
+    let (first, second, third) = (plain[0].label, plain[1].label, plain[2].label);
+    let mut harness = shelf(MATERIALS_TYPE);
+
+    pick_from_menu(&mut harness, third, "Add to favorites");
+    pick_from_menu(&mut harness, second, "Add to favorites");
+
+    assert!(comes_before(&harness, second, third) && comes_before(&harness, third, first), "favorites first, the newest first");
+    assert_eq!(harness.get_by_label(second).accesskit_node().description().as_deref(), Some("Favorite"), "the star is announced");
+    assert_eq!(harness.get_by_label(first).accesskit_node().description(), None);
+
+    pick_from_menu(&mut harness, second, "Remove from favorites");
+
+    assert!(comes_before(&harness, first, second), "a removed favorite goes back to its place by name");
+    assert!(comes_before(&harness, third, first), "the other favorite stays first");
+}

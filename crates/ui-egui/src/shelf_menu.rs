@@ -127,6 +127,10 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
             }
         }
         show_in(app, ui, width, entry, &tokens);
+        if row(ui, width, favorite_label(app, entry), true, &tokens).clicked() {
+            crate::shelf_favorite::toggle(&mut app.ui.shelf_favorites, entry);
+            ui.close();
+        }
         if let ShelfEntry::Image(name) = entry {
             separator(ui, &tokens);
             if row(ui, width, tr("Add as decal (view center)"), true, &tokens).clicked() {
@@ -159,13 +163,18 @@ fn info_rows(entry: &ShelfEntry) -> Vec<(&'static str, String)> {
 
 /// The labels of the rows under the info block, for the menu's width
 fn row_labels(entry: &ShelfEntry) -> Vec<&'static str> {
-    let mut labels = vec![tr("Export resource..."), tr("Show in"), tr("Close")];
+    let mut labels = vec![tr("Export resource..."), tr("Show in"), tr("Add to favorites"), tr("Remove from favorites"), tr("Close")];
     match entry {
         ShelfEntry::Image(_) => labels.extend([tr("Reload"), tr("Delete"), tr("Add as decal (view center)")]),
         ShelfEntry::SavedBrush { .. } => labels.extend([tr("Replace with the current brush"), tr("Delete")]),
         _ => {}
     }
     labels
+}
+
+/// The row that adds the asset to the favorites, or takes a favorite out
+fn favorite_label(app: &TextureCraftApp, entry: &ShelfEntry) -> &'static str {
+    if crate::shelf_favorite::rank(&app.ui.shelf_favorites, entry).is_some() { tr("Remove from favorites") } else { tr("Add to favorites") }
 }
 
 fn text_width(ui: &Ui, text: &str) -> f32 {

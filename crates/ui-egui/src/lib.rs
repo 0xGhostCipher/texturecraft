@@ -138,6 +138,7 @@ pub mod settings_window;
 pub mod shader_settings;
 pub mod shelf;
 mod shelf_entry;
+pub mod shelf_favorite;
 mod shelf_folders;
 mod shelf_menu;
 pub mod shelf_panes;

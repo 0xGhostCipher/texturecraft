@@ -385,10 +385,10 @@ fn the_panes_list_the_reference_rows_and_grey_the_missing_ones() {
         let tops: Vec<f32> = rows.iter().map(|label| latest_node_with_label(&harness, label).rect().top()).collect();
         assert!(tops.windows(2).all(|pair| pair[0] < pair[1]), "{rows:?} run top to bottom: {tops:?}");
     }
-    for label in ["Favorites", "3D Assets", "Flattened layers", "System fonts", "User fonts"] {
+    for label in ["3D Assets", "Flattened layers", "System fonts", "User fonts"] {
         assert!(latest_node_with_label(&harness, label).accesskit_node().is_disabled(), "{label} is greyed");
     }
-    for label in ["All", "All libraries", "Project", "Starter assets", "Your assets"] {
+    for label in ["All", "Favorites", "All libraries", "Project", "Starter assets", "Your assets"] {
         assert!(!latest_node_with_label(&harness, label).accesskit_node().is_disabled(), "{label} works");
     }
     assert!(shows_not_available(&mut harness, "Flattened layers"), "a greyed saved search explains itself");
@@ -515,4 +515,30 @@ fn the_splitter_is_exposed_as_a_resizable_control() {
     harness.run_steps(3);
 
     assert!(harness.state().ui.shelf_panes_split > before);
+}
+
+#[test]
+fn the_favorites_search_shows_only_favorites_until_all_is_picked() {
+    let plain = plain_materials();
+    let (favorite, other) = (plain[1].label, plain[0].label);
+    let mut harness = shelf(REFERENCE_WINDOW);
+    harness.state_mut().ui.shelf_panes.saved_searches = true;
+    harness.run_steps(3);
+    button(&harness, favorite).click_secondary();
+    harness.run_steps(3);
+    button(&harness, "Add to favorites").click();
+    harness.run_steps(3);
+
+    button(&harness, "Favorites").click();
+    harness.run_steps(3);
+
+    assert!(harness.query_by_label(favorite).is_some(), "the favorite shows");
+    assert!(harness.query_by_label(other).is_none(), "an asset that is no favorite is hidden");
+    assert!(harness.query_by_label("My brushes").is_none(), "the saved brushes list is no favorite either");
+
+    button(&harness, "All").click();
+    harness.run_steps(3);
+
+    assert!(harness.query_by_label(other).is_some(), "All shows every asset again");
+    assert!(harness.query_by_label("My brushes").is_some(), "All shows the saved brushes list again");
 }
