@@ -244,6 +244,26 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
                 map("Emissive", 8, rgb(|k| ch(Channel::Emissive, k))),
             ],
         ),
+        // Spec: https://help.maxon.net/r3d/maya/en-us/Content/html/Standard_Material.html (the Standard Material inputs)
+        // Spec: https://help.maxon.net/r3d/maya/en-us/Content/html/Bump+Map.html (normal maps in OpenGL format)
+        preset("Redshift Standard Material (separate maps)", {
+            let gray8 = |name: &str, c: Channel| map(name, 8, gray(ch(c, 0)));
+            let rgb8 = |name: &str, c: Channel| map(name, 8, rgb(|k| ch(c, k)));
+            vec![
+                rgb8("BaseColor", Channel::BaseColor),
+                gray8("Metalness", Channel::Metallic),
+                gray8("ReflectionRoughness", Channel::Roughness),
+                map("Normal", 8, normal(VirtualMap::NormalOpenGl)),
+                rgb8("EmissionColor", Channel::Emissive),
+                gray8("Opacity", Channel::Opacity),
+                gray8("SubsurfaceWeight", Channel::ScatterWeight),
+                gray8("CoatWeight", Channel::CoatWeight),
+                gray8("CoatRoughness", Channel::CoatRoughness),
+                gray8("SheenWeight", Channel::SheenWeight),
+                rgb8("SheenColor", Channel::SheenColor),
+                gray8("SheenRoughness", Channel::SheenRoughness),
+            ]
+        }),
         preset("Separate maps", Channel::ALL.into_iter().map(channel_map).collect()),
         preset(
             "Mesh maps",

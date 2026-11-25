@@ -1806,3 +1806,27 @@ fn the_gltf_specular_glossiness_template_packs_a_specular_glossiness_sets_own_ch
     let green = pixel(find(&files, "_Normal.png"))[1];
     assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
 }
+
+#[test]
+fn the_redshift_template_writes_one_map_per_input_the_set_has() {
+    let mut channels = default_channels();
+    channels.extend([Channel::ScatterWeight, Channel::CoatWeight]);
+    let mut fx = Fx::new(&channels);
+    fx.set_all(Channel::Roughness, |_, _| [0.4; 3]);
+    fx.set_all(Channel::Metallic, |_, _| [0.8; 3]);
+    fx.set_all(Channel::ScatterWeight, |_, _| [0.7; 3]);
+    fx.set_all(Channel::CoatWeight, |_, _| [0.2; 3]);
+    let open_gl_green = tilt_normals(&mut fx);
+
+    let files = fx.render_preset("Redshift Standard Material (separate maps)");
+
+    let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+    for (input, expected) in [("Metalness", 0.8), ("ReflectionRoughness", 0.4), ("SubsurfaceWeight", 0.7), ("CoatWeight", 0.2)] {
+        let file = find(&files, &format!("_{input}.png"));
+        assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is one 8-bit channel: {names:?}");
+        assert_close(pixel(file), [byte(expected), byte(expected), byte(expected), 255], input);
+    }
+    let green = pixel(find(&files, "_Normal.png"))[1];
+    assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
+    assert!(!names.iter().any(|name| name.contains("Sheen") || name.contains("CoatRoughness")), "inputs the set lacks write no maps: {names:?}");
+}
