@@ -30,7 +30,7 @@ impl<'a> MapRenderer<'a> {
             return Err(FormatError::Invalid(format!("composite size {width}×{height} does not fit texture set \"{}\"", set.name)));
         }
 
-        if input.coverage.len() != width as usize * height as usize {
+        if input.coverage.len() as u64 != u64::from(width) * u64::from(height) {
             return Err(FormatError::Invalid(format!("coverage has {} texels, expected {width}×{height}", input.coverage.len())));
         }
 
@@ -42,7 +42,7 @@ impl<'a> MapRenderer<'a> {
             }
             Padding::Infinite => Some(DilationMap::in_blocks(input.coverage, width, height, None, tile_res)),
         };
-        let sampler = Sampler::new(input, options, set, tile_res);
+        let sampler = Sampler::new(input, options, set, tile_res, false);
         Ok(MapRenderer { options, set, sampler, dilation_map, grid, width, height, tile_res })
     }
 
@@ -106,15 +106,9 @@ impl<'a> MapRenderer<'a> {
         });
 
         // Diffuse into the texels the dilation did not reach
-        if matches!(options.padding, Padding::DilationDiffusion(_)) {
-            let known: Vec<bool> = (y0..y0 + h)
-                .flat_map(|y| (x0..x0 + w).map(move |x| (x, y)))
-                .map(|(x, y)| sampler.covered(x, y) || dilation_map.is_some_and(|d| d.source(x, y).is_some()))
-                .collect();
-
-            // Keep diffusion within each UV tile when rendering an atlas
+        if let (Padding::DilationDiffusion(_), Some(dilation)) = (options.padding, dilation_map) {
             let block = if tile.is_none() && self.grid.is_some() { self.tile_res } else { w.max(h) };
-            diffuse_blocks(&mut data, (w as usize, h as usize), component_count, &known, block as usize);
+            diffuse_blocks(&mut data, (w as usize, h as usize), component_count, dilation, (x0 as usize, y0 as usize), block as usize);
         }
 
         let mut data = resize(data, (w, h), component_count, size);

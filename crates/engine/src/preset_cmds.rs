@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use texturecraft_formats::export::{MAX_PRESET_NAME, sanitize_file_stem};
-use texturecraft_formats::{ExportPreset, builtin_preset, builtin_presets, preset_from_json};
+use texturecraft_formats::{ExportPreset, builtin_preset, builtin_preset_catalog, preset_from_json};
 
 use crate::commands::{CommandSpec, always, bad, boolp, strp};
 use crate::{Result, Session, cmd};
@@ -140,10 +140,12 @@ impl Session {
     }
 }
 
-fn list(s: &mut Session, _: &Value) -> Result<Value> {
-    let entry = |p: &ExportPreset, builtin: bool| json!({"name": p.name, "maps": p.maps.len(), "builtin": builtin});
-    let builtins = builtin_presets();
-    Ok(json!(builtins.iter().map(|p| entry(p, true)).chain(s.export_presets.list.iter().map(|p| entry(p, false))).collect::<Vec<_>>()))
+fn list(session: &mut Session, _: &Value) -> Result<Value> {
+    let entry = |preset: &ExportPreset, builtin: bool| json!({"name": preset.name, "maps": preset.maps.len(), "builtin": builtin});
+    let builtins = builtin_preset_catalog().iter().map(|preset| entry(preset, true));
+    let custom = session.export_presets.list.iter().map(|preset| entry(preset, false));
+
+    Ok(json!(builtins.chain(custom).collect::<Vec<_>>()))
 }
 
 fn name_param<'a>(p: &'a Value, cmd: &str) -> Result<&'a str> {

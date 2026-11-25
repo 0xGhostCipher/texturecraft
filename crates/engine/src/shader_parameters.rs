@@ -1,4 +1,4 @@
-//! Export shaders parameters: the project's shader, its settings and the texture sets using it, as JSON
+//! Export shader parameters: the project's shader, its settings and the texture sets using it, as JSON
 
 use serde_json::{Value, json};
 use texturecraft_core::Project;
@@ -59,15 +59,15 @@ mod tests {
 
     #[test]
     fn the_json_names_the_shader_its_settings_and_its_texture_sets() {
-        let mut s = crate::sample_session(128, 32).unwrap();
-        s.doc.project.display.ior = 1.33;
+        let mut session = crate::sample_session(128, 32).unwrap();
+        session.doc.project.display.ior = 1.33;
 
-        let value = shader_parameters(&s.doc.project, &[1]);
+        let value = shader_parameters(&session.doc.project, &[1]);
 
         let shader = &value["shaders"][0];
         assert_eq!(shader["model"], "metallicRoughness");
         assert!((shader["parameters"]["ior"].as_f64().unwrap() - 1.33).abs() < 1e-6);
-        assert_eq!(shader["textureSets"], json!([s.doc.project.texture_sets[1].name]));
+        assert_eq!(shader["textureSets"], json!([session.doc.project.texture_sets[1].name]));
         assert!(shader_parameters_file("Material Ball").ends_with("_shaders.json"));
     }
 }

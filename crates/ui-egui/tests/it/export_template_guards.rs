@@ -171,8 +171,10 @@ fn the_settings_dropdown_asks_about_an_unfinished_edit_too() {
 fn output_templates_keeps_export_and_save_until_an_edit_does_not_validate() {
     let library = Library::new("footer-on-templates");
     let mut h = harness(&library);
+
     // The window's footer is drawn after the app's own menus, which have an Export too
     let disabled = |h: &Harness<'_, TextureCraftApp>, label: &str| h.get_all_by_label(label).last().unwrap().accesskit_node().is_disabled();
+
     assert!(!disabled(&h, "Export"), "Export works from the templates tab");
     assert!(!disabled(&h, "Save settings"), "Save settings works from the templates tab");
 

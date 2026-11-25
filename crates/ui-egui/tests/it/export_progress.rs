@@ -2,6 +2,7 @@
 //! progress bar with Cancel Export, and the window staying open.
 
 use egui_kittest::Harness;
+use egui_kittest::kittest::NodeT;
 use egui_kittest::kittest::Queryable as _;
 use serde_json::json;
 use texturecraft_ui_egui::TextureCraftApp;
@@ -47,6 +48,7 @@ fn export_shows_progress_logs_the_steps_and_keeps_the_window_open() {
     assert_eq!(h.state().ui.export.tab, 2, "Export switches to LIST OF EXPORTS");
     h.run_steps(1);
     assert!(h.query_by_label("Cancel Export").is_some());
+    assert_eq!(h.get_by_role(egui::Role::ProgressIndicator).accesskit_node().live(), egui::accesskit::Live::Polite);
     assert!(h.query_by_label("Cancel").is_none(), "the progress bar replaces the buttons");
     assert_eq!(console(&h).first().map(String::as_str), Some("Preparing texture export"));
 
@@ -124,6 +126,7 @@ fn the_list_is_a_tree_per_texture_set_with_the_console_beside_it() {
     h.state_mut().ui.export.tab = 2;
     h.run_steps(4);
     let set = h.state().session.doc.project.texture_sets[0].name.clone();
+
     assert!(h.query_by_label(&set).is_some());
     assert!(h.query_all_by_label("256x256 (Texture Set size)").next().is_some());
     assert!(h.query_all_by_label("png").next().is_some() && h.query_all_by_label("16 bits").next().is_some());
@@ -137,14 +140,17 @@ fn the_list_is_a_tree_per_texture_set_with_the_console_beside_it() {
     let at = h.get_by_label(&file).rect().center();
     h.hover_at(at);
     h.run_steps(30);
+
     assert!(h.query_by_label(&dir.join(&file).display().to_string()).is_some());
 
     // The strip at the console's edge hides it, then shows it again
     h.get_by_role_and_label(egui::Role::Button, "Hide Console").click();
     h.run_steps(4);
+
     assert!(h.state().ui.export.console_hidden && h.query_by_label("Console").is_none());
     h.get_by_role_and_label(egui::Role::Button, "Show Console").click();
     h.run_steps(4);
+
     assert!(!h.state().ui.export.console_hidden);
 }
 

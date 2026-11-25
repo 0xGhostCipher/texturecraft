@@ -1,6 +1,6 @@
 use egui::{Color32, CornerRadius, Stroke, Style, TextStyle, style::StyleModifier};
 
-use crate::theme::{Tokens, lerp_color};
+use crate::theme::{Tokens, contrast_ratio, lerp_color};
 
 /// Text size of the whole window, labels and values alike
 pub(crate) const TEXT_SIZE: f32 = 12.0;
@@ -23,6 +23,9 @@ const SCROLL_BAR_MARGIN: f32 = 4.0;
 /// How far the dividers sit below the frame colour, so they read on it
 const DIVIDER_DARKENING: f32 = 0.26;
 
+/// Split the difference between the field outline and text so control edges read against the panel
+const BORDER_TEXT_MIX: f32 = 0.5;
+
 /// How far the Presets list's names sit from the text colour towards the dim one
 const LIST_TEXT_DIMMING: f32 = 0.37;
 
@@ -41,7 +44,6 @@ pub(crate) struct ExportLook {
     pub(crate) text_dim: Color32,
     pub(crate) list_text: Color32,
     pub(crate) accent: Color32,
-    pub(crate) dark: bool,
 }
 
 impl ExportLook {
@@ -50,17 +52,26 @@ impl ExportLook {
         Self {
             window: tokens.panel,
             control: tokens.row,
-            control_border: tokens.field_border,
+            control_border: lerp_color(tokens.field_border, tokens.text, BORDER_TEXT_MIX),
             raised: tokens.separator,
             chrome: tokens.chrome,
             divider: lerp_color(tokens.chrome, Color32::BLACK, DIVIDER_DARKENING),
-            outline: tokens.button_border,
+            outline: lerp_color(tokens.button_border, tokens.text, BORDER_TEXT_MIX),
             text: tokens.text,
             text_dim: tokens.text_dim,
             list_text: lerp_color(tokens.text, tokens.text_dim, LIST_TEXT_DIMMING),
             accent: tokens.accent,
-            dark: tokens.dark,
         }
+    }
+
+    /// Prefer the theme lettering when it meets the normal-text contrast threshold.
+    pub(crate) fn lettering_on(&self, fill: Color32) -> Color32 {
+        const MIN_TEXT_CONTRAST: f32 = 4.5;
+        if contrast_ratio(self.text, fill) >= MIN_TEXT_CONTRAST {
+            return self.text;
+        }
+
+        if contrast_ratio(Color32::WHITE, fill) >= MIN_TEXT_CONTRAST { Color32::WHITE } else { Color32::BLACK }
     }
 
     /// 12 point text, the window's control colours, scroll bars in their own strip beside the list
@@ -121,5 +132,29 @@ impl ExportLook {
             style.visuals.widgets.inactive.bg_stroke = Stroke::NONE;
             style.visuals.widgets.active.bg_stroke = Stroke::NONE;
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{Accent, Brightness, apply};
+
+    #[test]
+    fn export_button_and_empty_swatch_text_and_control_edges_read_in_each_theme() {
+        let context = egui::Context::default();
+        for brightness in Brightness::ALL {
+            for accent in Accent::ALL {
+                apply(&context, brightness, accent);
+                let look = ExportLook::get(&context);
+
+                for fill in [look.accent, look.raised] {
+                    assert!(contrast_ratio(look.lettering_on(fill), fill) >= 4.5, "{brightness:?} {accent:?}");
+                }
+                for background in [look.window, look.control] {
+                    assert!(contrast_ratio(look.control_border, background) >= 3.0, "{brightness:?}");
+                }
+            }
+        }
     }
 }

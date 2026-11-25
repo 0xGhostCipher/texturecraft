@@ -49,6 +49,7 @@ const TYPES: [&str; 14] = ["bmp", "jpeg", "jng", "pgm", "png", "targa", "tiff", 
 fn the_file_type_list_is_the_reference_one_with_sbsar_greyed() {
     let mut h = harness();
     open_combo(&mut h, "Based on output template");
+
     assert_eq!(entries(&h, &TYPES), TYPES.map(String::from).to_vec());
 
     assert!(h.get_all_by_label("sbsar").last().unwrap().accesskit_node().is_disabled(), "sbsar is greyed");
@@ -57,6 +58,7 @@ fn the_file_type_list_is_the_reference_one_with_sbsar_greyed() {
     let at = h.get_all_by_label("sbsar").last().unwrap().rect().center();
     h.hover_at(at);
     h.run_steps(30);
+
     assert!(h.query_by_label("Not available yet").is_some(), "sbsar at {at:?}");
     for name in ["j2k", "jp2", "psd"] {
         assert!(!h.get_all_by_label(name).last().unwrap().accesskit_node().is_disabled(), "{name} can be picked");

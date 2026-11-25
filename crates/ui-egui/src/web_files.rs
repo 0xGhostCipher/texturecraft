@@ -239,6 +239,21 @@ fn zip_files(files: Vec<ExportedFile>) -> Result<Vec<u8>, String> {
     zip.finish().map_err(|e| e.to_string())
 }
 
+/// Add the shader sidecar only when its root name is free in the download.
+#[cfg(any(target_arch = "wasm32", test))]
+fn append_shader_parameters(files: &mut Vec<ExportedFile>, project: &texturecraft_engine::core::Project, sets: &[usize]) -> Result<(), String> {
+    use texturecraft_engine::shader_parameters::{shader_parameters, shader_parameters_file};
+
+    let name = shader_parameters_file(&project.name);
+    if files.iter().any(|file| file.name.split('/').next().is_some_and(|first| first.eq_ignore_ascii_case(&name))) {
+        return Err(format!("\"{name}\" is already used by a texture file or folder"));
+    }
+
+    let bytes = serde_json::to_vec_pretty(&shader_parameters(project, sets)).map_err(|error| error.to_string())?;
+    files.push(ExportedFile { name, bytes, width: 0, height: 0, warnings: Vec::new() });
+    Ok(())
+}
+
 #[cfg(target_arch = "wasm32")]
 pub use web::{
     download, export_mesh, export_textures, import_bake_mesh, import_environment, import_images, import_material, import_preset, open, open_sample_project,
@@ -366,10 +381,10 @@ mod web {
         texturecraft_engine::formats::skip_repeated_names(&mut files);
         if app.ui.export.shader_parameters {
             let sets: Vec<usize> = jobs.iter().map(|(set_index, _)| *set_index).collect();
-            let parameters = texturecraft_engine::shader_parameters::shader_parameters(&app.session.doc.project, &sets);
-            let name = texturecraft_engine::shader_parameters::shader_parameters_file(&app.session.doc.project.name);
-            let bytes = serde_json::to_vec_pretty(&parameters).map_err(|e| e.to_string())?;
-            files.push(ExportedFile { name, bytes, width: 0, height: 0, warnings: Vec::new() });
+            if let Err(error) = append_shader_parameters(&mut files, &app.session.doc.project, &sets) {
+                app.session.log.warnings("MapExporter", [format!("The shader settings file was not written: {error}")]);
+                app.toast(trf("The shader settings file was not written: {error}", &[("error", &error)]), true);
+            }
         }
         app.session.log.warnings("MapExporter", files.iter().flat_map(|file| file.warnings.iter().cloned()));
         let file_count = files.len();
@@ -530,6 +545,26 @@ mod tests {
 
         assert_eq!(harness.state().session.bake_meshes.high.len(), 1);
         assert!(harness.state().session.bake_meshes.cage.is_some());
+    }
+
+    #[test]
+    fn shader_sidecar_does_not_take_a_texture_folder_name() {
+        let project = texturecraft_engine::core::Project::new("Chair", "builtin:sphere");
+        let name = "chair_SHADERS.json/Color.png";
+        let mut files = vec![ExportedFile { name: name.into(), bytes: vec![1, 2, 3], width: 1, height: 1, warnings: Vec::new() }];
+
+        let error = append_shader_parameters(&mut files, &project, &[]).unwrap_err();
+
+        assert!(error.contains("Chair_shaders.json"));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, name);
+        files[0].name = "Chair_shaders.json_backup/Color.png".into();
+        append_shader_parameters(&mut files, &project, &[]).unwrap();
+        let bytes = zip_files(files).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.len(), 2);
+        assert!(archive.by_name("Chair_shaders.json_backup/Color.png").is_ok());
+        assert!(archive.by_name("Chair_shaders.json").is_ok());
     }
 
     #[test]

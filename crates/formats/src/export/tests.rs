@@ -374,6 +374,7 @@ fn every_format_encodes_and_decodes() {
             opts.format_override = Some(format);
             opts.bit_depth_override = Some(depth);
             let files = fx.render(&opts);
+
             assert_eq!(files.len(), 4, "{format:?}");
             for f in &files {
                 assert!(f.name.ends_with(format.extension()));
@@ -386,6 +387,7 @@ fn every_format_encodes_and_decodes() {
 
             // Roughness 0.25 everywhere survives every format (JPEG within its loss)
             let px = decode(find(&files, "OcclusionRoughnessMetallic.")).to_rgba32f().get_pixel(1, 1)[1];
+
             assert!((px - 0.25).abs() < 0.01, "{format:?}/{depth}: {px}");
             let base = find(&files, "_BaseColor.");
             match format {
@@ -571,6 +573,7 @@ fn an_output_with_its_own_size_keeps_it() {
 
     for (export_size, other) in [(None, RES), (Some(128), 128)] {
         let files = fx.render(&ExportOptions { size: export_size, ..options.clone() });
+
         assert_eq!(find(&files, "small.png").width, 32, "its own size wins over {export_size:?}");
         assert_eq!(find(&files, "set_size.png").width, other);
     }
@@ -1166,6 +1169,7 @@ fn psd_holds_every_map_as_a_layer_over_their_merged_image() {
     assert_eq!(files[0].name, "sphere_Body_Set.psd");
     let parsed = craft_psd::PsdFile::from_bytes(&files[0].bytes).unwrap();
     let layers: Vec<_> = parsed.iter_layers().collect();
+
     assert_eq!(layers.len(), pngs.len());
 
     // The file stacks bottom up, so the first map is the top layer
@@ -1174,12 +1178,38 @@ fn psd_holds_every_map_as_a_layer_over_their_merged_image() {
         assert_eq!(layer.rgba8().unwrap().data, decode(png).to_rgba8().into_raw(), "{}: the layer holds the map's texels", png.name);
     }
     let top = layers.last().unwrap().rgba8().unwrap().data;
+
     assert!(top.as_chunks::<4>().0.iter().all(|texel| texel[3] == u8::MAX), "the base colour is opaque");
     assert_eq!(parsed.composite_rgba8().unwrap().data, top, "the merged image shows the opaque top layer");
 
     options.bit_depth_override = Some(16);
     let deep = &fx.render(&options)[0];
+
     assert_eq!(craft_psd::PsdFile::from_bytes(&deep.bytes).unwrap().header.depth, 16);
+}
+
+#[test]
+fn psd_keeps_small_layers_at_the_requested_size() {
+    let fx = Fx::new(&default_channels());
+    let mut options = ExportOptions::new(builtin_preset("glTF PBR Metal Roughness").unwrap());
+    options.format_override = Some(FileFormat::Psd);
+    options.bit_depth_override = Some(8);
+    options.maps.insert(0, MapOverride { size: Some(RES / 2), ..Default::default() });
+    options.maps.insert(1, MapOverride { size: Some(RES / 4), ..Default::default() });
+
+    let files = fx.render(&options);
+    let psd = craft_psd::PsdFile::from_bytes(&files[0].bytes).unwrap();
+    let layers: Vec<_> = psd.iter_layers().map(|layer| layer.rgba8().unwrap()).collect();
+    let merged = psd.composite_rgba8().unwrap();
+
+    assert_eq!((merged.width, merged.height), (RES, RES));
+    assert_eq!(layers.iter().map(|layer| (layer.width, layer.height)).collect::<Vec<_>>(), [(RES, RES), (RES / 4, RES / 4), (RES / 2, RES / 2)]);
+    let pixel = |x: u32, y: u32| ((y * RES + x) * 4) as usize;
+
+    assert_eq!(&merged.data[..4], &layers[2].data[..4]);
+    let outside_top_layers = pixel(RES - 1, 0);
+
+    assert_eq!(&merged.data[outside_top_layers..outside_top_layers + 4], &layers[0].data[outside_top_layers..outside_top_layers + 4]);
 }
 
 #[test]
@@ -1199,8 +1229,10 @@ fn psd_folder_templates_become_layer_groups_of_one_file_not_folders() {
 
     // The tree lists bottom up and the first map is the top layer
     let groups: Vec<_> = tree.iter().rev().filter(|node| node.is_group()).map(name).collect();
+
     assert_eq!(groups, ["Body", "Top"]);
     let body = tree.iter().find(|node| node.is_group() && name(node) == "Body").unwrap();
+
     assert_eq!(body.children().iter().map(name).collect::<Vec<_>>(), ["Body_Set_Rough"], "$textureSet is filled in inside a layer name");
     assert!(tree.iter().any(|node| !node.is_group() && name(node) == "Mask"));
 }
@@ -1208,19 +1240,21 @@ fn psd_folder_templates_become_layer_groups_of_one_file_not_folders() {
 #[test]
 fn psd_layer_groups_follow_the_slashes_of_their_names() {
     let pixel = || craft_psd::PixelData::Rgba8(vec![10, 20, 30, 255]);
-    let layers = vec![("Mask", pixel()), ("Body/Rough", pixel()), ("Body/Color", pixel()), ("Top/Inner/Leaf", pixel())];
+    let layers = ["Mask", "Body/Rough", "Body/Color", "Top/Inner/Leaf"].into_iter().map(|name| (name, (1, 1), pixel())).collect();
 
     let bytes = layered_psd::write_layers((1, 1), 8, layers, pixel()).unwrap();
 
     let parsed = craft_psd::PsdFile::from_bytes(&bytes).unwrap();
     let name = |node: &craft_psd::tree::LayerNode| parsed.layer(node.index()).unwrap().name();
     let tree = parsed.layer_tree();
+
     assert_eq!(
         tree.iter().map(|node| (name(node), node.is_group())).collect::<Vec<_>>(),
         [("Mask".to_string(), false), ("Body".to_string(), true), ("Top".to_string(), true)]
     );
     assert_eq!(tree[1].children().iter().map(name).collect::<Vec<_>>(), ["Rough", "Color"]);
     let inner = &tree[2].children()[0];
+
     assert!(inner.is_group() && name(inner) == "Inner");
     assert_eq!(inner.children().iter().map(name).collect::<Vec<_>>(), ["Leaf"]);
 }
@@ -1228,6 +1262,7 @@ fn psd_layer_groups_follow_the_slashes_of_their_names() {
 #[test]
 fn psd_plan_rejects_a_version_one_atlas_over_its_dimension_limit() {
     let mut fx = Fx::new(&default_channels());
+
     // Four tile columns: the atlas is 32768 wide, each tile's layer and merged image well under 2 GiB
     fx.project.texture_sets[0].uv_tiles = vec![1001, 1004];
     let mut options = one_map(FileFormat::Psd, 8, roughness());
@@ -1239,6 +1274,22 @@ fn psd_plan_rejects_a_version_one_atlas_over_its_dimension_limit() {
     assert!(error.to_string().contains("PSD") && error.to_string().contains("32768"));
     options.atlas = false;
     assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 2);
+}
+
+#[test]
+fn psd_plan_preserves_each_udim_suffix_after_truncating_the_stem() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.texture_sets[0].uv_tiles = vec![1001, 1002];
+    let options = one_map(FileFormat::Psd, 8, roughness());
+    let mesh_name = "a".repeat(MAX_STEM);
+
+    let plan = list_outputs(&fx.project, 0, &mesh_name, &options).unwrap();
+
+    assert_eq!(plan.len(), 2);
+    for (file, tile) in plan.iter().zip([1001, 1002]) {
+        assert!(file.name.ends_with(&format!(".{tile}.psd")), "{}", file.name);
+        assert_eq!(file.udim_name.as_ref().unwrap().replace("<UDIM>", &tile.to_string()), file.name);
+    }
 }
 
 #[test]
@@ -1258,6 +1309,7 @@ fn psd_plan_counts_every_layer_against_the_version_one_byte_limit() {
         options.preset.maps.push(map);
     }
     let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
+
     assert!(error.to_string().contains("3 maps") && error.to_string().contains("2 GiB"), "{error}");
 }
 
@@ -1265,8 +1317,9 @@ fn psd_plan_counts_every_layer_against_the_version_one_byte_limit() {
 fn psd_byte_limit_includes_the_merged_image_and_keeps_separate_tiles_valid() {
     // One RGBA16 layer and the merged image: 87360 bytes over 2 GiB, a row less 87424 bytes below
     let (width, height) = (10_924, 12_287);
-    assert!(check_psd_size((width, height), 1, 0, 16).is_err());
-    assert!(check_psd_size((width, height - 1), 1, 0, 16).is_ok());
+
+    assert!(check_psd_size([(width, height)], 0, 16).is_err());
+    assert!(check_psd_size([(width, height - 1)], 0, 16).is_ok());
 
     let mut fx = Fx::new(&default_channels());
     fx.project.texture_sets[0].uv_tiles = vec![1001, 1003, 1011];
@@ -1279,6 +1332,19 @@ fn psd_byte_limit_includes_the_merged_image_and_keeps_separate_tiles_valid() {
     assert!(error.to_string().contains("2 GiB"), "{error}");
     options.atlas = false;
     assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 3);
+}
+
+#[test]
+fn psd_rejects_a_composite_with_a_different_size_from_the_plan() {
+    let mut fx = Fx::new(&default_channels());
+    let source_size = RES * 2;
+    fx.comp = Composite::new(&default_channels(), source_size);
+    fx.coverage.resize((source_size * source_size) as usize, true);
+    let options = one_map(FileFormat::Psd, 8, roughness());
+
+    let error = render_maps(&fx.input(), &options).unwrap_err();
+
+    assert!(error.to_string().contains("does not match the planned texture set size"), "{error}");
 }
 
 #[test]
@@ -1349,11 +1415,13 @@ fn jpeg2000_is_lossless_at_8_and_16_bits() {
             let mut options = png_options.clone();
             options.format_override = Some(format);
             let files = fx.render(&options);
+
             assert_eq!(files.len(), png.len());
 
             for (file, reference) in files.iter().zip(&png) {
                 assert!(file.name.ends_with(format.extension()), "{}", file.name);
                 let signature: &[u8] = if format == FileFormat::Jp2 { &jp2_signature } else { &codestream_signature };
+
                 assert!(file.bytes.starts_with(signature), "{}", file.name);
 
                 // Every sample is the PNG's, with alpha the last component
@@ -1361,17 +1429,35 @@ fn jpeg2000_is_lossless_at_8_and_16_bits() {
                 let components = usize::from(image.color().channel_count());
                 let expected = image.to_rgba16();
                 let planes = jpeg2000_planes(&file.bytes);
+
                 assert_eq!(planes.len(), components, "{}", file.name);
                 for (component, plane) in planes.iter().enumerate() {
+                    assert_eq!(plane.len(), expected.pixels().len(), "{} component {component}", file.name);
                     let source = if components <= 2 && component == 1 { 3 } else { component };
                     for (texel, sample) in expected.pixels().zip(plane) {
                         let want = if depth == 8 { texel[source] / 257 } else { texel[source] };
+
                         assert_eq!(*sample, want, "{} component {component}", file.name);
                     }
                 }
             }
         }
     }
+}
+
+#[test]
+fn jp2_declares_linear_storage_for_rgb_data_maps() {
+    let fx = Fx::new(&default_channels());
+    let mut options = ExportOptions::new(builtin_preset("glTF PBR Metal Roughness").unwrap());
+    options.format_override = Some(FileFormat::Jp2);
+    let linear = crate::icc::profile(ColorSpace::LinearRec709).unwrap();
+
+    let files = fx.render(&options);
+    let has_linear_profile = |file: &ExportedFile| file.bytes.windows(linear.len()).any(|bytes| bytes == linear);
+
+    assert!(has_linear_profile(find(&files, "_OcclusionRoughnessMetallic")));
+    assert!(has_linear_profile(find(&files, "_Normal")));
+    assert!(!has_linear_profile(find(&files, "_BaseColor")));
 }
 
 #[test]
@@ -1717,6 +1803,22 @@ fn write_files_accepts_a_long_nested_folder_and_stem() {
 }
 
 #[test]
+fn map_preview_bounds_the_longer_side_of_a_tall_atlas() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.texture_sets[0].uv_tiles = vec![1001, 1031];
+    fx.comp = Composite::with_size(&default_channels(), RES, RES * 4);
+    fx.coverage.resize((RES * RES * 4) as usize, true);
+    let options = one_map(FileFormat::Png, 8, roughness());
+    let max_side = 32;
+
+    let preview = MapPreview::sample(&fx.input(), &options, 0, max_side).unwrap().unwrap();
+
+    assert_eq!(preview.height, max_side);
+    assert_eq!(preview.width * 4, preview.height);
+    assert_eq!(preview.pixels.len(), (preview.width * preview.height) as usize);
+}
+
+#[test]
 fn a_map_preview_holds_the_values_its_file_stores() {
     let mut fx = Fx::new(&default_channels());
     fx.set_all(Channel::Metallic, |x, _| [x as f32 / 63.0; 3]);
@@ -1731,14 +1833,37 @@ fn a_map_preview_holds_the_values_its_file_stores() {
     for (index, suffix) in [(mask, "MaskMap"), (base, "BaseMap")] {
         let file = decode(find(&files, suffix));
         let preview = MapPreview::sample(&fx.input(), &options, index, RES).unwrap().unwrap();
+
         assert_eq!((preview.width, preview.height), file.dimensions());
         assert_eq!(preview.channels.len(), usize::from(file.color().channel_count()), "{suffix}");
         assert!(preview.pixels == file.into_bytes(), "{suffix}: the preview shows what the file stores");
     }
 
     let small = MapPreview::sample(&fx.input(), &options, mask, 8).unwrap().unwrap();
+
     assert!(small.width < RES && small.pixels.len() == (small.width * small.height) as usize * 4, "a smaller preview samples the same map");
     assert!(MapPreview::sample(&fx.input(), &options, options.preset.maps.len(), 8).is_err(), "a map the template doesn't have is an error");
+}
+
+#[test]
+fn triangle_coverage_preserves_uncovered_texels_and_height_normal_neighbours_in_previews() {
+    let mut fixture = Fx::new(&default_channels());
+    fixture.set_all(Channel::Height, |x, y| [(x + y) as f32 / RES as f32; 3]);
+    for (index, covered) in fixture.coverage.iter_mut().enumerate() {
+        *covered = index % 3 != 0;
+    }
+    let triangles: Vec<_> = fixture.coverage.iter().map(|covered| if *covered { 0 } else { texturecraft_geom::NO_TRI }).collect();
+    let input = fixture.input();
+    let triangle_input =
+        ExportInput { project: input.project, ts: input.ts, composite: input.composite, baked: input.baked, coverage: &triangles, mesh_name: input.mesh_name };
+    let options = ExportOptions::new(builtin_preset("glTF PBR Metal Roughness").unwrap());
+
+    for map in 0..3 {
+        let expected = MapPreview::sample(&input, &options, map, RES).unwrap().unwrap();
+        let actual = MapPreview::sample_triangles(&triangle_input, &options, map, RES).unwrap().unwrap();
+
+        assert_eq!(actual, expected);
+    }
 }
 
 /// Tilts every normal of `fx` and returns the green byte an OpenGL normal map stores for it
@@ -1764,12 +1889,14 @@ fn the_unreal_subsurface_template_writes_the_scatter_mask_beside_the_packed_maps
     let files = fx.render_preset("Unreal Engine Subsurface Profile (Packed)");
 
     let mask = find(&files, "_SubsurfaceMask.png");
+
     assert_eq!(decode(mask).color(), image::ColorType::L8, "the mask is one 8-bit channel");
     assert_close(pixel(mask), [byte(0.7), byte(0.7), byte(0.7), 255], "scatter weight in the mask");
     let [r, g, b, _] = pixel(find(&files, "_OcclusionRoughnessMetallic.png"));
     assert_close([r, g, b, 0], [byte(0.6), byte(0.4), byte(0.8), 0], "R occlusion, G roughness, B metallic");
     assert_eq!(decode(find(&files, "_BaseColor.png")).color(), image::ColorType::Rgb8, "opacity feeds the mask, not the base color's alpha");
     let green = pixel(find(&files, "_Normal.png"))[1];
+
     assert!((green - (255 - open_gl_green)).abs() <= 1, "DirectX normal: green {green}");
 }
 
@@ -1785,12 +1912,14 @@ fn the_gltf_specular_glossiness_template_packs_a_specular_glossiness_sets_own_ch
     let files = fx.render_preset("glTF Specular Glossiness (archived extension)");
 
     let specular_glossiness = find(&files, "_SpecularGlossiness.png");
+
     assert_eq!(decode(specular_glossiness).color(), image::ColorType::Rgba8);
     let srgb = specular.map(|v| byte(linear_to_srgb(v)));
     assert_close(pixel(specular_glossiness), [srgb[0], srgb[1], srgb[2], byte(0.3)], "sRGB specular, linear glossiness in alpha");
     let base = fx.comp.value(Channel::BaseColor, 3, 3).map(|v| byte(linear_to_srgb(v)));
     assert_close(pixel(find(&files, "_Diffuse.png")), [base[0], base[1], base[2], byte(0.9)], "sRGB diffuse, opacity in alpha");
     let green = pixel(find(&files, "_Normal.png"))[1];
+
     assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
 }
 
@@ -1810,10 +1939,12 @@ fn the_redshift_template_writes_one_map_per_input_the_set_has() {
     let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
     for (input, expected) in [("Metalness", 0.8), ("ReflectionRoughness", 0.4), ("SubsurfaceWeight", 0.7), ("CoatWeight", 0.2)] {
         let file = find(&files, &format!("_{input}.png"));
+
         assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is one 8-bit channel: {names:?}");
         assert_close(pixel(file), [byte(expected), byte(expected), byte(expected), 255], input);
     }
     let green = pixel(find(&files, "_Normal.png"))[1];
+
     assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
     assert!(!names.iter().any(|name| name.contains("Sheen") || name.contains("CoatRoughness")), "inputs the set lacks write no maps: {names:?}");
 }
@@ -1829,10 +1960,12 @@ fn the_roblox_template_writes_opacity_in_the_colour_alpha_and_opengl_normals() {
     assert_close(pixel(find(&files, "_Color.png")), [base[0], base[1], base[2], byte(0.9)], "sRGB colour, opacity in alpha");
     for (input, expected) in [("Metalness", 0.8), ("Roughness", 0.4)] {
         let file = find(&files, &format!("_{input}.png"));
+
         assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is grayscale");
         assert_close(pixel(file), [byte(expected), byte(expected), byte(expected), 255], input);
     }
     let green = pixel(find(&files, "_Normal.png"))[1];
+
     assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
 }
 
@@ -1846,9 +1979,11 @@ fn the_sketchfab_template_writes_directx_normals_and_one_map_per_channel() {
     assert_eq!(decode(find(&files, "_BaseColor.png")).color(), image::ColorType::Rgb8, "no alpha on the base color");
     for (input, expected) in [("Metalness", 0.8), ("Roughness", 0.4), ("AmbientOcclusion", 0.6)] {
         let file = find(&files, &format!("_{input}.png"));
+
         assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is linear grayscale");
         assert_close(pixel(file), [byte(expected), byte(expected), byte(expected), 255], input);
     }
     let green = pixel(find(&files, "_Normal.png"))[1];
+
     assert!((green - (255 - open_gl_green)).abs() <= 1, "DirectX normal: green {green}");
 }

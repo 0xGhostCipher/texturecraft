@@ -125,11 +125,13 @@ fn the_export_panel_leads_to_export_textures_and_the_mesh_options() {
 
     harness.get_by_label("Save settings").click();
     harness.run_steps(SETTLE_FRAMES);
+
     assert!(!harness.state().ui.windows.export, "Save settings closes the window");
 
     click_rail(&mut harness, "Export");
     button_left_of_rail(&harness, "Export Mesh...").click();
     harness.run_steps(SETTLE_FRAMES);
+
     assert!(harness.query_by_label("Mesh Export Options").is_some(), "Export Mesh... asks for the options first");
 }
 

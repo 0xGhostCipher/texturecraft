@@ -19,6 +19,7 @@ fn ticking_export_shader_settings_writes_the_json_listing_every_exported_set() {
 
     h.get_by_role_and_label(egui::Role::CheckBox, "Export shader settings").click();
     h.run_steps(4);
+
     assert!(h.state().ui.export.shader_parameters);
     h.get_all_by_label("Export").last().unwrap().click();
     for _ in 0..64 {
@@ -33,6 +34,7 @@ fn ticking_export_shader_settings_writes_the_json_listing_every_exported_set() {
     let file = dir.join(texturecraft_engine::shader_parameters::shader_parameters_file(&project.name));
     let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap_or_else(|_| panic!("{} was written", file.display()))).unwrap();
     let names: Vec<&str> = project.texture_sets.iter().map(|set| set.name.as_str()).collect();
+
     assert_eq!(json["shaders"][0]["textureSets"], serde_json::json!(names), "every texture set of the export, written once: {json}");
     assert!(json["shaders"][0]["parameters"]["ior"].is_number());
     let _ = std::fs::remove_dir_all(&dir);

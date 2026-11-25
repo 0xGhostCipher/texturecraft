@@ -386,13 +386,13 @@ fn output_for_slot<'m>(slot: usize, map: &'m MapSpec, set: &TextureSet, format: 
 /// opacity, clear coat and clear coat roughness. Maps with none of them (ambient occlusion,
 /// height, specular/glossiness, baked maps...) bind nothing, and neither do channels the set has
 /// no data for. `project_normal` is the project's normal convention, used by normal maps that
-/// follow it. A PSD holds several maps as layers, so it binds nothing
+/// follow it. Layered PSD files and JPEG 2000 files are omitted.
 pub fn usd_texture_bindings(set: &TextureSet, opts: &ExportOptions, project_normal: NormalFormat, files: &[PlannedFile]) -> Vec<UsdTextureBinding> {
     let mut out: Vec<UsdTextureBinding> = Vec::new();
     let mut seen_maps = Vec::new();
     for file in files {
-        // A PSD's merged image is no one map's texture
-        if file.format == FileFormat::Psd {
+        // PSD stores several maps and OpenUSD's default reader has no JPEG 2000 support
+        if !file.format.usable_by_usd_asset() {
             continue;
         }
 

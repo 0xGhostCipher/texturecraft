@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use egui::util::id_type_map::RawKey;
 use serde_json::Value;
 
 use super::map_preview_pictures::MapPreviewPictures;
@@ -24,14 +25,22 @@ impl MapPreviewCache {
 
     fn key(app: &TextureCraftApp, params: &Value) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        params.to_string().hash(&mut hasher);
-        app.session.revision.hash(&mut hasher);
+        params.hash(&mut hasher);
+        (app.session.project_id, app.session.revision).hash(&mut hasher);
         hasher.finish()
     }
 
     /// Output map `index`'s pictures once made; None until then
     pub(super) fn get(ctx: &egui::Context, index: usize) -> Option<Option<Arc<MapPreviewPictures>>> {
-        ctx.data(|data| data.get_temp::<MapPreviewCache>(Self::id()).and_then(|cache| cache.pictures.get(&index).cloned()))
+        ctx.data(|data| {
+            let cache = data.get_temp_raw(RawKey::new::<Self>(Self::id()))?.downcast_ref::<Self>()?;
+            cache.pictures.get(&index).cloned()
+        })
+    }
+
+    /// Release all cached pictures when their tab is dismissed.
+    pub(super) fn clear(ctx: &egui::Context) {
+        ctx.data_mut(|data| data.remove::<Self>(Self::id()));
     }
 
     /// Forget pictures made for other params or an older document, so `get` never shows them

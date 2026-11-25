@@ -13,7 +13,7 @@ use texturecraft_core::{NormalFormat, PROJECT_EXT};
 use texturecraft_core::{Project, TextureSet};
 use texturecraft_formats::PlannedFile;
 use texturecraft_formats::{ExportInput, ExportOptions, ExportedFile, FileFormat, MapOverride, MapPreview, Padding, ProjectFile};
-use texturecraft_geom::{Mesh, primitives};
+use texturecraft_geom::{Mesh, UvGBuffer, primitives};
 
 use crate::commands::{CommandSpec, always, bad, normal_format_param, strp, u64p};
 use crate::session::{Document, Session};
@@ -308,8 +308,12 @@ impl Session {
                 continue;
             }
 
-            let files =
-                self.with_export_input(set_index, &mesh_name, |input| texturecraft_formats::export::render_planned_maps(input, options, plans).map_err(fe))?;
+            let files = self.with_export_input(
+                set_index,
+                &mesh_name,
+                |grid| Cow::Owned(grid.coverage_mask()),
+                |input| texturecraft_formats::export::render_planned_maps(input, options, plans).map_err(fe),
+            )?;
             out.extend(files);
         }
 
@@ -317,11 +321,17 @@ impl Session {
     }
 
     /// Run `with` on texture set `set_index`'s export input: its document composite, coverage and baked maps
-    fn with_export_input<T>(&self, set_index: usize, mesh_name: &str, with: impl FnOnce(&ExportInput) -> Result<T>) -> Result<T> {
+    fn with_export_input<T, Coverage: Clone>(
+        &self,
+        set_index: usize,
+        mesh_name: &str,
+        coverage: impl FnOnce(&UvGBuffer) -> Cow<'_, [Coverage]>,
+        with: impl FnOnce(&ExportInput<Coverage>) -> Result<T>,
+    ) -> Result<T> {
         let missing = || EngineError::Other(format!("no texture set {set_index}"));
         let cache = self.caches.get(set_index).ok_or_else(missing)?;
         let composite = self.document_composite(set_index, &cache.covered_tiles).ok_or_else(missing)?;
-        let coverage = cache.gbuf.coverage_mask();
+        let coverage = coverage(&cache.gbuf);
         let empty = Default::default();
         let input = ExportInput {
             project: &self.doc.project,
@@ -334,7 +344,8 @@ impl Session {
         with(&input)
     }
 
-    /// A picture at most `side` pixels wide of output map `map` for the first texture set `params` names; None when it writes no file for the map
+    /// A picture of output map `map` for the first texture set named in `params`, with each side at most `side` pixels.
+    /// Returns None when the map writes no file.
     pub fn export_preview(&mut self, params: &Value, map: usize, side: u32) -> Result<Option<MapPreview>> {
         let options = export_options(self, params, "export.preview")?;
         let Some(&set_index) = sets_param(self, params, "export.preview")?.first() else { return Ok(None) };
@@ -343,7 +354,12 @@ impl Session {
             self.update();
         }
         let mesh_name = stem_of(self.doc.project.mesh.trim_start_matches("builtin:"));
-        self.with_export_input(set_index, &mesh_name, |input| MapPreview::sample(input, &options, map, side).map_err(fe))
+        self.with_export_input(
+            set_index,
+            &mesh_name,
+            |grid| Cow::Borrowed(&grid.tri),
+            |input| MapPreview::sample_triangles(input, &options, map, side).map_err(fe),
+        )
     }
 }
 
@@ -860,8 +876,11 @@ fn build_usd_asset(session: &Session, dir: &std::path::Path, exports: &[UsdAsset
 
             // A map that lost any file (a tile of a UDIM map) is not bound: its `<UDIM>` name would read a file it does not own
             kept.retain(|file| !skipped_maps.contains(&file.map));
-            if kept.iter().any(|file| file.format == FileFormat::Psd) {
-                let warning = format!("The USD asset doesn't read PSD files, so the material of texture set \"{}\" leaves out its PSD maps", texture_set.name);
+            let mut unsupported = HashSet::new();
+            for file in kept.iter().filter(|file| !file.format.usable_by_usd_asset() && unsupported.insert(file.format)) {
+                let format = file.format.extension().to_ascii_uppercase();
+                let warning =
+                    format!("The USD asset doesn't read {format} files, so the material of texture set \"{}\" leaves out those maps", texture_set.name);
                 if !warnings.contains(&warning) {
                     warnings.push(warning);
                 }
@@ -1003,11 +1022,11 @@ fn material_map_options(options: &ExportOptions, project_normal: NormalFormat) -
             continue;
         }
 
-        let mut overrides = MapOverride::default();
+        let settings = replacement.and_then(|(index, _)| options.maps.get(&index));
+        let mut overrides = MapOverride { size: settings.and_then(|settings| settings.size), ..MapOverride::default() };
         let requested_format = replacement.map(|(index, _)| selected_format(index)).or(options.format_override);
         if requested_format.is_none_or(material_format) {
             overrides.format = requested_format;
-            let settings = replacement.and_then(|(index, _)| options.maps.get(&index));
             overrides.bit_depth =
                 settings.and_then(|settings| settings.bit_depth).or(options.bit_depth_override).or_else(|| replacement.map(|(_, selected)| selected.bit_depth));
             overrides.dither = settings.and_then(|settings| settings.dither);
@@ -1029,7 +1048,7 @@ fn material_map_options(options: &ExportOptions, project_normal: NormalFormat) -
 
 #[cfg(not(target_arch = "wasm32"))]
 fn material_format(format: FileFormat) -> bool {
-    !matches!(format, FileFormat::Psd | FileFormat::Jng | FileFormat::Pgm | FileFormat::Webp)
+    !matches!(format, FileFormat::Psd | FileFormat::Jng | FileFormat::Pgm | FileFormat::Webp | FileFormat::J2k | FileFormat::Jp2)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

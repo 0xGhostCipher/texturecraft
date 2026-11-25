@@ -20,8 +20,24 @@ pub struct MapPreview {
 }
 
 impl MapPreview {
-    /// Output map `map` of `options`' template for `input`'s set, at most `side` wide; None when it writes no file; texels off the UV islands show the default
+    /// Output map `map` of `options`' template for `input`'s set, with each side at most `side` pixels.
+    /// Returns None when the map writes no file. Texels off the UV islands show the default.
     pub fn sample(input: &ExportInput, options: &ExportOptions, map: usize, side: u32) -> Result<Option<MapPreview>> {
+        Self::sample_coverage(input, options, map, side, false)
+    }
+
+    /// Sample the engine's triangle indices directly, using the UV rasterizer's uncovered sentinel.
+    pub fn sample_triangles(input: &ExportInput<u32>, options: &ExportOptions, map: usize, side: u32) -> Result<Option<MapPreview>> {
+        Self::sample_coverage(input, options, map, side, texturecraft_geom::NO_TRI)
+    }
+
+    fn sample_coverage<Coverage: PartialEq + Sync>(
+        input: &ExportInput<Coverage>,
+        options: &ExportOptions,
+        map: usize,
+        side: u32,
+        uncovered: Coverage,
+    ) -> Result<Option<MapPreview>> {
         let set = input.project.texture_set(input.ts)?;
         let spec = options.preset.maps.get(map).ok_or_else(|| FormatError::Invalid(format!("the template has no output map {map}")))?;
         let planned = list_outputs(input.project, input.ts, input.mesh_name, options)?;
@@ -30,14 +46,16 @@ impl MapPreview {
         }
 
         let (composite_width, height) = (input.composite.resolution, input.composite.height);
-        if composite_width == 0 || height == 0 || input.coverage.len() != composite_width as usize * height as usize {
+        if composite_width == 0 || height == 0 || input.coverage.len() as u64 != u64::from(composite_width) * u64::from(height) {
             return Err(FormatError::Invalid(format!("composite size {composite_width}×{height} does not match its coverage")));
         }
 
-        let width = side.clamp(1, MAX_PREVIEW_SIDE).min(composite_width);
-        let rows = ((u64::from(width) * u64::from(height) / u64::from(composite_width)) as u32).max(1);
+        let source_side = composite_width.max(height);
+        let preview_side = side.clamp(1, MAX_PREVIEW_SIDE).min(source_side);
+        let width = super::scale_export_side(composite_width, source_side, Some(preview_side));
+        let rows = super::scale_export_side(height, source_side, Some(preview_side));
         let tile_res = (composite_width / set.tile_grid().map_or(1, |grid| grid.cols.max(1))).max(1);
-        let sampler = Sampler::new(input, options, set, tile_res);
+        let sampler = Sampler::new(input, options, set, tile_res, uncovered);
         let channel_layout = layout(set, spec);
         let count = channel_layout.len();
         let color = spec.is_color();

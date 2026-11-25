@@ -4,8 +4,6 @@
 //! Maps dragged from the Input maps, Mesh maps and Converted maps panes onto an output map's
 //! channel swatches fill its channels.
 
-use std::sync::LazyLock;
-
 use egui::{Color32, Rect, RichText, Ui, pos2, vec2};
 use egui_phosphor::regular as ic;
 use serde_json::{Value, json};
@@ -14,7 +12,7 @@ use texturecraft_engine::formats::export::{FILE_TOKENS, MAX_PRESET_NAME, sanitiz
 use texturecraft_engine::formats::{Dest, ExportPreset, FileFormat, MapSpec, SourceRef, VirtualMap};
 
 use crate::TextureCraftApp;
-use crate::export_window::{ExportLook, GUTTER, TAB_ROW_HEIGHT, drawn};
+use crate::export_window::{ExportLook, GUTTER, TAB_ROW_HEIGHT, drawn, template_label};
 use crate::i18n::{n_, tr, trf};
 use crate::theme::Tokens;
 use crate::unavailable::NOT_AVAILABLE;
@@ -45,7 +43,7 @@ use source_pick::SourcePick;
 use swatch_look::SwatchLook;
 
 const RENAME_ID: &str = "exp_rename";
-/// The name "+" gives a new template, as in the reference
+/// Initial name for a new template
 const NEW_PRESET: &str = "new_export_preset";
 
 // Layout in points from the window content's top left corner, the side panes from its right edge, measured on the locked mock
@@ -211,25 +209,10 @@ const SWATCH_BAR_BOTTOM: f32 = 10.0;
 /// Its height
 const SWATCH_BAR_HEIGHT: f32 = 2.0;
 
-/// The reference's swatch colours mix channel levels 31, 71 and 111
-const SWATCH_LEVELS: [u8; 3] = [31, 71, 111];
-/// The shift from the reference's darker window to TextureCraft's window colour
-const SWATCH_SHIFT: [u8; 3] = [1, 6, 16];
-/// The maps the reference shows keep its own colours
-const REFERENCE_SWATCHES: [(SourceRef, [u8; 3]); 6] = [
-    (SourceRef::Channel { channel: Channel::BaseColor, component: 0 }, [71, 31, 31]),
-    (SourceRef::Channel { channel: Channel::Opacity, component: 0 }, [71, 71, 71]),
-    (SourceRef::Virtual { map: VirtualMap::AoMixed, component: 0 }, [111, 71, 31]),
-    (SourceRef::Channel { channel: Channel::Roughness, component: 0 }, [111, 111, 71]),
-    (SourceRef::Channel { channel: Channel::Metallic, component: 0 }, [31, 71, 111]),
-    (SourceRef::Virtual { map: VirtualMap::NormalDirectX, component: 0 }, [111, 31, 111]),
-];
-
-/// Every mix of the swatch levels that is no grey and no reference colour, taken in turn by the other maps
-static FREE_SWATCHES: LazyLock<Vec<[u8; 3]>> = LazyLock::new(|| {
-    let levels = SWATCH_LEVELS.iter().flat_map(|&r| SWATCH_LEVELS.iter().flat_map(move |&g| SWATCH_LEVELS.iter().map(move |&b| [r, g, b])));
-    levels.filter(|rgb| !(rgb[0] == rgb[1] && rgb[1] == rgb[2]) && REFERENCE_SWATCHES.iter().all(|(_, known)| known != rgb)).collect()
-});
+/// Golden-ratio spacing keeps neighbouring map hues distinct
+const HUE_STEP: f32 = 0.618_034;
+const SWATCH_SATURATION: f32 = 0.45;
+const SWATCH_VALUE: f32 = 0.42;
 
 /// The underline of R
 const BAR_RED: Color32 = Color32::from_rgb(230, 70, 70);
@@ -470,8 +453,30 @@ enum MapAction {
     Remove(usize),
 }
 
+pub(crate) fn clear_map_previews(ctx: &egui::Context) {
+    MapPreviewCache::clear(ctx);
+}
+
 /// The Output templates tab in `body`: presets, outputs, Input maps, then Mesh maps above Converted maps
 pub fn tab(app: &mut TextureCraftApp, ui: &mut Ui, body: Rect, builtins: &[ExportPreset]) {
+    // Four swatches and the type menu share a row between the two map panes
+    const MIN_EDITOR_WIDTH: f32 = 960.0;
+    const MIN_EDITOR_HEIGHT: f32 = CARDS_TOP + 2.0 * CARD_HEIGHT + COUNT_TOP_ABOVE_BOTTOM;
+    let minimum = vec2(MIN_EDITOR_WIDTH, MIN_EDITOR_HEIGHT);
+    if body.width() >= minimum.x && body.height() >= minimum.y {
+        template_panes(app, ui, body, builtins);
+        return;
+    }
+
+    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+        egui::ScrollArea::both().id_salt("export_template_editor").auto_shrink([false; 2]).show(ui, |ui| {
+            let (content, _) = ui.allocate_exact_size(ui.available_size().max(minimum), egui::Sense::hover());
+            template_panes(app, ui, content, builtins);
+        });
+    });
+}
+
+fn template_panes(app: &mut TextureCraftApp, ui: &mut Ui, body: Rect, builtins: &[ExportPreset]) {
     sync_draft(app);
     let top = body.top() - TAB_ROW_HEIGHT;
     let names = crate::export_window::template_groups(app, builtins).1;
@@ -631,6 +636,7 @@ fn template_file_items(ui: &mut Ui, act: &mut Option<ListAction>, with_export: b
 fn preset_row(ui: &mut Ui, rect: Rect, name: &str, selected: bool, is_user: bool) -> egui::Response {
     let look = ExportLook::get(ui.ctx());
     let response = ui.interact(rect, ui.scope_id().with(("exp_preset_row", name)), egui::Sense::click());
+    let name = template_label(name);
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, name));
     let painter = ui.painter();
     if selected {
@@ -677,7 +683,7 @@ fn perform(app: &mut TextureCraftApp, ctx: &egui::Context, act: ListAction) {
         }
         ListAction::Duplicate(name) => {
             if let Some(p) = app.session.export_preset(&name) {
-                let name = format!("{}_copy", p.name).chars().take(MAX_PRESET_NAME).collect();
+                let name = format!("{}_copy", template_label(&p.name)).chars().take(MAX_PRESET_NAME).collect();
                 save_new(app, &ExportPreset { name, ..p });
             }
         }
@@ -903,13 +909,13 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui, column: Rect, top: f32) {
     let title = tr("Current preset:");
     let name_left = column.left() + drawn::text_width(ui, title, true) + NAME_GAP;
     drawn::label_at(ui, column.left(), y, title, look.text, true);
-    let name = drawn::label_at(ui, name_left, y, &preset.name, look.text, false);
+    let name = drawn::label_at(ui, name_left, y, template_label(&preset.name), look.text, false);
     if !editable {
         let lock_at = pos2(name.rect.right() + LOCK_GAP, y);
         drawn::glyph(ui, lock_at, ic::LOCK_SIMPLE, CARD_ICON_SIZE, look.text_dim);
         let lock =
             ui.interact(Rect::from_center_size(lock_at, vec2(CARD_ICON_SIZE, CARD_ICON_SIZE)), ui.scope_id().with("exp_preset_lock"), egui::Sense::hover());
-        lock.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, ic::LOCK_SIMPLE));
+        lock.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, tr("Read-only template")));
         lock.on_hover_text(tr("Built-in templates are read-only: duplicate one to edit it"));
     }
 
@@ -1133,10 +1139,12 @@ fn output_row(ui: &mut Ui, card: Rect, row: &OutputCard, map: &mut MapSpec, spli
     let (upper, lower) = (mid - CARD_ROW_OFFSET, mid + CARD_ROW_OFFSET);
     changed |= format_menu(ui, (value_left, chevron_x, upper), index, map);
     changed |= depth_menu(ui, (value_left, chevron_x, lower), index, map);
-    if drawn::icon_button(ui, pos2(icon_x, upper), ic::COPY, CARD_ICON_SIZE, tr("Duplicate this output"), ui.is_enabled(), false).clicked() {
+    let duplicate = trf("Duplicate output {number}", &[("number", &(index + 1))]);
+    if drawn::icon_button(ui, pos2(icon_x, upper), ic::COPY, CARD_ICON_SIZE, &duplicate, ui.is_enabled(), false).clicked() {
         edit.action = Some(MapAction::Duplicate(index));
     }
-    if drawn::icon_button(ui, pos2(icon_x, lower), ic::X, CARD_ICON_SIZE, tr("Remove this output"), ui.is_enabled(), false).clicked() {
+    let remove = trf("Remove output {number}", &[("number", &(index + 1))]);
+    if drawn::icon_button(ui, pos2(icon_x, lower), ic::X, CARD_ICON_SIZE, &remove, ui.is_enabled(), false).clicked() {
         edit.action = Some(MapAction::Remove(index));
     }
 
@@ -1419,7 +1427,7 @@ fn swatch_tooltip(map: &MapSpec, source: &SourceRef, target: ChannelTarget, inve
     }
 }
 
-/// A map's colour on swatches and list markers (None for constants), the reference's own where it has one
+/// A map's colour on swatches and list markers (None for constants)
 fn source_color(source: &SourceRef) -> Option<Color32> {
     let channels = Channel::ALL.len();
     let converted = VirtualMap::ALL.len();
@@ -1429,9 +1437,9 @@ fn source_color(source: &SourceRef) -> Option<Color32> {
         SourceRef::Baked { map, .. } => channels + converted + BakedMap::ALL.iter().position(|m| m == map)?,
         SourceRef::Constant(_) => return None,
     };
-    let reference = REFERENCE_SWATCHES.iter().find(|(known, _)| same_source(known, source)).map(|(_, rgb)| *rgb);
-    let [r, g, b] = reference.or_else(|| FREE_SWATCHES.get(index % FREE_SWATCHES.len().max(1)).copied())?;
-    Some(Color32::from_rgb(r + SWATCH_SHIFT[0], g + SWATCH_SHIFT[1], b + SWATCH_SHIFT[2]))
+
+    let hue = (index as f32 * HUE_STEP).fract();
+    Some(egui::ecolor::Hsva::new(hue, SWATCH_SATURATION, SWATCH_VALUE, 1.0).into())
 }
 
 /// The underline of a swatch: the colour of the channel its letters name (white for RGB and gray)
@@ -1624,13 +1632,13 @@ fn swatch(ui: &mut Ui, id: egui::Id, rect: Rect, label: &str, name: &str, swatch
     let response = ui.interact(rect, id, egui::Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
 
-    // Light lettering on the dark swatches in every theme
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, swatch_look.fill.unwrap_or(look.raised));
+    let fill = swatch_look.fill.unwrap_or(look.raised);
+    painter.rect_filled(rect, 0.0, fill);
     if response.hovered() {
         painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, look.text_dim), egui::StrokeKind::Inside);
     }
-    let lettering = if look.dark { look.text } else { look.window };
+    let lettering = look.lettering_on(fill);
     painter.text(pos2(rect.center().x, rect.top() + SWATCH_LABEL_Y), egui::Align2::CENTER_CENTER, label, drawn::font(false), lettering);
     if let Some(bar) = swatch_look.bar {
         let bottom = rect.bottom() - SWATCH_BAR_BOTTOM;

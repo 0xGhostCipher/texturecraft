@@ -15,8 +15,18 @@ pub(super) fn write_jpeg2000(
     jp2: bool,
     icc: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    // The encoder reads 16-bit samples little-endian
-    let bytes = if depth == 16 { bytes.as_chunks::<2>().0.iter().flat_map(|sample| u16::from_ne_bytes(*sample).to_le_bytes()).collect() } else { bytes };
+    // Only big-endian hosts need to reverse the native 16-bit samples
+    #[cfg(target_endian = "big")]
+    let bytes = {
+        let mut bytes = bytes;
+        if depth == 16 {
+            for sample in bytes.as_chunks_mut::<2>().0 {
+                sample.swap(0, 1);
+            }
+        }
+        bytes
+    };
+
     let components = u16::try_from(component_count).map_err(|_| format!("{component_count} components"))?;
     let input = J2kLosslessSamples { data: &bytes, width, height, components, bit_depth: depth, signed: false };
     let codestream = encode_j2k_lossless(input, &J2kLosslessEncodeOptions::default()).map_err(|error| error.to_string())?.codestream;

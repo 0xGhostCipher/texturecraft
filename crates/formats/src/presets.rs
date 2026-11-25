@@ -94,8 +94,8 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
         }),
         // Spec: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
         preset("glTF PBR Metal Roughness", gltf_pbr_maps(|s| format!("$mesh_$textureSet_{s}"))),
-        // Spec: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material (R occlusion, G roughness, B metallic) and the base color, roughness, metallic and normal inputs of
-        // https://dev.epicgames.com/documentation/en-us/unreal-engine/physically-based-materials-in-unreal-engine
+        // Spec: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
+        // Spec: https://dev.epicgames.com/documentation/en-us/unreal-engine/physically-based-materials-in-unreal-engine
         preset(
             "Unreal Engine (Packed)",
             vec![map("BaseColor", 8, base_with_alpha()), map("OcclusionRoughnessMetallic", 8, orm()), map("Normal", 8, normal(VirtualMap::NormalDirectX))],
@@ -311,11 +311,18 @@ pub const DEFAULT_PRESET: &str = "Document channels + Normal + AO (No Alpha)";
 /// scripts still use it).
 const OLD_DEFAULT_PRESET: &str = "Document channels + Normal + AO";
 
+/// The immutable built-in templates shared by menu and command lookups.
+pub fn builtin_preset_catalog() -> &'static [ExportPreset] {
+    static CATALOG: std::sync::LazyLock<Vec<ExportPreset>> = std::sync::LazyLock::new(builtin_presets);
+    &CATALOG
+}
+
 /// A built-in preset by name (case-insensitive).
 pub fn builtin_preset(name: &str) -> Option<ExportPreset> {
     let name = name.trim();
     let name = if name.eq_ignore_ascii_case(OLD_DEFAULT_PRESET) { DEFAULT_PRESET } else { name };
-    builtin_presets().into_iter().find(|p| p.name.eq_ignore_ascii_case(name))
+
+    builtin_preset_catalog().iter().find(|preset| preset.name.eq_ignore_ascii_case(name)).cloned()
 }
 
 /// Parse and validate a user preset.

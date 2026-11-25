@@ -417,6 +417,23 @@ fn a_psd_of_layers_is_left_out_of_the_materials_and_said_so() {
 
     assert!(files(&r).iter().any(|f| f.ends_with(".psd")), "{r}");
     let materials = read_back(&s, &dir);
+
     assert!(materials[material_of(&s, 0)].0.is_empty(), "no input reads the PSD's merged image: {:?}", materials[material_of(&s, 0)]);
     assert!(r["warnings"].to_string().contains("doesn't read PSD files"), "{r}");
+}
+
+#[test]
+fn jpeg2000_maps_export_beside_usd_without_creating_texture_bindings() {
+    let mut s = ball();
+    for format in ["j2k", "jp2"] {
+        let dir = temp(format);
+
+        let result = export(&mut s, &dir, json!({"ts": 0, "format": format, "usdAsset": true}));
+
+        assert!(files(&result).iter().any(|file| file.ends_with(&format!(".{format}"))), "{result}");
+        let materials = read_back(&s, &dir);
+
+        assert!(materials[material_of(&s, 0)].0.is_empty(), "{materials:?}");
+        assert!(result["warnings"].to_string().contains(&format!("doesn't read {} files", format.to_uppercase())), "{result}");
+    }
 }

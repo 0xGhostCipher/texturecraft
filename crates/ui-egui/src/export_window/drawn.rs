@@ -70,17 +70,14 @@ pub(crate) fn fitted(ui: &Ui, text: &str, room: f32, from_start: bool, bold: boo
         return text.to_owned();
     }
 
-    let chars: Vec<char> = text.chars().collect();
-    (1..chars.len())
-        .map(|cut| {
-            if from_start {
-                format!("…{}", chars[cut..].iter().collect::<String>())
-            } else {
-                format!("{}…", chars[..chars.len() - cut].iter().collect::<String>())
-            }
-        })
-        .find(|shown| text_width(ui, shown, bold) <= room)
-        .unwrap_or_else(|| "…".to_owned())
+    let mut cuts: Vec<_> = text.char_indices().skip(1).map(|(offset, _)| offset).collect();
+    if !from_start {
+        cuts.reverse();
+    }
+
+    let truncate = |cut| if from_start { format!("…{}", &text[cut..]) } else { format!("{}…", &text[..cut]) };
+    let first_fit = cuts.partition_point(|&cut| text_width(ui, &truncate(cut), bold) > room);
+    cuts.get(first_fit).map_or_else(|| "…".to_owned(), |&cut| truncate(cut))
 }
 
 /// A glyph centred on `centre`
@@ -128,7 +125,7 @@ pub(crate) fn tabs(ui: &mut Ui, strip: Rect, left: f32, labels: &[&str], open: u
             painter.rect_filled(below, 0.0, look.window);
             painter.rect_filled(below.with_max_y(bottom), 0.0, look.divider);
         }
-        let color = if selected { look.text } else { look.text_dim };
+        let color = if selected || response.hovered() { look.text } else { look.text_dim };
         painter.text(rect.center() + vec2(0.0, 1.0), Align2::CENTER_CENTER, *label, font(selected), color);
         paint_focus(ui, &response);
         if response.clicked() {
@@ -225,6 +222,7 @@ pub(crate) fn combo_button(ui: &mut Ui, rect: Rect, id: Id, shown: &str, enabled
 }
 
 /// A field showing `text` cut with "…" at its end that acts as a button, as the output directory does
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn field_button(ui: &mut Ui, rect: Rect, id: Id, text: &str) -> Response {
     let look = ExportLook::get(ui.ctx());
     let response = ui.interact(rect, id, Sense::click());
@@ -281,7 +279,13 @@ pub(crate) fn button_with_id(ui: &mut Ui, id: Id, rect: Rect, label: &str, name:
     let painter = ui.painter();
     let fade = if enabled { 1.0 } else { ui.visuals().disabled_alpha() };
     painter.rect(rect, CONTROL_RADIUS, fill.gamma_multiply(fade), Stroke::new(1.0, border.gamma_multiply(fade)), StrokeKind::Inside);
-    let color = if looks_disabled(ui, enabled) { look.text_dim } else { look.text };
+    let color = if looks_disabled(ui, enabled) {
+        look.text_dim
+    } else if primary {
+        look.lettering_on(fill)
+    } else {
+        look.text
+    };
     painter.text(rect.center(), Align2::CENTER_CENTER, label, font(primary), color);
     paint_focus(ui, &response);
     response
@@ -292,7 +296,7 @@ pub(crate) fn icon_button(ui: &mut Ui, centre: Pos2, icon: &str, size: f32, name
     let look = ExportLook::get(ui.ctx());
     let rect = Rect::from_center_size(centre, vec2(ICON_HIT_SIZE, ICON_HIT_SIZE));
     let sense = if enabled { Sense::click() } else { Sense::hover() };
-    let response = ui.interact(rect, ui.scope_id().with(("export_icon", name, centre.x as i32, centre.y as i32)), sense);
+    let response = ui.interact(rect, ui.scope_id().with(("export_icon", name)), sense);
     response.widget_info(|| WidgetInfo::selected(Role::Button, enabled, lit, name));
     if lit {
         ui.painter().rect(rect, CONTROL_RADIUS, look.raised, Stroke::new(1.0, look.control_border), StrokeKind::Inside);

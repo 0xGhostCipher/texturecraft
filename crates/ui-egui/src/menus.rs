@@ -459,7 +459,7 @@ pub fn shortcuts(app: &mut TextureCraftApp, ctx: &egui::Context) {
     }
 
     // The dispatcher reads clipboard events as shortcuts; a pasted image also means Ctrl+V
-    // Unless bound, Shift+Delete and Shift+Insert become Ctrl+X and Ctrl+V
+    // Unbound Shift+Delete and Shift+Insert use the standard cut and paste shortcuts
     ctx.input_mut(|input| {
         let held = input.modifiers;
         let aliases: Vec<_> = input

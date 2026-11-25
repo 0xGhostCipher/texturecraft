@@ -121,8 +121,10 @@ const CHECK_INDENT: f32 = 1.0;
 /// A tick's label starts after its box and the gap
 const CHECK_LABEL_ROOM: f32 = 18.0;
 /// Width of the output directory's "…" and reset buttons
+#[cfg(not(target_arch = "wasm32"))]
 const BROWSE_WIDTH: f32 = 22.0;
 /// Gap before them
+#[cfg(not(target_arch = "wasm32"))]
 const BROWSE_GAP: f32 = 4.0;
 /// Room the file type list keeps for its chevron past its longest entry
 const FILE_TYPE_ROOM: f32 = 36.0;
@@ -151,6 +153,8 @@ const MAPS_HEADER_Y: f32 = 288.0;
 const MAPS_TOP: f32 = 318.0;
 /// Pitch of the Output maps rows
 const MAP_ROW_PITCH: f32 = 34.0;
+/// Leave room for two map rows when the texture-set page scrolls vertically.
+const MIN_SET_PAGE_HEIGHT: f32 = MAPS_TOP - TAB_ROW_HEIGHT + 2.0 * MAP_ROW_PITCH;
 /// Where an Output maps row's tick starts
 const MAP_CHECK_LEFT: f32 = 258.6;
 /// Where its file name starts
@@ -330,13 +334,24 @@ fn file_type_name(format: &str) -> String {
     FileFormat::from_extension(format).map_or_else(|| format.to_string(), |f| f.name().to_string())
 }
 
+/// The label shown for a stored template name. Custom template names pass through unchanged.
+pub(super) fn template_label(name: &str) -> &str {
+    match name {
+        "Unreal Engine Subsurface Profile (Packed)" => tr("Packed maps with a scattering mask"),
+        "Redshift Standard Material (separate maps)" => tr("Separate coat, sheen and scattering maps"),
+        "Roblox SurfaceAppearance (separate maps)" => tr("Four maps with opacity in color"),
+        "Sketchfab Metalness (separate maps)" => tr("Six maps with a negative-Y normal"),
+        _ => name,
+    }
+}
+
 /// The template list: the first group (name, whether TextureCraft has it), then the others
 /// (built-in and user templates) sorted by name.
 pub(crate) fn template_groups(app: &TextureCraftApp, builtins: &[ExportPreset]) -> (Vec<(&'static str, bool)>, Vec<String>) {
     let first = FIRST_GROUP.iter().map(|name| (*name, builtins.iter().any(|p| p.name == *name))).collect();
     let mut rest: Vec<String> = builtins.iter().map(|p| p.name.clone()).filter(|n| !FIRST_GROUP.contains(&n.as_str())).collect();
     rest.extend(app.session.export_presets.list.iter().map(|p| p.name.clone()));
-    rest.sort();
+    rest.sort_by(|left, right| template_label(left).cmp(template_label(right)).then_with(|| left.cmp(right)));
     rest.dedup();
     (first, rest)
 }
@@ -344,7 +359,7 @@ pub(crate) fn template_groups(app: &TextureCraftApp, builtins: &[ExportPreset]) 
 /// A template dropdown in `rect` over `first` and `rest`; true when `current` changed
 fn template_combo(ui: &mut Ui, rect: egui::Rect, id: &str, current: &mut String, first: &[(&str, bool)], rest: &[String]) -> bool {
     let mut changed = false;
-    drawn::combo(ui, rect, id, current.clone(), |ui| {
+    drawn::combo(ui, rect, id, template_label(current).to_owned(), |ui| {
         for (name, have) in first {
             if *have {
                 changed |= ui.selectable_value(current, (*name).to_string(), *name).on_hover_text(*name).changed();
@@ -354,7 +369,7 @@ fn template_combo(ui: &mut Ui, rect: egui::Rect, id: &str, current: &mut String,
         }
         ui.separator().on_hover_text(tr("Some templates in this list are unavailable"));
         for name in rest {
-            changed |= ui.selectable_value(current, name.clone(), name).on_hover_text(name).changed();
+            changed |= ui.selectable_value(current, name.clone(), template_label(name)).on_hover_text(name).changed();
         }
     });
     changed
@@ -558,6 +573,7 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
     };
     let files: Vec<String> = response_strings(&response, "files").map(relative).collect();
     let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
+
     // The USD asset and the shader parameters are no textures: they stay in the list of written files only
     for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd") && !file.to_ascii_lowercase().ends_with(".json")) {
         let stem = file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem);
@@ -798,7 +814,8 @@ fn map_row(ui: &mut Ui, place: PagePlace, y: f32, ts: usize, row: &MapRow, map_e
     drawn::label_at(ui, name_left, y, &shown, color, false).on_hover_text(&row.pattern);
 
     let pen = egui::pos2(place.x(PEN_CENTRE), y);
-    if drawn::icon_button(ui, pen, ic::PENCIL_SIMPLE, drawn::CHEVRON_SIZE, tr("Enable override"), true, map_export.file_type.is_some()).clicked() {
+    let name = trf("Enable override for map {number} ({pattern})", &[("number", &(row.map + 1)), ("pattern", &row.pattern)]);
+    if drawn::icon_button(ui, pen, ic::PENCIL_SIMPLE, drawn::CHEVRON_SIZE, &name, true, map_export.file_type.is_some()).clicked() {
         map_export.file_type = if map_export.file_type.is_some() { None } else { Some(row.inherited.clone()) };
     }
 
@@ -1154,7 +1171,8 @@ fn override_row(ui: &mut Ui, place: PagePlace, y: f32, label: &str, on: bool, in
     let look = ExportLook::get(ui.ctx());
     row_label(ui, place, y, label);
     let pen = egui::pos2(place.x(PEN_CENTRE), y);
-    let toggled = drawn::icon_button(ui, pen, ic::PENCIL_SIMPLE, drawn::CHEVRON_SIZE, tr("Enable override"), true, on).clicked();
+    let name = trf("Enable override for {setting}", &[("setting", &label)]);
+    let toggled = drawn::icon_button(ui, pen, ic::PENCIL_SIMPLE, drawn::CHEVRON_SIZE, &name, true, on).clicked();
     if on {
         edit(ui, drawn::control_rect(place.x(OVERRIDE_LEFT), place.right - CONTROLS_RIGHT_MARGIN, y));
     } else {
@@ -1189,10 +1207,6 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, place: PagePlace,
     let own = set.block_resolution();
     let mut from = InheritedSettings::for_texture_set(app, own);
 
-    // "Based on output template": the override starts from what the template writes
-    if app.ui.export.format.is_empty() && app.ui.export.sets.get(&ts).is_none_or(|set_export| set_export.file_type.is_none()) {
-        from.file_type = template_file_type(app, ts);
-    }
     let (first, rest) = template_groups(app, builtins);
     let first: Vec<(&str, bool)> = first.into_iter().filter(|(name, _)| !NOT_PER_SET.contains(name)).collect();
     let global = &app.ui.export;
@@ -1219,7 +1233,7 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, place: PagePlace,
 
     let row_y = |row: usize| place.y(SET_FIRST_ROW_Y + row as f32 * SET_ROW_PITCH);
     let mut toggled = None;
-    if override_row(ui, place, row_y(0), tr("Output template"), overrides.preset.is_some(), &from.preset, |ui, rect| {
+    if override_row(ui, place, row_y(0), tr("Output template"), overrides.preset.is_some(), template_label(&from.preset), |ui, rect| {
         if let Some(preset) = &mut overrides.preset {
             template_combo(ui, rect, "exp_set_preset", preset, &first, &rest);
         }
@@ -1258,25 +1272,33 @@ fn set_page(app: &mut TextureCraftApp, ui: &mut Ui, ts: usize, place: PagePlace,
     }) {
         toggled = Some(3);
     }
-    if let Some(row) = toggled {
-        toggle(overrides, row, &from);
-    }
-    match all {
-        Some(true) => {
-            for row in 0..4 {
-                let on = [overrides.preset.is_some(), overrides.file_type.is_some(), overrides.size.is_some(), overrides.padding.is_some()];
-                if !on.get(row).copied().unwrap_or(true) {
-                    toggle(overrides, row, &from);
+    if toggled.is_some() || all.is_some() {
+        // A new file-type override inherits the effective formats of the current template
+        if (toggled == Some(1) || all == Some(true)) && overrides.file_type.is_none() && app.ui.export.format.is_empty() {
+            from.file_type = template_file_type(app, ts);
+        }
+
+        let overrides = app.ui.export.sets.entry(ts).or_default();
+        if let Some(row) = toggled {
+            toggle(overrides, row, &from);
+        }
+        match all {
+            Some(true) => {
+                for row in 0..4 {
+                    let on = [overrides.preset.is_some(), overrides.file_type.is_some(), overrides.size.is_some(), overrides.padding.is_some()];
+                    if !on.get(row).copied().unwrap_or(true) {
+                        toggle(overrides, row, &from);
+                    }
                 }
             }
+            Some(false) => {
+                overrides.preset = None;
+                overrides.file_type = None;
+                overrides.size = None;
+                overrides.padding = None;
+            }
+            None => {}
         }
-        Some(false) => {
-            overrides.preset = None;
-            overrides.file_type = None;
-            overrides.size = None;
-            overrides.padding = None;
-        }
-        None => {}
     }
 
     // A divider across the page, then the output maps
@@ -1343,17 +1365,15 @@ fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui, body: egui::Rect) {
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
         let console = egui::ScrollArea::vertical().id_salt("exp_console").auto_shrink([false; 2]).stick_to_bottom(true);
         console.show(ui, |ui| {
-            for line in &app.ui.export.console {
-                match line {
-                    ConsoleLine::Step(t) => {
-                        ui.label(t);
-                    }
-                    ConsoleLine::Done(t) => {
-                        ui.label(RichText::new(t).color(success(&tk)));
-                    }
-                    ConsoleLine::Set(name) => {
-                        ui.label(set_line(ui, name, &tk));
-                    }
+            for (index, line) in app.ui.export.console.iter().enumerate() {
+                let response = match line {
+                    ConsoleLine::Step(text) => ui.label(text),
+                    ConsoleLine::Done(text) => ui.label(RichText::new(text).color(success(&tk))),
+                    ConsoleLine::Set(name) => ui.label(set_line(ui, name, &tk)),
+                };
+
+                if index + 1 == app.ui.export.console.len() {
+                    ui.ctx().accesskit_node_builder(response.id, |node| node.set_live(egui::accesskit::Live::Polite));
                 }
             }
         });
@@ -1690,7 +1710,8 @@ fn footer(app: &mut TextureCraftApp, ui: &mut Ui, window: egui::Rect, y: f32, do
         }
         let bar = drawn::control_rect(window.left() + LEFT_MARGIN, slot(0.0).left() - FOOTER_BUTTON_GAP, y);
         let look = ExportLook::get(ui.ctx());
-        ui.put(bar, egui::ProgressBar::new(progress).fill(look.outline).text(format!("{:.0}%", progress * 100.0)));
+        let response = ui.put(bar, egui::ProgressBar::new(progress).fill(look.outline).text(format!("{:.0}%", progress * 100.0)));
+        ui.ctx().accesskit_node_builder(response.id, |node| node.set_live(egui::accesskit::Live::Polite));
         return;
     }
 
@@ -1732,15 +1753,21 @@ fn footer(app: &mut TextureCraftApp, ui: &mut Ui, window: egui::Rect, y: f32, do
 }
 
 /// The SETTINGS tab in `body`: the texture set list, a divider, then the selected page
-fn settings_tab(app: &mut TextureCraftApp, ui: &mut Ui, window: egui::Rect, body: egui::Rect, presets: &[ExportPreset]) {
+fn settings_tab(app: &mut TextureCraftApp, ui: &mut Ui, body: egui::Rect, presets: &[ExportPreset]) {
     let list = body.with_max_x(body.left() + SET_LIST_WIDTH);
     set_list(app, ui, list);
     drawn::divider(ui, egui::Rect::from_min_max(list.right_top(), list.right_bottom() + vec2(1.0, 0.0)));
     let page = body.with_min_x(list.right() + 1.0);
     match app.ui.export.page {
         Some(ts) if ts < app.session.set_count() => {
-            let place = PagePlace { left: window.left(), top: window.top(), right: window.right() };
-            set_page(app, ui, ts, place, body.bottom(), presets);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+                egui::ScrollArea::both().id_salt("export_texture_set_page").auto_shrink([false; 2]).show(ui, |ui| {
+                    let size = vec2(ui.available_width().max(MIN_PAGE_WIDTH), ui.available_height().max(MIN_SET_PAGE_HEIGHT));
+                    let (content, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    let place = PagePlace { left: content.left() - list.width() - 1.0, top: content.top() - TAB_ROW_HEIGHT, right: content.right() };
+                    set_page(app, ui, ts, place, content.bottom(), presets);
+                });
+            });
         }
 
         // A short or narrow window scrolls the page, so every control stays reachable
@@ -1758,7 +1785,10 @@ fn settings_tab(app: &mut TextureCraftApp, ui: &mut Ui, window: egui::Rect, body
 }
 
 pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
+    let showing_templates = app.ui.export.tab == 1;
     if !app.ui.windows.export {
+        crate::export_templates::clear_map_previews(ctx);
+
         // The window opens on SETTINGS again; an export stops with it
         let e = &mut app.ui.export;
         e.job = None;
@@ -1792,7 +1822,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let mut do_export = false;
     let mut canceled = false;
-    let presets = texturecraft_engine::formats::builtin_presets();
+    let presets = texturecraft_engine::formats::builtin_preset_catalog();
     let look = ExportLook::get(ctx);
 
     // The reference size where the screen has room, resizable from there; the size counts the frame and title bar
@@ -1861,15 +1891,19 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         body_ui.shrink_clip_rect(body);
         let ui = &mut body_ui;
         match app.ui.export.tab {
-            1 => crate::export_templates::tab(app, ui, body, &presets),
+            1 => crate::export_templates::tab(app, ui, body, presets),
             2 => list_tab(app, ui, body),
-            _ => settings_tab(app, ui, window, body, &presets),
+            _ => settings_tab(app, ui, body, presets),
         }
     });
     crate::export_templates::ask(app, ctx);
 
-    // egui drops a field's focus on Escape before the next frame's shortcuts run, so keep whether one had the keyboard
-    app.ui.export.field_had_keyboard = ctx.egui_wants_keyboard_input();
+    // Keep text focus before egui clears it on Escape
+    app.ui.export.field_had_keyboard = ctx.text_edit_focused();
+
+    if (showing_templates || app.ui.export.tab == 1) && (canceled || !open || !app.ui.windows.export || app.ui.export.tab != 1 || do_export) {
+        crate::export_templates::clear_map_previews(ctx);
+    }
 
     // Dismissal must run before the next write
     if canceled || !open {
