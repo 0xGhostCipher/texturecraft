@@ -276,6 +276,20 @@ pub fn builtin_presets() -> Vec<ExportPreset> {
                 map("Roughness", 8, gray(ch(Channel::Roughness, 0))),
             ],
         ),
+        // Spec: https://help.sketchfab.com/en/articles/16152630-pbr-maps (sRGB base color, linear grayscale metalness; no alpha, the docs don't say opacity reads it)
+        // Spec: https://help.sketchfab.com/en/articles/16152634-materials-pbr (roughness, AO and emission channels)
+        // Spec: https://help.sketchfab.com/en/articles/16152621-normal-map-bump-map (DirectX normals by default)
+        preset(
+            "Sketchfab Metalness (separate maps)",
+            vec![
+                map("BaseColor", 8, rgb(|k| ch(Channel::BaseColor, k))),
+                map("Metalness", 8, gray(ch(Channel::Metallic, 0))),
+                map("Roughness", 8, gray(ch(Channel::Roughness, 0))),
+                map("Normal", 8, normal(VirtualMap::NormalDirectX)),
+                map("AmbientOcclusion", 8, gray(virt(VirtualMap::AoMixed, 0))),
+                map("Emission", 8, rgb(|k| ch(Channel::Emissive, k))),
+            ],
+        ),
         preset("Separate maps", Channel::ALL.into_iter().map(channel_map).collect()),
         preset(
             "Mesh maps",

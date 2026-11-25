@@ -141,6 +141,7 @@ Built-in presets (each one lists the public specification its packing follows in
 | glTF Specular Glossiness (archived extension) | `Diffuse` (A = opacity), `SpecularGlossiness` (RGB specular, A glossiness, from the set's own channels), `Normal` (OpenGL), `Occlusion`, `Emissive` |
 | Redshift Standard Material (separate maps) | one map per Standard Material input the set has: `BaseColor`, `Metalness`, `ReflectionRoughness`, `Normal` (OpenGL), `EmissionColor`, `Opacity`, `SubsurfaceWeight`, `CoatWeight`, `CoatRoughness`, `SheenWeight`, `SheenColor`, `SheenRoughness` |
 | Roblox SurfaceAppearance (separate maps) | `Color` (A = opacity), `Normal` (OpenGL), `Metalness`, `Roughness` |
+| Sketchfab Metalness (separate maps) | `BaseColor` (no alpha), `Metalness`, `Roughness`, `Normal` (DirectX), `AmbientOcclusion`, `Emission` |
 | Separate maps | one file per channel, gray where scalar, height 16-bit |
 | Mesh maps | every baked map (`$channel` = map id), 16-bit |
 

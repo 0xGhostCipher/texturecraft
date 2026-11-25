@@ -1835,3 +1835,20 @@ fn the_roblox_template_writes_opacity_in_the_colour_alpha_and_opengl_normals() {
     let green = pixel(find(&files, "_Normal.png"))[1];
     assert!((green - open_gl_green).abs() <= 1, "OpenGL normal: green {green}");
 }
+
+#[test]
+fn the_sketchfab_template_writes_directx_normals_and_one_map_per_channel() {
+    let mut fx = packing_fixture();
+    let open_gl_green = tilt_normals(&mut fx);
+
+    let files = fx.render_preset("Sketchfab Metalness (separate maps)");
+
+    assert_eq!(decode(find(&files, "_BaseColor.png")).color(), image::ColorType::Rgb8, "no alpha on the base color");
+    for (input, expected) in [("Metalness", 0.8), ("Roughness", 0.4), ("AmbientOcclusion", 0.6)] {
+        let file = find(&files, &format!("_{input}.png"));
+        assert_eq!(decode(file).color(), image::ColorType::L8, "{input} is linear grayscale");
+        assert_close(pixel(file), [byte(expected), byte(expected), byte(expected), 255], input);
+    }
+    let green = pixel(find(&files, "_Normal.png"))[1];
+    assert!((green - (255 - open_gl_green)).abs() <= 1, "DirectX normal: green {green}");
+}
