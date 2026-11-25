@@ -6,6 +6,7 @@ use texturecraft_geom::UvGBuffer;
 
 use crate::eval::Inputs;
 use crate::field_cache_key::FieldCacheKey;
+use crate::sampled_map::SampledMap;
 use crate::working_field::working_block;
 
 /// Most fields cached, and the bytes they may hold (the newest is kept whatever its size)
@@ -47,7 +48,9 @@ impl FieldCache {
     ) -> Arc<Vec<f32>> {
         let gbuf = inp.gbuf;
         let block = working_block(inp);
-        let read = maps.iter().filter_map(|map| inp.baked.maps.get(map).map(|data| (Arc::downgrade(data), (inp.baked.resolution, inp.baked.height(*map)))));
+        let read = maps.iter().filter_map(|map| {
+            inp.baked.maps.get(map).map(|data| SampledMap { data: Arc::downgrade(data), baked_size: (inp.baked.resolution, inp.baked.height(*map)) })
+        });
         let key = FieldCacheKey {
             layout: gbuf.tri.as_ptr() as usize,
             size: (gbuf.width, gbuf.height),
@@ -63,7 +66,7 @@ impl FieldCache {
         // A hit moves to the most recently used end
         let cached = {
             let mut entries = self.entries.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            entries.retain(|(key, _)| key.maps.iter().all(|(map, _)| map.strong_count() > 0));
+            entries.retain(|(key, _)| key.maps.iter().all(|map| map.data.strong_count() > 0));
             let hit = entries.iter().position(|(cached, _)| *cached == key).map(|index| entries.remove(index));
             hit.map(|(cached, field)| {
                 entries.push((cached, field.clone()));
