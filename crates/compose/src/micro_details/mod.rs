@@ -73,14 +73,24 @@ fn baked_identity(inp: &Inputs) -> Option<Weak<Vec<f32>>> {
     [BakedMap::Curvature, BakedMap::AmbientOcclusion].iter().find_map(|map| inp.baked.maps.get(map)).map(Arc::downgrade)
 }
 
-/// Keep anchor `anchor`'s heights for the micro details reading it, building them with `build` unless `stack` is the stack they were built for
+/// Drop the anchor heights of `inp`'s texture set that its generators no longer read (`anchors` are the ones they read) and those of mesh maps gone: every height a render reads stays until it stops reading it
+pub(crate) fn keep_anchor_heights(inp: &Inputs, anchors: &[LayerId]) {
+    let baked = baked_identity(inp);
+    let stale = |entry: &AnchorEntry| {
+        let this_set = baked.as_ref().is_some_and(|baked| entry.baked.ptr_eq(baked)) && entry.texture_set == inp.ts;
+        entry.baked.strong_count() == 0 || (this_set && !anchors.contains(&entry.anchor))
+    };
+    ANCHOR_HEIGHTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).retain(|entry| !stale(entry));
+}
+
+/// Keep anchor `anchor`'s heights for the micro details reading it, building them with `build` unless they were built for `stack` at this working size
 pub(crate) fn prepare_anchor_heights(inp: &Inputs, anchor: LayerId, stack: StackKey, build: impl FnOnce() -> AnchorHeights) {
     let Some(baked) = baked_identity(inp) else { return };
     let matches = |entry: &AnchorEntry| entry.baked.ptr_eq(&baked) && entry.texture_set == inp.ts && entry.anchor == anchor;
+    let working_size = (inp.gbuf.width, inp.gbuf.height);
     {
-        let mut entries = ANCHOR_HEIGHTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        entries.retain(|entry| entry.baked.strong_count() > 0);
-        if entries.iter().any(|entry| matches(entry) && entry.stack == stack) {
+        let entries = ANCHOR_HEIGHTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if entries.iter().any(|entry| matches(entry) && entry.stack == stack && entry.heights.working_size() == working_size) {
             return;
         }
     }
@@ -99,8 +109,6 @@ pub(crate) fn prepare_anchor_heights(inp: &Inputs, anchor: LayerId, stack: Stack
     let mut entries = ANCHOR_HEIGHTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     entries.retain(|entry| !matches(entry));
     entries.push(AnchorEntry { baked, texture_set: inp.ts, anchor, stack, heights });
-    let excess = entries.len().saturating_sub(CACHE_ENTRIES);
-    entries.drain(..excess);
 }
 
 /// The heights prepared for anchor `anchor` (None before they are)

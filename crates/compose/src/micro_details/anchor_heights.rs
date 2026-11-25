@@ -12,6 +12,11 @@ impl AnchorHeights {
         AnchorHeights { data, working_size, scales }
     }
 
+    /// The working atlas's size the heights were built at
+    pub(super) fn working_size(&self) -> (u32, u32) {
+        self.working_size
+    }
+
     /// The height under texel (`x`, `y`) of a `layout` sized mesh map (0 outside the working atlas)
     pub(super) fn at(&self, (x, y): (u32, u32), layout: (u32, u32)) -> f32 {
         let baked_uv = [(x as f32 + 0.5) / layout.0.max(1) as f32, (y as f32 + 0.5) / layout.1.max(1) as f32];

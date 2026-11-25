@@ -2326,8 +2326,8 @@ fn fields_of(inp: &EvaluationInputs, channels: &[Channel], (list, around): (&[La
     let mut order = Vec::new();
     draw_order(inp, list, 0, around.into(), &mut order);
     let ids: Vec<LayerId> = order.iter().map(|(id, _)| *id).collect();
-    prepare_curvature_sizes(inp, &ids);
     prepare_micro_anchors(inp);
+    prepare_curvature_sizes(inp, &ids);
 
     // Walk backwards to find the region each Compare needs below its position in the stack
     let mut below_margin = (0u32, false);
@@ -2428,25 +2428,34 @@ fn prepare_curvature_sizes(inp: &Inputs, layers: &[LayerId]) {
 /// Build the height of every anchor point a visible generator's Micro Height reads, over the whole texture set, before tiles composite in parallel
 fn prepare_micro_anchors(inp: &EvaluationInputs) {
     let Ok(set) = inp.project.texture_set(inp.ts) else { return };
-    let tree = inp.project.render_tree(&set.stack);
-    let visible = tree.iter().filter_map(|id| inp.project.layers.get(id)).filter(|layer| layer.visible);
+    let mut order = Vec::new();
+    draw_order(inp, &set.stack, 0, ContentsOffset::NONE.into(), &mut order);
+
+    // Each anchor is built as its topmost reader reads it: a reader the anchor was moved above reads the same heights
     let mut readers: Vec<(LayerId, LayerId)> = Vec::new();
-    for layer in visible {
+    for layer in order.iter().filter_map(|(id, _)| inp.project.layers.get(id)).filter(|layer| layer.visible) {
         let effects = layer_mask(inp.project, layer.id).filter(|mask| mask.enabled).into_iter().flat_map(|mask| &mask.effects);
         for effect in effects.filter(|effect| effect.visible) {
             if let EffectKind::Generator(generator) = &effect.kind
                 && let Some(micro) = generator.micro_in_use().filter(|micro| micro.height)
                 && let Some(Source::Anchor { anchor, .. }) = &micro.height_source
-                && !readers.iter().any(|(_, read)| read == anchor)
             {
+                readers.retain(|(_, read)| read != anchor);
                 readers.push((layer.id, *anchor));
             }
         }
     }
+    crate::micro_details::keep_anchor_heights(inp, &readers.iter().map(|(_, anchor)| *anchor).collect::<Vec<_>>());
     if readers.is_empty() {
         return;
     }
 
+    // Lowest anchor first: an anchor's height holds the generators below it, which may read lower anchors
+    let drawn_at = |anchor: LayerId| {
+        let owner = inp.project.effect(anchor).map(|(owner, _)| owner);
+        order.iter().position(|(id, _)| Some(*id) == owner).unwrap_or(usize::MAX)
+    };
+    readers.sort_by_key(|(_, anchor)| drawn_at(*anchor));
     for (reader, anchor) in readers {
         let Some(stack) = StackKey::new(inp.project, inp.pixels, inp.baked, inp.images, inp.ts, &set.stack) else { return };
         crate::micro_details::prepare_anchor_heights(inp, anchor, stack, || anchor_heights(inp, reader, anchor));
@@ -7241,6 +7250,122 @@ soft {soft:?}"
             }
             assert_eq!(colors(&mut fixture, &emptied), off, "without an anchor the micro details change nothing");
         }
+    }
+
+    /// A 64 × 64 disc of raised height in an image named "disc", and a fixture with a flat baked curvature for micro details to read beside
+    fn micro_height_fixture() -> (Fixture, ImageStore) {
+        let mut fixture = fixture();
+        fixture.baked = BakedMaps { resolution: 64, maps: [(BakedMap::Curvature, Arc::new(vec![0.5; 64 * 64]))].into() };
+        let disc = (0..64 * 64)
+            .map(|index| {
+                let (x, y) = ((index % 64) as f32 - 31.5, (index / 64) as f32 - 31.5);
+                if x * x + y * y < 100.0 { [1.0; 4] } else { [0.0, 0.0, 0.0, 1.0] }
+            })
+            .collect();
+        (fixture, [("disc".to_string(), Arc::new(ImageRes::new(64, 64, disc, false)))].into())
+    }
+
+    /// A Curvature generator whose Micro Height reads anchor point `anchor`
+    fn reading_micro_height(anchor: LayerId) -> Generator {
+        Generator { micro: MicroDetails::of_anchor(GeneratorKind::Curvature, anchor, 1.0).map(Box::new), ..Generator::new(GeneratorKind::Curvature) }
+    }
+
+    /// A height fill of `source`, with an anchor point after it: the layer's id and the anchor's
+    fn anchored_height(fixture: &mut Fixture, id: LayerId, source: Source) -> (LayerId, LayerId) {
+        let mut fill = Fill::default();
+        fill.sources.insert(Channel::Height, source);
+        let layer = fixture.project.insert_layer(0, Layer::new(id, "Height", LayerKind::Fill(fill), &[Channel::Height]), None, false).unwrap();
+        (layer, content_fx(fixture, layer, EffectKind::Anchor))
+    }
+
+    fn base_color_reds(composite: &Composite) -> Vec<f32> {
+        (0..64 * 64).map(|index| composite.value(Channel::BaseColor, index % 64, index / 64)[0]).collect()
+    }
+
+    #[test]
+    fn every_anchor_height_a_render_reads_stays_prepared_however_many_it_reads() {
+        const OTHER_READERS: usize = 8;
+        let colors = |others_read: bool| {
+            let (mut fixture, images) = micro_height_fixture();
+            let id = fixture.project.alloc_id();
+            let (low, first) = anchored_height(&mut fixture, id, Source::image("disc"));
+            let others: Vec<LayerId> = (0..OTHER_READERS).map(|_| content_fx(&mut fixture, low, EffectKind::Anchor)).collect();
+            let top = fill_layer(&mut fixture.project, [1.0; 3], 0.5);
+            let mut mask = Mask::new(MaskBackground::Black);
+            mask.effects.push(Effect::new(LayerId(900), EffectKind::Generator(reading_micro_height(first))));
+            fixture.project.layer_mut(top).unwrap().mask = Some(mask);
+
+            // Readers of eight more anchors on a layer of height only, drawn above
+            let id = fixture.project.alloc_id();
+            let readers =
+                fixture.project.insert_layer(0, Layer::new(id, "Readers", LayerKind::Fill(Fill::default()), &[Channel::Height]), None, false).unwrap();
+            let mut mask = Mask::new(MaskBackground::Black);
+            for (index, anchor) in others.iter().enumerate().filter(|_| others_read) {
+                mask.effects.push(Effect::new(LayerId(901 + index as u64), EffectKind::Generator(reading_micro_height(*anchor))));
+            }
+            fixture.project.layer_mut(readers).unwrap().mask = Some(mask);
+            base_color_reds(&run_with_images(&fixture, None, &images))
+        };
+
+        assert_eq!(colors(true), colors(false), "a ninth anchor read keeps the first one's height");
+    }
+
+    #[test]
+    fn an_anchor_height_holding_a_reader_of_a_lower_anchor_is_built_after_it_whatever_the_layer_ids() {
+        let colors = |top_id_first: bool| {
+            let (mut fixture, images) = micro_height_fixture();
+            let early = fixture.project.alloc_id();
+            let late = fixture.project.alloc_id();
+            let (top_id, middle_id) = if top_id_first { (early, late) } else { (late, early) };
+            let id = fixture.project.alloc_id();
+            let (_, lower) = anchored_height(&mut fixture, id, Source::image("disc"));
+
+            // The upper anchor records the middle layer's mask: a reader of the lower anchor
+            let middle =
+                fixture.project.insert_layer(0, Layer::new(middle_id, "Middle", LayerKind::Fill(Fill::default()), &[Channel::Height]), None, false).unwrap();
+            let upper = fixture.project.alloc_id();
+            let mut mask = Mask::new(MaskBackground::Black);
+            mask.effects.push(Effect::new(LayerId(900), EffectKind::Generator(reading_micro_height(lower))));
+            mask.effects.push(Effect::new(upper, EffectKind::Anchor));
+            fixture.project.layer_mut(middle).unwrap().mask = Some(mask);
+
+            let mut fill = Fill::default();
+            fill.sources.insert(Channel::BaseColor, Source::Uniform([1.0; 3]));
+            let top = fixture.project.insert_layer(0, Layer::new(top_id, "Top", LayerKind::Fill(fill), &[Channel::BaseColor]), None, false).unwrap();
+            let mut mask = Mask::new(MaskBackground::Black);
+            mask.effects.push(Effect::new(LayerId(901), EffectKind::Generator(reading_micro_height(upper))));
+            fixture.project.layer_mut(top).unwrap().mask = Some(mask);
+            base_color_reds(&run_with_images(&fixture, None, &images))
+        };
+
+        let (by_draw_order, against_it) = (colors(false), colors(true));
+        let largest_change = by_draw_order.iter().zip(&against_it).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        assert!(largest_change < 1e-4, "{largest_change}");
+    }
+
+    #[test]
+    fn anchor_heights_are_built_again_at_another_working_size() {
+        let (mut fixture, images) = micro_height_fixture();
+        let id = fixture.project.alloc_id();
+        let (_, anchor) = anchored_height(&mut fixture, id, Source::image("disc"));
+        let stack = || {
+            StackKey::new(&fixture.project, &fixture.pixels, &fixture.baked, &images, 0, &fixture.project.texture_sets[0].stack)
+                .expect("the plane's stack has a key")
+        };
+        let builds = std::cell::Cell::new(0);
+        let build = |size: (u32, u32)| {
+            builds.set(builds.get() + 1);
+            AnchorHeights::new(vec![0.0; (size.0 * size.1) as usize], size, fixture.project.texture_sets[0].block_scales())
+        };
+        let half = UvGBuffer::new(&fixture.mesh, 0, 32, 32);
+        let inputs_at = |gbuf| Inputs { gbuf, ..inputs(&fixture, &images, None) };
+
+        crate::micro_details::prepare_anchor_heights(&inputs_at(&fixture.gbuf), anchor, stack(), || build((64, 64)));
+        crate::micro_details::prepare_anchor_heights(&inputs_at(&fixture.gbuf), anchor, stack(), || build((64, 64)));
+        assert_eq!(builds.get(), 1, "the same stack and size reuse them");
+
+        crate::micro_details::prepare_anchor_heights(&inputs_at(&half), anchor, stack(), || build((32, 32)));
+        assert_eq!(builds.get(), 2, "a smaller working atlas builds them again");
     }
 
     #[test]
