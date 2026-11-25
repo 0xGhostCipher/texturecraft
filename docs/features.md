@@ -250,10 +250,10 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 
 - **Swap 3D/2D** (F4, Viewport menu and the layout dropdown, rebindable) puts the 2D view on the left and the 3D view on the right in the split layout. Painting, the divider and the views' headers work on both sides, and the choice is kept with the UI state.
 - A modern look in **four brightness levels** (dark, medium dark, medium light and light) with
-  **seven accent colors**, set in Settings › General › Appearance.
+  **seven accent colors**, set for now only through `ui.set` (`prefs.brightness`, `prefs.accent`).
 - **Its own title bar** with the app icon, menus and window buttons on Windows (and on Linux
   desktops that leave the frame to the app, such as GNOME), the macOS traffic lights over the same
-  strip, and Settings › General › Appearance › System title bar for the system's frame instead.
+  strip, and the system's frame instead with `prefs.system_title_bar` through `ui.set` (for now).
 - **Dockable, tabbed and floating panels**, saved layouts, and panels that reopen where you closed
   them. The right bar's panels (Export, Log, Display Settings, Shader Settings, History) pop out
   beside it; *Undock* makes one a floating window, and its *Dock* button puts it back on the bar.
@@ -273,7 +273,7 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 - **No project at launch**: empty views, panels and toolbars until you create or open one (File ›
   New project, Open, Recent projects, Open sample project); File › Close returns to that state.
 - A **data folder** of your choice for autosaves, smart materials, presets, templates and UI
-  layouts, on any drive (Settings › General › Folders; `Documents/TextureCraft` by default).
+  layouts, on any drive (Settings › General › Files › Data folder; `Documents/TextureCraft` by default).
 - A **Settings window** (Edit › Settings) with General, Shortcuts and Libraries pages; changes
   apply on OK and Cancel drops them. General holds the language (or the system's), the 3D view's
   rotation, zoom and wheel speeds with inverse directions, GPU or CPU bake rays, resource limits

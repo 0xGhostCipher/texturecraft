@@ -456,7 +456,12 @@ fn general(
         {
             let default = crate::local_cache_folder("").display().to_string();
             ui.add(egui::TextEdit::singleline(&mut p.local_cache_directory).hint_text(default).desired_width(CONTROL_WIDTH - 24.0)).labelled_by(label);
-            if ui.add(egui::Button::new("R").frame(false)).on_hover_text(tr("Reset to the default folder")).clicked() {
+            let reset = ui.add(egui::Button::new("R").frame(false)).on_hover_text(tr("Reset to the default folder"));
+
+            // Screen readers hear what the single letter does
+            let name = format!("R, {}", tr("Reset to the default folder"));
+            reset.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+            if reset.clicked() {
                 p.local_cache_directory.clear();
             }
         }
@@ -495,7 +500,9 @@ fn general(
     #[cfg(not(target_arch = "wasm32"))]
     row(ui, tr("Data folder"), |ui, label| {
         let default = crate::data_folder("").display().to_string();
-        ui.add(egui::TextEdit::singleline(&mut p.data_folder).hint_text(default).desired_width(CONTROL_WIDTH - 30.0)).labelled_by(label);
+        ui.add(egui::TextEdit::singleline(&mut p.data_folder).hint_text(default).desired_width(CONTROL_WIDTH - 30.0))
+            .labelled_by(label)
+            .on_hover_text(tr("Applies on restart."));
         if ui.button("...").on_hover_text(tr("Choose the data folder")).clicked() {
             *pick = Some(SettingsFolder::DataFolder);
         }
@@ -505,19 +512,6 @@ fn general(
     disabled_text_check(ui, n_("Hardware support acceleration"), true);
 
     // TextureCraft's own settings, after the reference sections
-    section(ui, n_("VIEWPORT"));
-    row(ui, tr("Texture resolution"), |ui, _| {
-        ui.horizontal(|ui| {
-            for (v, l) in [(0u8, tr("Full")), (1, tr("Half")), (2, tr("Quarter"))] {
-                ui.selectable_value(&mut p.viewport_texture, v, l);
-            }
-        })
-        .response
-        .on_hover_text(tr(
-            "Size of the textures the viewport shows: lower uses less GPU memory with large texture sets. Painting and export keep full resolution.",
-        ));
-    });
-
     section(ui, n_("RESOURCES"));
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -537,7 +531,7 @@ fn general(
             cores_in_total(ui, available_cores);
         });
         row(ui, tr("Max RAM while saving"), |ui, label| {
-            ui.add(egui::Slider::new(&mut p.save_ram_percent, 0..=100).step_by(1.0).suffix(" %")).labelled_by(label);
+            ui.add(egui::Slider::new(&mut p.save_ram_percent, 0..=100).step_by(1.0).suffix(" %")).labelled_by(label).on_hover_text(tr("0 % uses at least 1 %"));
             let budget_bytes = texturecraft_engine::formats::save_ram_budget(available_ram_bytes, p.save_ram_percent);
             ui.label(format!("≈ {:.2} GiB", budget_bytes as f64 / (1_u64 << 30) as f64));
         });

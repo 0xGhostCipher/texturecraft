@@ -334,6 +334,7 @@ effect yet.
 For example, the `libraries` field can contain `[{"name": "Studio", "path": "/assets/studio"}]`.
 Use an absolute path on the host running TextureCraft. To change one preference, read `state.prefs`
 with `ui.inspect`, update that field and send the full `prefs` object to `ui.set`.
+A `prefs` object without `language` sets the system language (`""`), the default.
 
 ## MCP server
 

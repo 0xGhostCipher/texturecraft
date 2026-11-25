@@ -405,7 +405,7 @@ fn gpu_report_toasts(app: &mut TextureCraftApp, reports: crate::gpu::GpuReports)
         }
         let text = match sets.as_slice() {
             [one] => trf(
-                "Not enough GPU memory to show texture set \"{name}\" fully: lower the viewport Texture resolution in Settings. Painting and export are not affected.",
+                "Not enough GPU memory to show texture set \"{name}\" fully: lower the Texture resolution in Display Settings › Render settings. Painting and export are not affected.",
                 &[("name", one)],
             ),
             many => {
@@ -418,7 +418,7 @@ fn gpu_report_toasts(app: &mut TextureCraftApp, reports: crate::gpu::GpuReports)
                     list.push_str(", ...");
                 }
                 trf(
-                    "Not enough GPU memory to show {count} texture sets fully ({names}): lower the viewport Texture resolution in Settings. Painting and export are not affected.",
+                    "Not enough GPU memory to show {count} texture sets fully ({names}): lower the Texture resolution in Display Settings › Render settings. Painting and export are not affected.",
                     &[("count", &many.len()), ("names", &list)],
                 )
             }

@@ -1014,7 +1014,7 @@ const GLIDE_SECONDS: f64 = 0.35;
 
 /// The share of the running frame rate and frame time averages each frame keeps (an average over about ten frames)
 const FRAME_AVERAGE_KEEP: f32 = 0.9;
-/// The interface scale applied: wider than the Settings slider, so a scale set elsewhere still applies within reason
+/// The interface scale applied (`prefs.ui_scale`, set through `ui.set`; Settings has no control for it), clamped to a usable range
 const UI_SCALE_APPLIED: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 /// Zoom factors closer than this are the same zoom (float noise), so the zoom is not set again each frame
 const SAME_ZOOM_TOLERANCE: f32 = 1e-3;

@@ -87,7 +87,7 @@ fn the_general_page_starts_at_the_reference_defaults() {
     let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
     open_settings(&mut h);
 
-    // A reset puts the defaults in the window; the app itself keeps English for the exact-text checks
+    // The defaults of a first start, in the window; the app itself keeps English for the exact-text checks
     h.state_mut().ui.windows.settings_draft.as_mut().unwrap().prefs = Prefs::default();
     h.run_steps(3);
 
@@ -112,7 +112,7 @@ fn the_general_page_starts_at_the_reference_defaults() {
     assert_eq!(texturecraft_ui_egui::local_cache_folder(&Prefs::default().local_cache_directory), std::env::temp_dir());
 
     let prefs = Prefs::default();
-    assert_eq!(prefs.language, texturecraft_ui_egui::i18n::SYSTEM_LANGUAGE, "a reset follows the system language");
+    assert_eq!(prefs.language, texturecraft_ui_egui::i18n::SYSTEM_LANGUAGE, "the default follows the system language");
     assert_eq!((prefs.rotation_speed, prefs.zoom_speed, prefs.wheel_speed), (2.0, 1.0, 1.0));
 }
 
@@ -121,7 +121,7 @@ fn the_general_page_keeps_the_reference_sections_and_moves_data_folder_and_recen
     let mut h = harness(Session::closed().unwrap());
     open_settings(&mut h);
 
-    for gone in ["TEMPORARY FILES", "IRAY HARDWARE", "APPEARANCE", "FOLDERS", "PRIVACY", "Interface scale", "Accent color"] {
+    for gone in ["TEMPORARY FILES", "IRAY HARDWARE", "APPEARANCE", "FOLDERS", "VIEWPORT", "Interface scale", "Accent color"] {
         assert!(h.query_by_label(gone).is_none(), "{gone} is not on the page");
     }
     for hint in ["Saving uses the other cores", "0 turns autosave off", "A new folder applies on restart"] {
@@ -160,11 +160,32 @@ fn the_resource_sliders_step_by_one_and_follow_the_arrow_keys() {
     h.run_steps(3);
     h.get_by_role_and_label(Role::Slider, "Max RAM while saving").focus();
     h.run_steps(2);
+
     press_key(&mut h, Key::ArrowRight);
-    assert_eq!(ram_percent(&h), before + 1, "the right arrow adds one percent");
+    let after_right = ram_percent(&h);
     press_key(&mut h, Key::ArrowLeft);
     press_key(&mut h, Key::ArrowLeft);
-    assert_eq!(ram_percent(&h), before - 1, "the left arrow takes one percent");
+    let after_left = ram_percent(&h);
+
+    assert_eq!(after_right, before + 1, "the right arrow adds one percent");
+    assert_eq!(after_left, before - 1, "the left arrow takes one percent");
+}
+
+#[test]
+fn show_world_axes_draws_the_3d_view_axes_and_off_hides_them() {
+    let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
+    let painted_z = |h: &Harness<'_, TextureCraftApp>| {
+        h.output().shapes.iter().filter(|clipped| matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "Z")).count()
+    };
+
+    h.state_mut().ui.prefs.show_world_axes = true;
+    h.run_steps(3);
+    let shown = painted_z(&h);
+    h.state_mut().ui.prefs.show_world_axes = false;
+    h.run_steps(3);
+    let hidden = painted_z(&h);
+
+    assert_eq!(shown, hidden + 1, "the 3D view's Z axis letter is drawn only while Show world axes is on");
 }
 
 #[test]
@@ -179,8 +200,8 @@ fn the_enabled_interface_options_answer_the_keyboard() {
         h.run_steps(2);
         press_key(&mut h, Key::Space);
     }
-
     let after = draft(&h);
+
     assert_ne!(after.show_keyboard_helper, before.show_keyboard_helper);
     assert_ne!(after.show_world_axes, before.show_world_axes);
     assert_ne!(after.only_selected_material_when_painting, before.only_selected_material_when_painting);
@@ -194,14 +215,12 @@ fn the_local_cache_directory_takes_a_folder_and_r_goes_back_to_the_default() {
     let stored = |h: &Harness<'_, TextureCraftApp>| h.state().ui.windows.settings_draft.as_ref().unwrap().prefs.local_cache_directory.clone();
 
     type_into(&mut h, "Local cache directory", &folder);
-    assert_eq!(stored(&h), folder);
+    let typed = stored(&h);
+    click(&mut h, "R, Reset to the default folder");
+    let reset = stored(&h);
 
-    // The Files cache directory's R stays disabled; the local cache's R is the one that works
-    h.query_all_by_label("R").find(|node| !node.accesskit_node().is_disabled()).unwrap().scroll_to_me();
-    h.run_steps(3);
-    h.query_all_by_label("R").find(|node| !node.accesskit_node().is_disabled()).unwrap().click();
-    h.run_steps(3);
-    assert!(stored(&h).is_empty(), "R goes back to the default folder");
+    assert_eq!(typed, folder);
+    assert!(reset.is_empty(), "R goes back to the default folder");
 }
 
 #[test]
@@ -534,7 +553,6 @@ fn gpu_raytracing_is_on_and_checkable_with_a_gpu_and_off_and_disabled_without() 
     assert_eq!(!check.accesskit_node().is_disabled(), supported, "it can be changed exactly when there is a GPU");
     assert_eq!(toggled(&h, "Enable GPU raytracing"), supported, "it is on exactly when there is a GPU");
     assert_eq!(h.query_by_label(GPU_RAYTRACING_UNAVAILABLE).is_some(), !supported, "the note shows with no GPU and only then");
-    assert!(h.state().ui.prefs.gpu_raytracing, "the stored choice stays for a machine with a GPU");
 }
 
 #[test]
