@@ -52,6 +52,9 @@ pub fn usd_bytes(mesh: &Mesh, name: &str, textures: &[Vec<ExportedFile>], format
 pub fn usd_export_options() -> ExportOptions;                     // render each material's textures with these
 pub enum UsdFormat { Usda, Usdc, Usdz }
 pub struct UsdExport { pub bytes: Vec<u8>, pub textures: Vec<(String, Vec<u8>)> }  // textures: usda/usdc only
+pub fn usd_texture_bindings(set: &TextureSet, opts: &ExportOptions, project_normal: NormalFormat, files: &[PlannedFile]) -> Vec<UsdTextureBinding>;  // which UsdPreviewSurface input reads which output of which exported file
+pub fn usd_layer_with_textures(mesh: &Mesh, name: &str, bindings: &[Vec<UsdTextureBinding>]) -> Result<Vec<u8>>;  // binary `.usd` (Crate) only; material m reads bindings[m] as ./<file>
+pub struct UsdTextureBinding { /* opaque */ }
 ```
 
 OBJ export propagates shared writer validation and limit errors rather than returning empty bytes.
@@ -65,6 +68,11 @@ emissive maps dropped, and both clear coat maps when the coat is black). Meters,
 `.usdc` is a Crate 0.8.0 file; `.usdz` is that layer first plus the PNGs, stored uncompressed at
 64-byte aligned offsets; `.usda` / `.usdc` reference `<name>_<material>_<slot>.png` next to the
 layer.
+`usd_layer_with_textures` writes the same scene as a binary `.usd` (Crate) whose materials read texture files the
+caller already wrote (the Export textures window's USD asset): `usd_texture_bindings` binds base
+color, roughness, metallic, normal (scale/bias for the file's green convention), emissive color,
+opacity, clear coat and clear coat roughness by what each map of the template holds, each reading
+the `rgb`, `r`, `g`, `b` or `a` output of its file; one texture shader per file, so packed maps work.
 
 GLB: one primitive per submesh, one metallic-roughness material per mesh material with its
 textures embedded in the binary chunk (base color sRGB, `alphaMode: BLEND` when it has alpha;
@@ -111,7 +119,11 @@ pub fn preset_to_json(preset: &ExportPreset) -> Result<String>;
   the normal channel, then with the baked normal map, by Reoriented Normal Mapping. DirectX
   flips green.
 
-Built-in presets:
+File names may hold folders: `/` separates folder names inside the output directory (each one
+sanitized; a backslash, `..`, a leading `/` and empty folder names are refused), and the folders
+are created when the files are written.
+
+Built-in presets (each one lists the public specification its packing follows in `src/presets.rs`):
 
 | Preset | Files (`$mesh_$textureSet_…`) |
 |---|---|
@@ -123,6 +135,8 @@ Built-in presets:
 | Blender (Principled BSDF) | `BaseColor`, `Metallic`, `Roughness`, `Normal` (OpenGL), `Height` (16-bit), `Emission`, `Specular` |
 | Godot 4 (ORM) | `albedo` (A = opacity), `orm` (R AO, G roughness, B metal), `normal` (OpenGL), `emission` |
 | OpenPBR (separate maps) | one map per OpenPBR Surface input the set has: `base_color`, `base_metalness`, `specular_roughness`, `specular_roughness_anisotropy`, `coat_weight`, `coat_roughness`, `fuzz_weight`, `fuzz_color`, `fuzz_roughness`, `transmission_weight`, `subsurface_weight`, `emission_color`, `geometry_opacity`, `geometry_normal` (OpenGL), `height` (16-bit) |
+| Unity URP Lit (Metallic Smoothness) | `BaseMap`, `MetallicMap` (R metal, A smoothness), `NormalMap` (OpenGL), `OcclusionMap`, `EmissionMap` |
+| USD Preview Surface (separate maps) | one map per UsdPreviewSurface input the set has, named like it: `diffuseColor`, `emissiveColor`, `metallic`, `roughness`, `normal` (OpenGL), `occlusion`, `opacity`, `clearcoat`, `clearcoatRoughness` |
 | Separate maps | one file per channel, gray where scalar, height 16-bit |
 | Mesh maps | every baked map (`$channel` = map id), 16-bit |
 
