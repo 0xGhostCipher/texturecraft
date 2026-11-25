@@ -253,11 +253,7 @@ impl Bindings {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn command_of(&self, press: &Event) -> Option<String> {
         let input = KeyInput::from_egui(press, self.map.platform())?;
-        self.dispatcher.layout().candidates(&input).into_iter().find_map(|chord| match self.map.lookup(&chord, false, &Active::NONE) {
-            Lookup::Run(command) => Some(command.id),
-            Lookup::Cycle(commands) => commands.into_iter().next().map(|command| command.id),
-            _ => None,
-        })
+        craft_keymap::Matcher::single(self.dispatcher.layout(), &self.map, &input, &Active::NONE, &[]).map(|hit| hit.command.id)
     }
 
     /// The shortcut a press records: the chord it runs, keeping the held Ctrl and Cmd as they are.
@@ -814,6 +810,13 @@ mod tests {
         keymap.insert("file.save".into(), "Equals".into());
         let resolved = bindings_for(&keymap);
         assert_eq!(resolved.command_of(&press(Key::Plus, Modifiers::NONE)).as_deref(), Some("file.save"), "+ stands for =");
+
+        // A layout that types = with Shift+0: the press is both chords, and the one with Shift runs.
+        keymap.insert("file.saveAs".into(), "Shift+Equals".into());
+        let mut resolved = bindings_for(&keymap);
+        let equals = press_at(Key::Equals, Key::Num0, Modifiers::SHIFT);
+        assert_eq!(dispatched(&mut resolved, vec![equals.clone()], Modifiers::SHIFT), ["file.saveAs"]);
+        assert_eq!(resolved.command_of(&equals).as_deref(), Some("file.saveAs"));
     }
 
     #[test]
