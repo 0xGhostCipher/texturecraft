@@ -1498,7 +1498,12 @@ fn jpeg2000_is_lossless_at_8_and_16_bits() {
                 let components = usize::from(image.color().channel_count());
                 let expected = image.to_rgba16();
                 let planes = jpeg2000_planes(&file.bytes);
+                let info = j2k::J2kDecoder::inspect_support(&file.bytes).unwrap();
 
+                assert_eq!(info.components.len(), components, "{}", file.name);
+                for (component, declared) in info.components.iter().enumerate() {
+                    assert_eq!(declared.bit_depth, depth, "{} component {component} precision", file.name);
+                }
                 assert_eq!(planes.len(), components, "{}", file.name);
                 for (component, plane) in planes.iter().enumerate() {
                     assert_eq!(plane.len(), expected.pixels().len(), "{} component {component}", file.name);
@@ -1994,6 +1999,28 @@ fn feedback_jpeg_previews_omit_the_alpha_channel() {
 }
 
 #[test]
+fn webp_preview_matches_the_exported_channels_and_samples() {
+    let fx = Fx::new(&default_channels());
+    let mut gray_alpha = roughness();
+    gray_alpha.push((Dest::A, SourceRef::Constant(0.5)));
+    let mut rgb = rgba_half_alpha();
+    rgb.retain(|(dest, _)| *dest != Dest::A);
+
+    for (layout, expected) in
+        [(roughness(), &[Dest::R, Dest::G, Dest::B][..]), (gray_alpha, &[Dest::R, Dest::G, Dest::B, Dest::A][..]), (rgb, &[Dest::R, Dest::G, Dest::B][..])]
+    {
+        let options = one_map(FileFormat::Webp, 8, layout);
+
+        let preview = MapPreview::sample(&fx.input(), &options, 0, RES).unwrap().unwrap();
+        let image = decode(&fx.render(&options)[0]);
+
+        assert_eq!(preview.channels, expected);
+        assert_eq!(preview.channels.len(), usize::from(image.color().channel_count()));
+        assert_eq!(preview.pixels, image.as_bytes());
+    }
+}
+
+#[test]
 fn pgm_preview_shows_exported_luminance_without_alpha() {
     let fx = Fx::new(&default_channels());
     let mut gray_with_alpha = roughness();
@@ -2255,6 +2282,70 @@ fn feedback_psd_tiled_and_untiled_sets_keep_both_documents() {
     assert_eq!(plans[4].1.name, "sphere_Trim.psd");
     let separate = list_outputs(&fx.project, 1, "sphere", &options).unwrap();
     assert_eq!(plans[0].1.name, separate[0].name, "individual desktop jobs agree with selection planning");
+}
+
+#[test]
+fn psd_document_names_survive_sanitization_and_case_collisions() {
+    let mut fx = Fx::new(&default_channels());
+    fx.project.texture_sets[0].name = "Body Coat".into();
+    for (name, tiles) in [
+        ("body_coat", vec![]),
+        ("Body_Coat_0", vec![]),
+        ("Body Coat", vec![1001, 1002]),
+        ("BODY_COAT", vec![1001]),
+        ("Trim", vec![]),
+        ("body_coat", vec![1011]),
+    ] {
+        let mut set = fx.project.texture_sets[0].clone();
+        set.name = name.into();
+        set.uv_tiles = tiles;
+        fx.project.texture_sets.push(set);
+    }
+    let options = one_map(FileFormat::Psd, 8, roughness());
+    let indices = [6, 5, 4, 3, 2, 1, 0];
+
+    let batch = list_set_outputs(&fx.project, &indices, "sphere", &options).unwrap();
+    let separate: Vec<_> = indices
+        .into_iter()
+        .flat_map(|index| list_outputs(&fx.project, index, "sphere", &options).unwrap().into_iter().map(move |file| (index, file.name)))
+        .collect();
+
+    assert_eq!(batch.into_iter().map(|(index, file)| (index, file.name)).collect::<Vec<_>>(), separate);
+    for (index, unchanged) in [(2, "sphere_Body_Coat_0.psd"), (5, "sphere_Trim.psd"), (6, "sphere_body_coat.1011.psd")] {
+        assert!(separate.iter().any(|(set, name)| *set == index && name == unchanged));
+    }
+    let tiled = list_outputs(&fx.project, 3, "sphere", &options).unwrap();
+    assert!(tiled[0].udim_name.is_some());
+    assert_eq!(tiled[0].udim_name, tiled[1].udim_name, "tiles of one set keep the same pattern");
+
+    let atlas_options = ExportOptions { atlas: true, ..options };
+    let atlas = list_set_outputs(&fx.project, &indices, "sphere", &atlas_options).unwrap();
+    assert_eq!(atlas.len(), indices.len(), "atlas documents also need distinct names");
+}
+
+#[test]
+fn psd_batch_budget_counts_only_retained_documents() {
+    let mut fx = Fx::new(&default_channels());
+    let mut options = one_map(FileFormat::Psd, 8, roughness());
+    options.size = Some(4096);
+    fx.project.texture_sets[0].uv_tiles = (1001..1006).collect();
+    let mut other = fx.project.texture_sets[0].clone();
+    other.name = "Other".into();
+    fx.project.texture_sets.push(other);
+
+    let once = list_set_outputs(&fx.project, &[0], "sphere", &options).unwrap();
+    let repeated = list_set_outputs(&fx.project, &[0, 0], "sphere", &options).unwrap();
+    let distinct = list_set_outputs(&fx.project, &[0, 1], "sphere", &options);
+    let (_, bytes_per_tile) = check_psd_size([(4096, 4096)], 0, 8).unwrap();
+
+    assert_eq!(once.len(), repeated.len());
+    assert!(once.iter().zip(&repeated).all(|((_, first), (_, kept))| first.name == kept.name && kept.warnings.len() > first.warnings.len()));
+    assert!(matches!(distinct, Err(FormatError::TooLarge(message)) if message.contains("total PSD")));
+    println!(
+        "PSD preflight: {bytes_per_tile} estimated bytes per tile, {} retained bytes, {} bytes if counted twice, limit {MAX_PSD_BATCH_BYTES}",
+        bytes_per_tile * once.len() as u64,
+        bytes_per_tile * (once.len() + repeated.len()) as u64
+    );
 }
 
 #[test]

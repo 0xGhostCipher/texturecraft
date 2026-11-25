@@ -285,17 +285,14 @@ impl Session {
     }
 
     /// Render every export file for texture sets `sets` (in memory; works on the web). A file
-    /// named like one an earlier set exports is left out, with a warning (see
-    /// [`texturecraft_formats::skip_repeated_names`]).
+    /// named like one an earlier set exports is left out, with a warning.
     pub fn export_files(&mut self, sets: &[usize], opts: &ExportOptions) -> Result<Vec<ExportedFile>> {
         self.export_file_jobs(sets.iter().map(|&set| (set, opts)))
     }
 
     /// Render one in-memory batch, using each set's own export settings when supplied.
     pub fn export_file_jobs<'a>(&mut self, jobs: impl IntoIterator<Item = (usize, &'a ExportOptions)>) -> Result<Vec<ExportedFile>> {
-        let mut files = self.render_export_jobs(jobs, |_, plans| plans)?;
-        texturecraft_formats::skip_repeated_names(&mut files);
-        Ok(files)
+        self.render_export_jobs(jobs, |_, plans| plans)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -315,16 +312,26 @@ impl Session {
     ) -> Result<Vec<ExportedFile>> {
         let project = &self.doc.project;
         let mesh_name = stem_of(project.mesh.trim_start_matches("builtin:"));
-        let mut psd_bytes = 0;
         let mut pending = Vec::new();
         for (set_index, options) in jobs {
             let plans = texturecraft_formats::list_outputs(project, set_index, &mesh_name, options).map_err(fe)?;
             let plans = select(set_index, plans);
             if !plans.is_empty() {
-                let set = project.texture_set(set_index).map_err(|error| EngineError::Other(error.to_string()))?;
-                texturecraft_formats::export::check_psd_batch(set, options, &plans, &mut psd_bytes).map_err(fe)?;
                 pending.push((set_index, options, plans));
             }
+        }
+
+        // Keep each winning plan with the options of the job that produced it
+        let plans = pending.iter_mut().enumerate().flat_map(|(job, (_, _, plans))| plans.drain(..).map(move |plan| (job, plan)));
+        for (job, plan) in texturecraft_formats::export::keep_first_planned_names(plans) {
+            pending[job].2.push(plan);
+        }
+        pending.retain(|(_, _, plans)| !plans.is_empty());
+
+        let mut psd_bytes = 0;
+        for (set_index, options, plans) in &pending {
+            let set = project.texture_set(*set_index).map_err(|error| EngineError::Other(error.to_string()))?;
+            texturecraft_formats::export::check_psd_batch(set, options, plans, &mut psd_bytes).map_err(fe)?;
         }
 
         if self.solo.is_none() {

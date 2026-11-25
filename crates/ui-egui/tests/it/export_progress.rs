@@ -155,6 +155,36 @@ fn the_list_is_a_tree_per_texture_set_with_the_console_beside_it() {
 }
 
 #[test]
+fn long_filenames_leave_the_export_details_reachable_by_scrolling() {
+    let (mut h, _) = harness("wide-tree");
+    let name = "Wide".repeat(44);
+    h.state_mut().session.doc.project.texture_sets[0].name.clone_from(&name);
+    h.state_mut().ui.export.tab = 2;
+    h.run_steps(4);
+    let bits_label = "16 bits";
+    let bits_fit = |h: &Harness<'_, TextureCraftApp>| {
+        h.output().shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == bits_label => clipped.clip_rect.contains_rect(text.visual_bounding_rect()),
+            _ => false,
+        })
+    };
+    assert!(!bits_fit(&h), "the bit-depth column starts beyond the viewport");
+    h.get_by_role_and_label(egui::Role::Button, &name).focus();
+    h.run_steps(3);
+    assert!(h.get_by_role_and_label(egui::Role::Button, &name).is_focused());
+
+    for _ in 0..12 {
+        h.key_press(egui::Key::ArrowRight);
+        h.run_steps(2);
+    }
+    h.run_steps(10);
+
+    assert!(bits_fit(&h), "horizontal keyboard scrolling brings bit depth into the viewport");
+    assert!(h.query_all_by_label(bits_label).next().is_some(), "bit depth has an accessibility label");
+    assert!(h.query_by_label("Console").is_some());
+}
+
+#[test]
 fn open_output_directory_asks_the_system_to_show_the_folder() {
     let (mut h, dir) = harness("open");
     h.state_mut().ui.export.tab = 2;

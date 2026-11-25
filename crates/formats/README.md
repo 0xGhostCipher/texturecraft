@@ -148,9 +148,13 @@ Built-in presets (each one lists the public specification its packing follows in
 | Separate maps | one file per channel, gray where scalar, height 16-bit |
 | Mesh maps | every baked map (`$channel` = map id), 16-bit |
 
-The preset column gives the stable automation and saved-setting names. The export window describes
-four templates by their output. **Packed maps with a scattering mask** targets Unreal Engine's
-subsurface input. **Separate coat, sheen and scattering maps** targets Redshift.
+The preset column gives the stable automation and saved-setting names. When a user preset shares
+a table name, that name selects the user preset so saved settings keep working. To select the
+built-in through automation, pass the exact `name` from its `builtin: true` entry in
+`export.presets`.
+
+The export window describes four templates by their output. **Packed maps with a scattering mask**
+targets Unreal Engine's subsurface input. **Separate coat, sheen and scattering maps** targets Redshift.
 **Four maps with opacity in color** targets Roblox, and **Six maps with a negative-Y normal**
 targets Sketchfab.
 

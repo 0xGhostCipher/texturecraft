@@ -1350,7 +1350,7 @@ fn list_tab(app: &mut TextureCraftApp, ui: &mut Ui, body: egui::Rect) {
     let tree = egui::Rect::from_min_max(egui::pos2(body.left(), body.top() + 1.0), egui::pos2(strip.left() - STRIP_GAP, body.bottom()));
     ui.painter().rect_filled(tree, 0.0, look.chrome);
     ui.scope_builder(egui::UiBuilder::new().max_rect(tree), |ui| {
-        egui::ScrollArea::vertical().id_salt("exp_list").auto_shrink([false; 2]).show(ui, |ui| export_tree(app, ui, &tk));
+        egui::ScrollArea::both().id_salt("exp_list").auto_shrink([false; 2]).show(ui, |ui| export_tree(app, ui, &tk));
     });
 
     // The strip at the console's left edge: a click hides or shows the console, a drag resizes it
@@ -1441,7 +1441,10 @@ fn export_tree(app: &mut TextureCraftApp, ui: &mut Ui, tk: &Tokens) {
         .zip(&open)
         .map(|(((_, set), files), open)| 1 + 1 + if *open { files.len().max(usize::from(set.files.is_err())) } else { 0 })
         .sum();
-    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), TREE_TOP_PADDING + row_count as f32 * TREE_ROW_HEIGHT), egui::Sense::hover());
+    let width = ui.available_width().max(columns[2] + longest(|file| &file.bits) + TREE_BITS_GAP);
+    let height = TREE_TOP_PADDING + row_count as f32 * TREE_ROW_HEIGHT;
+    let (area, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+
     let mut y = area.top() + TREE_TOP_PADDING;
     for (((index, set), files), open) in sets.iter().zip(&rows).zip(open) {
         let header = egui::Rect::from_min_max(egui::pos2(area.left(), y), egui::pos2(area.right(), y + TREE_ROW_HEIGHT));
@@ -1514,6 +1517,19 @@ fn tree_header(ui: &mut Ui, rect: egui::Rect, name: &str, open: bool, id: egui::
     drawn::glyph(ui, egui::pos2(rect.left() + TREE_CHEVRON_X, y), chevron, drawn::CHEVRON_SIZE, look.text);
     drawn::text_at(ui, rect.left() + TREE_NAME_INDENT, y, name, look.text, true);
     drawn::paint_focus(ui, &response);
+
+    if response.has_focus() && rect.width() > ui.clip_rect().width() {
+        let direction = ui.input_mut(|input| {
+            let start = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft);
+            let end = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
+            i8::from(start) - i8::from(end)
+        });
+        if direction != 0 {
+            ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+            ui.scroll_with_delta(vec2(f32::from(direction) * ui.clip_rect().width() / 2.0, 0.0));
+        }
+    }
+
     response.clicked()
 }
 

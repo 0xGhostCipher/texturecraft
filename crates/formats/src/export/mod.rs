@@ -653,40 +653,67 @@ fn psd_stem(mesh_name: &str, set_name: &str, set_index: usize, max_len: usize) -
     format!("{mesh}_{set}_{set_index}")
 }
 
-/// Keep tiled names stable even when the export window plans each texture set separately.
+/// Compare against the whole project so a separate export and a batch agree on names.
 fn untiled_psd_stem(project: &Project, mesh_name: &str, set_index: usize, set: &TextureSet, atlas: bool) -> String {
     let stem = psd_stem(mesh_name, &set.name, set_index, MAX_STEM);
-    if atlas {
-        return stem;
-    }
+    let taken = |candidate: &str| {
+        let tile = psd_tile_suffix(candidate);
+        project.texture_sets.iter().enumerate().filter(|(index, _)| *index != set_index).any(|(index, other)| {
+            if atlas || other.uv_tiles.is_empty() {
+                candidate.eq_ignore_ascii_case(&psd_stem(mesh_name, &other.name, index, MAX_STEM))
+            } else {
+                tile.is_some_and(|(base, number)| {
+                    other.uv_tiles.contains(&number)
+                        && base.eq_ignore_ascii_case(&psd_stem(mesh_name, &other.name, index, MAX_STEM - (candidate.len() - base.len())))
+                })
+            }
+        })
+    };
+    if taken(&stem) { disambiguated_psd_stem(&stem, set_index, MAX_STEM, taken) } else { stem }
+}
 
-    let Some((base, tile)) = stem.rsplit_once('.') else { return stem };
-    let Ok(number) = tile.parse::<u32>() else { return stem };
+/// Only a canonical tile number can collide with a generated UDIM suffix.
+fn psd_tile_suffix(stem: &str) -> Option<(&str, u32)> {
+    let (base, suffix) = stem.rsplit_once('.')?;
+    let number: u32 = suffix.parse().ok()?;
+    (number.to_string() == suffix).then_some((base, number))
+}
 
-    let suffix_len = tile.len() + 1;
-    let collides = number.to_string() == tile
-        && project.texture_sets.iter().enumerate().any(|(index, other)| {
-            other.uv_tiles.contains(&number) && base.eq_ignore_ascii_case(&psd_stem(mesh_name, &other.name, index, MAX_STEM - suffix_len))
-        });
+/// Keep one UDIM base for all tiles of a set when any tile's ordinary name collides.
+fn tiled_psd_stem(project: &Project, mesh_name: &str, set_index: usize, set: &TextureSet, limit: usize) -> String {
+    let stem = psd_stem(mesh_name, &set.name, set_index, limit);
+    let other_sets = || project.texture_sets.iter().enumerate().filter(|(index, _)| *index != set_index);
+    let collides = other_sets().any(|(index, other)| {
+        !other.uv_tiles.is_empty()
+            && stem.eq_ignore_ascii_case(&psd_stem(mesh_name, &other.name, index, limit))
+            && other.uv_tiles.iter().any(|tile| set.uv_tiles.contains(tile))
+    });
     if !collides {
         return stem;
     }
 
-    // Reserve the ordinary untiled names, including names that already end in an index
-    let untiled_names: BTreeSet<_> = project
-        .texture_sets
-        .iter()
-        .enumerate()
-        .filter(|(_, other)| other.uv_tiles.is_empty())
-        .map(|(index, other)| psd_stem(mesh_name, &other.name, index, MAX_STEM).to_ascii_lowercase())
-        .collect();
+    // Reserve ordinary names so a generated suffix cannot take another document's name
+    disambiguated_psd_stem(&stem, set_index, limit, |candidate| {
+        other_sets().any(|(index, other)| {
+            if other.uv_tiles.is_empty() {
+                let untiled = psd_stem(mesh_name, &other.name, index, MAX_STEM);
+                psd_tile_suffix(&untiled).is_some_and(|(base, tile)| candidate.eq_ignore_ascii_case(base) && set.uv_tiles.contains(&tile))
+            } else {
+                candidate.eq_ignore_ascii_case(&psd_stem(mesh_name, &other.name, index, limit))
+            }
+        })
+    })
+}
+
+fn disambiguated_psd_stem(stem: &str, set_index: usize, limit: usize, taken: impl Fn(&str) -> bool) -> String {
     let mut attempt = 0usize;
     loop {
         let suffix = if attempt == 0 { format!("_{set_index}") } else { format!("-{attempt}_{set_index}") };
-        let name = format!("{}{suffix}", &stem[..stem.len().min(MAX_STEM - suffix.len())]);
-        if !untiled_names.contains(&name.to_ascii_lowercase()) {
+        let name = format!("{}{suffix}", &stem[..stem.len().min(limit - suffix.len())]);
+        if !taken(&name) {
             return name;
         }
+
         attempt += 1;
     }
 }
@@ -810,6 +837,9 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
         }
     }
 
+    // Reuse the base across tiles with the same suffix width
+    let mut tiled_bases = HashMap::new();
+
     // Each tile's PSD maps are the layers of one file named after the texture set
     for (&tile, in_tile) in tiles.iter().zip(psd_layers) {
         let Some((first_layer, ..)) = in_tile.first() else { continue };
@@ -838,7 +868,8 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
         let ext = FileFormat::Psd.extension();
         let (stem, udim_stem) = if let Some(number) = tile {
             let suffix = format!(".{number}");
-            let base = psd_stem(mesh_name, &set.name, ts, MAX_STEM - suffix.len());
+            let limit = MAX_STEM - suffix.len();
+            let base = tiled_bases.entry(limit).or_insert_with(|| tiled_psd_stem(project, mesh_name, ts, set, limit));
             (format!("{base}{suffix}"), Some(format!("{base}.<UDIM>")))
         } else {
             (untiled_psd_stem(project, mesh_name, ts, set, opts.atlas), None)
@@ -911,15 +942,19 @@ fn psd_size(set: &TextureSet, tile: Option<u32>, export_size: Option<u32>) -> (u
 
 /// Plan a selection in export order, keeping only the first case-insensitive use of a name.
 pub fn list_set_outputs(project: &Project, sets: &[usize], mesh_name: &str, opts: &ExportOptions) -> Result<Vec<(usize, PlannedFile)>> {
-    let mut psd_bytes = 0;
     let mut files = Vec::new();
     for &index in sets {
         let planned = list_outputs(project, index, mesh_name, opts)?;
-        check_psd_batch(project.texture_set(index)?, opts, &planned, &mut psd_bytes)?;
         files.extend(planned.into_iter().map(|file| (index, file)));
     }
 
-    Ok(keep_first_names(files, |(_, file)| &file.name, |(_, file)| &mut file.warnings))
+    let files = keep_first_planned_names(files);
+    let mut psd_bytes = 0;
+    for (index, file) in files.iter().filter(|(_, file)| file.format == FileFormat::Psd) {
+        check_psd_batch(project.texture_set(*index)?, opts, std::slice::from_ref(file), &mut psd_bytes)?;
+    }
+
+    Ok(files)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1703,9 +1738,15 @@ pub fn skip_repeated_names(files: &mut Vec<ExportedFile>) {
     *files = keep_first_names(std::mem::take(files), |file| &file.name, |file| &mut file.warnings);
 }
 
-fn keep_first_names<T>(files: Vec<T>, name: impl Fn(&T) -> &str, warnings: impl Fn(&mut T) -> &mut Vec<String>) -> Vec<T> {
+/// Keep the first case-insensitive use of each filename and attach duplicate warnings to its plan.
+pub fn keep_first_planned_names<T>(files: impl IntoIterator<Item = (T, PlannedFile)>) -> Vec<(T, PlannedFile)> {
+    keep_first_names(files, |(_, file)| &file.name, |(_, file)| &mut file.warnings)
+}
+
+fn keep_first_names<T>(files: impl IntoIterator<Item = T>, name: impl Fn(&T) -> &str, warnings: impl Fn(&mut T) -> &mut Vec<String>) -> Vec<T> {
+    let files = files.into_iter();
     let mut first = HashMap::new();
-    let mut kept = Vec::with_capacity(files.len());
+    let mut kept = Vec::with_capacity(files.size_hint().0);
     for file in files {
         let filename = name(&file);
         match first.entry(filename.to_ascii_lowercase()) {

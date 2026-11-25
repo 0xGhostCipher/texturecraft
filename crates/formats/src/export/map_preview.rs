@@ -64,8 +64,10 @@ impl MapPreview {
 
         let gray_source = channel_layout.first().filter(|(dest, _)| *dest == Dest::L);
         let psd = file.format == FileFormat::Psd;
-        let rgb_from_gray = gray_source
-            .filter(|_| psd || file.format == FileFormat::Hdr || (file.format == FileFormat::Tiff && (file.bit_depth == 32 || channel_layout.len() == 2)));
+        let rgb_from_gray = gray_source.filter(|_| {
+            matches!(file.format, FileFormat::Psd | FileFormat::Hdr | FileFormat::Webp)
+                || (file.format == FileFormat::Tiff && (file.bit_depth == 32 || channel_layout.len() == 2))
+        });
         let channels = if grayscale {
             vec![Dest::L]
         } else if psd {

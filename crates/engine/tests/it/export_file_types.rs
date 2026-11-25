@@ -29,6 +29,28 @@ fn the_new_file_types_dithering_and_diffusion_export() {
 }
 
 #[test]
+fn in_memory_psd_export_only_renders_the_first_plan_for_each_name() {
+    const SMALL_SIDE: u32 = 128;
+    let mesh = texturecraft_engine::geom::primitives::udim_plane();
+    let mut session = texturecraft_engine::Session::new_project("test", mesh, "builtin:udim_plane", None, SMALL_SIDE).unwrap();
+    let preset =
+        json!({"name": "Roughness", "maps": [{"file": "rough", "format": "Psd", "bit_depth": 8, "channels": [["L", {"Channel": {"channel": "Roughness"}}]]}]});
+    let options = |size| texturecraft_engine::file_cmds::export_options(&session, &json!({"preset": preset, "size": size, "padding": "none"}), "test").unwrap();
+    let small = options(SMALL_SIDE);
+    let large = options(4096);
+    let first = session.export_files(&[0], &small).unwrap();
+    assert!(first.len() > 1, "the mesh supplies multiple PSD tiles");
+
+    let jobs = std::iter::once((0, &small)).chain(std::iter::repeat_n((0, &large), 4));
+    let batch = session.export_file_jobs(jobs).unwrap();
+
+    assert_eq!(batch.len(), first.len());
+    assert!(batch.iter().zip(&first).all(|(kept, original)| kept.name == original.name && kept.bytes == original.bytes));
+    assert!(batch.iter().zip(&first).all(|(kept, original)| kept.warnings.len() > original.warnings.len()));
+    println!("Kept {} PSDs totaling {} encoded bytes", batch.len(), batch.iter().map(|file| file.bytes.len()).sum::<usize>());
+}
+
+#[test]
 fn a_map_size_wins_over_the_export_size_in_the_plan() {
     let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
 
