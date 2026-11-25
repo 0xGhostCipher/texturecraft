@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod anchor_properties;
 mod angle_dial;
 mod ask;
 mod bake_job;
@@ -16,48 +17,65 @@ pub mod bake_presets;
 mod bake_report;
 mod bake_scene;
 mod color_management;
+mod color_picker;
 mod color_selection_editor;
+mod compare_properties;
+mod compare_settings;
 pub mod control;
 mod decal_drop;
 mod display_settings;
 pub mod dock;
 pub mod docking;
+mod drawn_icon;
 mod environment_picker;
+mod exact_entry_open;
 mod export_panel;
 pub mod export_templates;
 mod export_window;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod file_dialogs;
+mod fill_material_panel;
 mod fill_panel;
 mod fill_pictures;
-mod fill_source_slot;
-mod fill_source_target;
 mod fill_symmetry_panel;
+mod filter_properties;
 mod filter_slot;
+mod filter_transform_rows;
+mod folder_properties;
 pub mod fonts;
 mod frame_gizmo;
 mod generator_panel;
 pub mod gpu;
 mod gray_slider;
 mod grid_tile;
+mod histogram_cache;
 pub mod i18n;
 pub mod id_color_pick;
 #[cfg(not(target_arch = "wasm32"))]
 mod import_resources;
 mod inactive_set_hint;
+mod instance_properties;
 pub mod keymap;
 pub mod layer_panel;
+mod layer_toolbar;
 mod layout_dialog;
+mod levels_display;
 mod levels_editor;
 mod levels_handle;
 mod levels_properties;
 mod line_snap;
 mod list_action;
 pub mod log_panel;
+mod mask_fill_panel;
+mod mask_paint_panel;
 mod mask_preview_image;
+mod mask_source_choice;
+mod material_orb;
 mod material_preview_image;
 pub mod menus;
 mod mesh_export_options;
+#[cfg(not(target_arch = "wasm32"))]
+mod mode_layout;
 mod move_hold;
 pub mod move_on_model;
 mod name_error;
@@ -67,7 +85,12 @@ mod nav_button;
 pub mod nav_buttons;
 mod nav_view;
 pub mod new_project_advanced;
+mod orb_environment;
+mod orb_material;
+pub mod orb_previews;
 mod orb_shape;
+/// The channel's OS identity (app id, window and app names) — see its module docs.
+pub mod os_window;
 pub mod parity;
 mod past_end;
 mod path_hit;
@@ -75,6 +98,9 @@ mod path_surface_cache;
 mod pattern_panel;
 mod pattern_target;
 pub mod pbr_import;
+mod picker_group;
+mod picker_tab;
+mod placed_fill_slot;
 mod placement;
 mod pointer_lock;
 mod popup_drag;
@@ -94,19 +120,20 @@ pub mod properties_popup;
 mod property_sheet;
 mod query_field;
 mod rail_popup;
+mod reference;
 pub mod render_mode;
+mod resolution_band;
 mod resource_panel;
 mod resource_picker;
-mod resource_picker_anchor;
-mod resource_picker_choice;
 mod resource_picker_item;
-mod resource_picker_tab;
-mod resource_picker_tile;
 mod round_gizmo;
 mod running_bake;
 pub mod saved_search;
 mod screen_color_pick;
+pub mod screen_pick;
 mod section_page;
+#[cfg(not(target_arch = "wasm32"))]
+mod session_log_file;
 pub mod settings_window;
 pub mod shader_settings;
 pub mod shelf;
@@ -117,15 +144,19 @@ pub mod shelf_preview;
 mod shelf_tabs;
 mod shelf_toolbar;
 pub mod shelf_view;
+mod slot_thumbnail;
 #[cfg(not(target_arch = "wasm32"))]
 mod smart_mask_menu;
 mod soft_box;
+mod source_choice;
+mod source_slot;
 pub mod state;
 mod surface_paint_point;
 pub mod symmetry;
 pub mod theme;
 pub mod thumbs;
 mod tile_edits;
+mod tile_picture;
 pub mod titlebar;
 pub mod toolbar;
 pub mod ui_state_store;
@@ -210,6 +241,8 @@ pub struct Toast {
 
 pub struct TextureCraftApp {
     pub session: Session,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) session_log_file: Option<session_log_file::SessionLogFile>,
     viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
@@ -263,6 +296,13 @@ pub struct TextureCraftApp {
     pub picking_id_color: Option<id_color_pick::IdColorPick>,
     /// Whether the next click on the model places the symmetry planes (Pick point in the symmetry settings)
     pub picking_symmetry_plane: bool,
+    /// The colour bar whose eyedropper waits for a click on the model or, outside the app, on the screen
+    pub picking_color: Option<egui::Id>,
+    /// That eyedropper pick's wait for a click outside the app
+    pub screen_pick: Option<screen_pick::ScreenPick>,
+    eyedropper_project_id: u64,
+    /// Whether an eyedropper pick also takes a click outside the app (only with a real window: never in tests)
+    pub screen_picking: bool,
     /// The wgpu state (screenshots read the renderer's targets).
     pub render_state: Option<eframe::egui_wgpu::RenderState>,
     /// CJK fallback fonts for the UI language.
@@ -312,9 +352,20 @@ pub(crate) fn start_ui(saved: Option<UiState>, session: &mut Session) -> UiState
     }
 }
 
+fn uses_wayland(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("wayland_window")).unwrap_or(false))
+}
+
 impl TextureCraftApp {
     /// The app around `session`, with the saved UI state (or defaults in the OS language) and the GPU viewport.
     pub fn new(cc: &eframe::CreationContext<'_>, mut session: Session) -> TextureCraftApp {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let uses_wayland = raw_window_handle::HasWindowHandle::window_handle(cc)
+                .is_ok_and(|window| matches!(window.as_raw(), raw_window_handle::RawWindowHandle::Wayland(_)));
+            cc.egui_ctx.data_mut(|data| data.insert_temp(egui::Id::unique("wayland_window"), uses_wayland));
+        }
+
         theme::install(&cc.egui_ctx);
         popup_drag::install(&cc.egui_ctx);
 
@@ -326,6 +377,7 @@ impl TextureCraftApp {
         // The first run speaks the OS (or browser) language
         let mut ui_store = ui_state_store::UiStateStore::new(ui_state_store::FILE.get().cloned());
         let mut ui = start_ui(ui_store.load(cc.storage), &mut session);
+        ui.trim_recent();
 
         // No window opens by itself with no project (a saved layout may have left Export open)
         if !session.project_open {
@@ -335,12 +387,15 @@ impl TextureCraftApp {
         let next_autosave = autosave_period_seconds(ui.prefs.autosave_minutes);
         ui.prefs.apply_resource_limits();
 
+        let project_id = session.project_id;
         let mut app = TextureCraftApp {
             camera_glide: None,
             orbit_snap: None,
             uv_rotation_snap: None,
             uv_view_reset: false,
             session,
+            #[cfg(not(target_arch = "wasm32"))]
+            session_log_file: None,
             viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds::default(),
             ui,
             ui_store,
@@ -370,6 +425,13 @@ impl TextureCraftApp {
             properties_scroll: property_sheet::PropertiesScroll::default(),
             picking_id_color: None,
             picking_symmetry_plane: false,
+            picking_color: None,
+            screen_pick: None,
+            eyedropper_project_id: project_id,
+            #[cfg(not(target_arch = "wasm32"))]
+            screen_picking: raw_window_handle::HasWindowHandle::window_handle(cc).is_ok(),
+            #[cfg(target_arch = "wasm32")]
+            screen_picking: false,
             render_state: cc.wgpu_render_state.clone(),
             fonts: fonts::UiFonts::default(),
             banner: None,
@@ -405,6 +467,13 @@ impl TextureCraftApp {
         {
             // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
+
+            if cc.winit_window().is_some() {
+                match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
+                    Ok(file) => app.session_log_file = Some(file),
+                    Err(error) => app.toast(format!("{}: {error}", i18n::tr("Could not create the session log")), true),
+                }
+            }
 
             // An export folder still at the default follows the data folder
             if app.ui.export.dir == data_folder("").join("export").display().to_string() {
@@ -615,7 +684,8 @@ impl TextureCraftApp {
                     return false;
                 };
 
-                let resized = self.session.doc.project.texture_set(set).is_ok_and(|set| set.resolution != c.size);
+                // A cook for another size than the layer's picked or texture set resolution is redone
+                let resized = self.session.link_size(c.layer).is_ok_and(|now| now != c.size);
                 let baked = self.session.baked(set);
                 let stale = resized || c.baked_inputs.iter().any(|input| !input.is_current(baked));
                 done.push((c.layer, c.values.clone(), stale, result));
@@ -1042,7 +1112,7 @@ impl eframe::App for TextureCraftApp {
         self.poll_link_cooks(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_link_imports(ctx);
-        self.thumbs.sync_images(&self.session.images, self.session.revision);
+        self.thumbs.sync_project_previews(&self.session);
         self.properties_scroll.sync(&self.session);
 
         // The library shelf rescans when the window comes back (MaterialCraft may have sent a material)
@@ -1070,6 +1140,7 @@ impl eframe::App for TextureCraftApp {
 
         self.bindings.sync(&self.ui.keymap, craft_keymap::egui::platform(ctx));
         menus::shortcuts(self, ctx);
+        screen_pick::sync(self, ctx);
         move_on_model::end_when_gone(self, ctx);
 
         // The Path tool's curve repaints (a preview while placed) as its points, brush or material change
@@ -1079,6 +1150,13 @@ impl eframe::App for TextureCraftApp {
         }
         profile::drive(self, ctx);
         self.toasts.retain(|toast| toast.until > now);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(file) = &mut self.session_log_file
+            && let Err(error) = file.sync(self.session.log_id, &self.session.log)
+        {
+            self.session_log_file = None;
+            self.toast(format!("{}: {error}", i18n::tr("Could not update the session log")), true);
+        }
         self.profiler.logic_ms = (now_ms() - logic_start_ms) as f32;
 
         // Last, so it sees every close request this frame's work made
@@ -1099,9 +1177,7 @@ impl eframe::App for TextureCraftApp {
             titlebar::show(self, ui);
             banner(self, ui);
             toolbar::status_bar(self, ui);
-            if self.ui.toolbar_tools {
-                toolbar::tool_shelf(self, ui);
-            }
+            toolbar::tool_shelf(self, ui);
             self.ui.sync_mode_dock();
             if self.ui.mode != state::Mode::Baking && self.ui.toolbar_docks {
                 toolbar::rail(self, ui);
@@ -1125,6 +1201,10 @@ impl eframe::App for TextureCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.file_dialogs.show_pending(frame);
 
+        // Last, so no widget's pointer replaces it: an armed eyedropper is the pointer over the whole window
+        if self.picking_color.is_some() {
+            screen_pick::paint_cursor(&ctx, None, screen_pick::SwatchColor::shown(&ctx));
+        }
         pointer_lock::settle(&ctx);
 
         let end_ms = now_ms();
@@ -1138,6 +1218,26 @@ impl eframe::App for TextureCraftApp {
 #[cfg(not(target_arch = "wasm32"))]
 static DATA_FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
+/// A private Nightly profile's data folder, fixed before the first window (unset: stable's
+/// Settings folder or the default). Every user folder this app writes — logs, autosave, smart
+/// materials, layouts, templates, brushes and export presets — hangs off [`data_dir`], so a
+/// Nightly install keeps all of it beside its own settings and never reads Stable's.
+#[cfg(not(target_arch = "wasm32"))]
+static DATA_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Use `root` as the data folder for this process; called once, before the first window, by a
+/// Nightly launch with its validated profile. The Settings › Data folder value is not consulted.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_data_root(root: std::path::PathBuf) {
+    let _ = DATA_ROOT.set(root);
+}
+
+/// Whether this process runs from a private Nightly profile.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn has_data_root() -> bool {
+    DATA_ROOT.get().is_some()
+}
+
 /// The data folder for a `Prefs::data_folder` value: that path when it is absolute, otherwise
 /// `Documents/TextureCraft` in the user's home folder.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1150,9 +1250,12 @@ pub fn data_folder(pref: &str) -> std::path::PathBuf {
     std::path::Path::new(&home).join("Documents").join("TextureCraft")
 }
 
-/// The data folder in use (Settings › Folders › Data folder).
+/// The data folder in use: the Nightly profile when this is one, else Settings › Folders › Data folder.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> std::path::PathBuf {
+    if let Some(root) = DATA_ROOT.get() {
+        return root.clone();
+    }
     DATA_FOLDER.get().cloned().unwrap_or_else(|| data_folder(""))
 }
 
