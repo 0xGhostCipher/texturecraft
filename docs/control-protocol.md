@@ -76,7 +76,7 @@ shared by different sets.
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
 `hdr`, `exr`, `j2k`, `jp2`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and
-`export.plan` reports the effective setting and per-file dimensions (`size` and `sourceSize`, both in pixels). `padding: "diffusion"` dilates by
+`export.plan` reports the effective setting and per-file dimensions (`size` and `sourceSize`, both in pixels). `export.preview` takes the same params plus `map` (an index into the template's maps) and `side` (pixels, at most 512) and returns that map for the first texture set `ts` names, small: `{width, height, channels, pixels}` with the 8-bit values an sRGB file stores, or null when the set writes no file for it. `padding: "diffusion"` dilates by
 `dilation` texels and fills the remaining space with a smooth blend of the island colours.
 
 `effect.set {effect, filter: "blur", radius: 5}` replaces a filter in place, preserving its

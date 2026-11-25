@@ -42,17 +42,7 @@ impl<'a> MapRenderer<'a> {
             }
             Padding::Infinite => Some(DilationMap::in_blocks(input.coverage, width, height, None, tile_res)),
         };
-        let sampler = Sampler {
-            set,
-            comp: input.composite,
-            baked: input.baked,
-            coverage: input.coverage,
-            res: width,
-            tile_res,
-            scales: set.block_scales(),
-            normal_override: options.normal_format,
-            project_normal: input.project.normal_format,
-        };
+        let sampler = Sampler::new(input, options, set, tile_res);
         Ok(MapRenderer { options, set, sampler, dilation_map, grid, width, height, tile_res })
     }
 

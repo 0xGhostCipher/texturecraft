@@ -1715,3 +1715,28 @@ fn write_files_accepts_a_long_nested_folder_and_stem() {
     assert!(paths[0].is_file());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_map_preview_holds_the_values_its_file_stores() {
+    let mut fx = Fx::new(&default_channels());
+    fx.set_all(Channel::Metallic, |x, _| [x as f32 / 63.0; 3]);
+    fx.set_all(Channel::Roughness, |_, y| [y as f32 / 63.0; 3]);
+    let mut options = ExportOptions::new(builtin_preset("Unity HDRP (Mask Map)").unwrap());
+    let mask = options.preset.maps.iter().position(|map| map.file.contains("MaskMap")).unwrap();
+    let base = options.preset.maps.iter().position(|map| map.file.contains("BaseMap")).unwrap();
+    options.preset.maps[mask].inverted.push(Dest::R);
+    let files = fx.render(&options);
+
+    // The packed data map, one channel inverted, and the sRGB colour map
+    for (index, suffix) in [(mask, "MaskMap"), (base, "BaseMap")] {
+        let file = decode(find(&files, suffix));
+        let preview = MapPreview::sample(&fx.input(), &options, index, RES).unwrap().unwrap();
+        assert_eq!((preview.width, preview.height), file.dimensions());
+        assert_eq!(preview.channels.len(), usize::from(file.color().channel_count()), "{suffix}");
+        assert!(preview.pixels == file.into_bytes(), "{suffix}: the preview shows what the file stores");
+    }
+
+    let small = MapPreview::sample(&fx.input(), &options, mask, 8).unwrap().unwrap();
+    assert!(small.width < RES && small.pixels.len() == (small.width * small.height) as usize * 4, "a smaller preview samples the same map");
+    assert!(MapPreview::sample(&fx.input(), &options, options.preset.maps.len(), 8).is_err(), "a map the template doesn't have is an error");
+}

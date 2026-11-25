@@ -639,3 +639,23 @@ fn on_a_small_screen_an_rgba_row_keeps_its_controls_in_the_window() {
     assert!(cancel.max.x <= 1000.0 && cancel.max.y <= 700.0, "{cancel:?}");
     assert!(converted.left() < export.right() && converted.right() <= export.right() + 1.0, "{converted:?} {export:?}");
 }
+
+#[test]
+fn hovering_a_channel_swatch_shows_the_file_its_output_writes() {
+    let library = TemplateLibrary::new("map-preview");
+    let mut h = harness(&library);
+    let swatch =
+        h.get_all_by_role(egui::Role::Button).find(|b| b.accesskit_node().label().is_some_and(|l| l.starts_with("B: Metallic"))).unwrap().rect().center();
+    let pictures = h.query_all_by_role(egui::Role::Image).count();
+    let roughness_lines = h.query_all_by_label("Roughness, gray value").count();
+    let file_names = h.query_all_by_label_contains("OcclusionRoughnessMetallic.png").count();
+    assert!(h.query_by_label_contains(" · png").is_none(), "nothing shows before the hover");
+
+    h.hover_at(swatch);
+    h.run_steps(30);
+
+    assert!(h.query_all_by_label_contains("OcclusionRoughnessMetallic.png").count() > file_names, "the file's name");
+    assert!(h.query_by_label_contains(" · png").is_some(), "the file's size and type");
+    assert!(h.query_all_by_role(egui::Role::Image).count() > pictures, "the file and its channels, small");
+    assert!(h.query_all_by_label("Roughness, gray value").count() > roughness_lines, "another channel's source is named");
+}

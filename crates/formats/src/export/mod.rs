@@ -29,11 +29,13 @@ mod encoding;
 mod jpeg2000;
 mod layered_psd;
 mod map_override;
+mod map_preview;
 mod map_renderer;
 mod planned_layer;
 mod rendered_map;
 use encoding::Encoding;
 pub use map_override::MapOverride;
+pub use map_preview::{MAX_PREVIEW_SIDE, MapPreview};
 use map_renderer::MapRenderer;
 pub use planned_layer::PlannedLayer;
 
@@ -868,6 +870,23 @@ pub fn rnm(base: Vec3, detail: Vec3) -> Vec3 {
     let t = base + Vec3::Z;
     let u = detail * Vec3::new(-1.0, -1.0, 1.0);
     (t * t.dot(u) / t.z.max(1e-4) - u).try_normalize().unwrap_or(base)
+}
+
+impl<'a> Sampler<'a> {
+    /// The sampler of `input`'s texture set `set`, whose atlas blocks are `tile_res` texels wide
+    fn new(input: &ExportInput<'a>, options: &ExportOptions, set: &'a TextureSet, tile_res: u32) -> Sampler<'a> {
+        Sampler {
+            set,
+            comp: input.composite,
+            baked: input.baked,
+            coverage: input.coverage,
+            res: input.composite.resolution,
+            tile_res,
+            scales: set.block_scales(),
+            normal_override: options.normal_format,
+            project_normal: input.project.normal_format,
+        }
+    }
 }
 
 impl Sampler<'_> {

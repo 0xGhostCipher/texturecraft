@@ -20,7 +20,10 @@ use crate::widgets::{chip, icon_button_without_tooltip};
 mod channel_target;
 mod map_drag;
 mod map_lists;
+mod map_preview_cache;
+mod map_preview_pictures;
 mod pending_drop;
+mod planned_output;
 mod row_edit;
 mod source_pick;
 mod swatch_look;
@@ -28,7 +31,10 @@ mod swatch_look;
 pub use channel_target::ChannelTarget;
 use map_drag::MapDrag;
 use map_lists::{CONVERTED_MAPS, INPUT_MAPS, MESH_MAPS, MapEntry};
+use map_preview_cache::MapPreviewCache;
+use map_preview_pictures::MapPreviewPictures;
 pub use pending_drop::PendingDrop;
+use planned_output::PlannedOutput;
 use row_edit::RowEdit;
 use source_pick::SourcePick;
 use swatch_look::SwatchLook;
@@ -86,6 +92,9 @@ const DROP_HIGHLIGHT_STROKE_POINTS: f32 = 1.5;
 const DROP_HIGHLIGHT_GAP_POINTS: f32 = 2.0;
 /// Side of the corner mark of an inverted swatch
 const INVERTED_MARK_POINTS: f32 = 8.0;
+/// A swatch's file preview: the file's width, and the side of each channel's picture beside it
+const PREVIEW_FILE_WIDTH_POINTS: f32 = 150.0;
+const PREVIEW_CHANNEL_WIDTH_POINTS: f32 = 34.0;
 
 /// A channel swatch: its side, the label's size and offset from the top, and the bars that show
 /// which channels of the source it reads
@@ -762,7 +771,11 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
             return;
         }
     };
-    let preview = preview_names(app, &preset);
+    let params = plan_params(app, &preset);
+    let preview = params.as_ref().map_err(String::clone).and_then(|params| planned_outputs(app, params));
+    if let Ok(params) = &params {
+        MapPreviewCache::keep_current(app, ui.ctx(), params);
+    }
     let mut edit = RowEdit::default();
 
     // The selected template in a strip, "Current preset:" in bold
@@ -815,21 +828,22 @@ fn outputs(app: &mut TextureCraftApp, ui: &mut Ui) {
             // Every row takes the column's width, not the width a wider row before it left
             let row_width = ui.available_width();
             for ((index, map), row_split) in preset.maps.iter_mut().enumerate().zip(split.iter_mut()) {
-                let file = preview.as_ref().ok().and_then(|names| names.get(index).cloned().flatten());
-                let planned = match file {
-                    Some(file) => format!("{} {file}", ic::ARROW_RIGHT),
-                    None => tr("Not exported: no source in this texture set").to_string(),
-                };
-                changed |= ui.allocate_ui(vec2(row_width, 0.0), |ui| output_row(ui, index, map_count, map, row_split, &planned, &mut edit)).inner;
+                let planned = preview.as_ref().ok().and_then(|outputs| outputs.get(index)).and_then(Option::as_ref);
+                changed |= ui.allocate_ui(vec2(row_width, 0.0), |ui| output_row(ui, index, map_count, map, row_split, planned, &mut edit)).inner;
                 ui.add_space(ROW_GAP_POINTS);
             }
         });
     });
     ui.label(RichText::new(tr("Drop an input map onto a channel to assign it to that output.")).color(tokens.text_dim));
 
+    // The hovered output's pictures show from the next frame on
+    if let (Some(index), Ok(params)) = (edit.hovered_output, &params) {
+        MapPreviewCache::fill(app, ui.ctx(), params, index);
+    }
+
     // Count only maps that have sources in the current set
-    if let Ok(names) = &preview {
-        let exported = names.iter().flatten().count();
+    if let Ok(planned) = &preview {
+        let exported = planned.iter().flatten().count();
         egui::Frame::new().fill(tokens.field).inner_margin(ROW_MARGIN_POINTS).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(trf("{n} output maps will be exported.", &[("n", &exported)]));
@@ -916,45 +930,57 @@ fn commit(app: &mut TextureCraftApp, preset: ExportPreset, mut origin: Vec<Optio
     app.ui.export.draft_maps = origin;
 }
 
-/// The file each map produces for the current texture set with the dialog's settings (None:
-/// the set has none of the map's sources), via `export.plan`.
-fn preview_names(app: &mut TextureCraftApp, preset: &ExportPreset) -> Result<Vec<Option<String>>, String> {
-    let mut p = crate::export_window::set_params(app, app.session.ts());
-    p["preset"] = serde_json::to_value(preset).map_err(|e| e.to_string())?;
+/// The `export.plan` and `export.preview` params of `preset` for the current texture set with the window's settings
+fn plan_params(app: &TextureCraftApp, preset: &ExportPreset) -> Result<Value, String> {
+    let mut params = crate::export_window::set_params(app, app.session.ts());
+    params["preset"] = serde_json::to_value(preset).map_err(|e| e.to_string())?;
 
     // The set's map overrides apply only to its own template
-    if let Some(p) = p.as_object_mut() {
-        p.remove("maps");
+    if let Some(params) = params.as_object_mut() {
+        params.remove("maps");
     }
-    let plan = texturecraft_engine::execute(&mut app.session, "export.plan", &p).map_err(|e| e.to_string())?;
-    let mut names = vec![None; preset.maps.len()];
+    Ok(params)
+}
+
+/// The file each map of `params`' template writes for the texture set (None: no sources), via `export.plan`; a PSD's maps each get the file and their layer
+fn planned_outputs(app: &mut TextureCraftApp, params: &Value) -> Result<Vec<Option<PlannedOutput>>, String> {
+    let plan = texturecraft_engine::execute(&mut app.session, "export.plan", params).map_err(|e| e.to_string())?;
+    let map_count = params.pointer("/preset/maps").and_then(Value::as_array).map_or(0, Vec::len);
     let index = |value: &Value| value.get("map").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok());
-    for f in plan.as_array().into_iter().flatten() {
-        let Some(file) = f.get("file").and_then(Value::as_str) else { continue };
-        let layers = f.get("layers").and_then(Value::as_array).filter(|layers| !layers.is_empty());
-        match layers {
-            // A PSD's maps each show the file and their layer
+
+    let mut outputs = vec![None; map_count];
+    for file in plan.as_array().into_iter().flatten() {
+        let Some(name) = file.get("file").and_then(Value::as_str) else { continue };
+
+        let output = PlannedOutput {
+            file: name.to_string(),
+            size: file.get("size").and_then(Value::as_u64).unwrap_or(0),
+            format: file.get("format").and_then(Value::as_str).and_then(FileFormat::from_extension),
+            bit_depth: file.get("bitDepth").and_then(Value::as_u64).and_then(|depth| u8::try_from(depth).ok()).unwrap_or(0),
+            dithering: file.get("dithering").and_then(Value::as_bool).unwrap_or(false),
+        };
+        match file.get("layers").and_then(Value::as_array).filter(|layers| !layers.is_empty()) {
             Some(layers) => {
                 for layer in layers {
-                    let name = layer.get("name").and_then(Value::as_str).unwrap_or_default();
-                    if let Some(slot) = index(layer).and_then(|i| names.get_mut(i)) {
-                        *slot = Some(format!("{file} › {name}"));
+                    let layer_name = layer.get("name").and_then(Value::as_str).unwrap_or_default();
+                    if let Some(slot) = index(layer).and_then(|i| outputs.get_mut(i)) {
+                        *slot = Some(PlannedOutput { file: format!("{name} › {layer_name}"), ..output.clone() });
                     }
                 }
             }
             None => {
-                if let Some(slot) = index(f).and_then(|i| names.get_mut(i)) {
-                    *slot = Some(file.to_string());
+                if let Some(slot) = index(file).and_then(|i| outputs.get_mut(i)) {
+                    *slot = Some(output);
                 }
             }
         }
     }
-    Ok(names)
+    Ok(outputs)
 }
 
 /// One output map row: drag grip, file name, "$", the channel swatches, then file type, bit depth,
 /// duplicate and remove. `planned` is the file it writes for the current texture set.
-fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split: &mut bool, planned: &str, edit: &mut RowEdit) -> bool {
+fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split: &mut bool, planned: Option<&PlannedOutput>, edit: &mut RowEdit) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let mut changed = false;
     let frame = egui::Frame::new().fill(tokens.row).corner_radius(tokens.radius).inner_margin(ROW_MARGIN_POINTS).show(ui, |ui| {
@@ -971,11 +997,11 @@ fn output_row(ui: &mut Ui, index: usize, count: usize, map: &mut MapSpec, split:
             grip(ui, index, count, edit);
             let name = ui.add(egui::TextEdit::singleline(&mut map.file).desired_width(name_width)).on_hover_ui(|ui| {
                 ui.label(tr("File name without extension; variables insert names"));
-                ui.label(planned);
+                ui.label(planned_text(planned));
             });
             changed |= name.changed();
             changed |= token_menu(ui, &mut map.file);
-            changed |= channel_swatches(ui, index, map, split, edit);
+            changed |= channel_swatches(ui, index, map, split, planned, edit);
 
             // The lists and icons at the row's right end: file format and duplicate, bit depth and remove
             ui.add_space((ui.available_width() - ROW_LISTS_WIDTH_POINTS).max(0.0));
@@ -1280,9 +1306,61 @@ fn swatch_bars(map: &MapSpec, source: &SourceRef, target: ChannelTarget, tokens:
     }
 }
 
+/// "→ <file>", or why the output writes nothing
+fn planned_text(planned: Option<&PlannedOutput>) -> String {
+    match planned {
+        Some(planned) => format!("{} {}", ic::ARROW_RIGHT, planned.file),
+        None => tr("Not exported: no source in this texture set").to_string(),
+    }
+}
+
+/// Below a swatch's tooltip: the file its output writes, each channel with its source, then the file's size and type (built-in templates' swatches show it too)
+fn output_preview(ui: &mut Ui, index: usize, map: &MapSpec, planned: Option<&PlannedOutput>) {
+    let tokens = Tokens::get(ui.ctx());
+    ui.separator();
+    let Some(planned) = planned else {
+        ui.label(RichText::new(planned_text(None)).color(tokens.text_dim));
+        return;
+    };
+
+    ui.label(RichText::new(&planned.file).color(tokens.text_strong));
+    if let Some(Some(pictures)) = MapPreviewCache::get(ui.ctx(), index) {
+        preview_pictures(ui, map, &pictures);
+    }
+    let file_type = planned.format.map_or("", FileFormat::extension);
+    let depth = crate::export_window::depth_label(planned.format, planned.bit_depth, planned.dithering);
+    ui.label(RichText::new(format!("{size} x {size} · {file_type} {depth}", size = planned.size)).color(tokens.text_dim));
+}
+
+/// The file's picture with each channel's grey picture, letter and source beside it
+fn preview_pictures(ui: &mut Ui, map: &MapSpec, pictures: &MapPreviewPictures) {
+    let tokens = Tokens::get(ui.ctx());
+    let picture = |texture, width: f32| egui::Image::new(texture).fit_to_exact_size(vec2(width, width * pictures.aspect)).corner_radius(tokens.radius);
+    ui.horizontal_top(|ui| {
+        ui.add(picture(&pictures.file, PREVIEW_FILE_WIDTH_POINTS));
+        if pictures.channels.is_empty() {
+            return;
+        }
+
+        ui.vertical(|ui| {
+            for (dest, texture) in &pictures.channels {
+                let target = ChannelTarget::One(*dest);
+                let source = source_of(map, target).cloned().unwrap_or(SourceRef::Constant(CLEARED_VALUE));
+                let inverted = map.inverted.contains(dest);
+                ui.horizontal(|ui| {
+                    ui.add(picture(texture, PREVIEW_CHANNEL_WIDTH_POINTS));
+                    ui.label(RichText::new(target_label(target)).color(tokens.text_strong));
+                    ui.label(RichText::new(swatch_tooltip(map, &source, target, inverted)).color(tokens.text_dim));
+                });
+            }
+        });
+    });
+}
+
 /// An output map's channel swatches: drop targets for the map lists. A click opens Clear channel
-/// (and Separate R, G and B on R, G, B), a right click TextureCraft's own tools.
-fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bool, edit: &mut RowEdit) -> bool {
+/// (and Separate R, G and B on R, G, B), a right click TextureCraft's own tools. Hovering one
+/// shows the file the output writes.
+fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bool, planned: Option<&PlannedOutput>, edit: &mut RowEdit) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let mut changed = false;
     let shows_split = *split || !rgb_collapsed(map);
@@ -1297,12 +1375,18 @@ fn channel_swatches(ui: &mut Ui, index: usize, map: &mut MapSpec, split: &mut bo
             name = trf("{swatch}, inverted", &[("swatch", &name)]);
         }
         let look = SwatchLook { fill: source_color(&source, &tokens), bars: swatch_bars(map, &source, target, &tokens), inverted };
-        let response = swatch(ui, label, &name, &look).on_hover_ui(|ui| {
+        let response = swatch(ui, label, &name, &look);
+        if response.contains_pointer() {
+            edit.hovered_output = Some(index);
+        }
+        let hover = |ui: &mut Ui| {
             ui.label(&tooltip);
             if inverted {
                 ui.label(tr("Inverted"));
             }
-        });
+            output_preview(ui, index, map, planned);
+        };
+        let response = response.on_hover_ui(hover).on_disabled_hover_ui(hover);
 
         // A map dragged over the swatch, or dropped on it; a row's grip passes through to its row
         let map_dragged_over = response.dnd_hover_payload::<SourceRef>().is_some();

@@ -12,12 +12,15 @@ use serde_json::{Value, json};
 use texturecraft_core::{NormalFormat, PROJECT_EXT};
 use texturecraft_core::{Project, TextureSet};
 use texturecraft_formats::PlannedFile;
-use texturecraft_formats::{ExportInput, ExportOptions, ExportedFile, FileFormat, MapOverride, Padding, ProjectFile};
+use texturecraft_formats::{ExportInput, ExportOptions, ExportedFile, FileFormat, MapOverride, MapPreview, Padding, ProjectFile};
 use texturecraft_geom::{Mesh, primitives};
 
 use crate::commands::{CommandSpec, always, bad, normal_format_param, strp, u64p};
 use crate::session::{Document, Session};
 use crate::{EngineError, Result, cmd};
+
+/// export.preview's picture width when the params name none
+const DEFAULT_PREVIEW_SIDE_PIXELS: u32 = 128;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -79,6 +82,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{preset?: name or preset object, ts?, format?, bitDepth?, dithering?, size?, colorSpace?, maps?} → [{ts, map, file, format, bitDepth, dithering, size, sourceSize, warnings, layers: [{map, name}] (a PSD's maps, top first)}] (keeps the first file per case-insensitive name and warns about later duplicates)",
             always,
             plan
+        ),
+        cmd!(
+            "export.preview",
+            "Preview an output map",
+            [],
+            None,
+            "{map: index into the preset's maps, side?: px (default 128, at most 512), plus the params of export.plan (the first texture set `ts` names)} → {width, height, channels: [\"R\", ...], pixels: [8-bit values as an sRGB file stores them, channels interleaved, row by row]}, or null when the texture set writes no file for the map",
+            always,
+            preview
         ),
     ]
 }
@@ -289,30 +301,49 @@ impl Session {
 
         let mesh_name = stem_of(self.doc.project.mesh.trim_start_matches("builtin:"));
         let mut out = Vec::new();
-        let empty = Default::default();
         for &set_index in sets {
-            let cache = self.caches.get(set_index).ok_or_else(|| EngineError::Other(format!("no texture set {set_index}")))?;
             let plans = texturecraft_formats::list_outputs(&self.doc.project, set_index, &mesh_name, options).map_err(fe)?;
             let plans = select(set_index, plans);
             if plans.is_empty() {
                 continue;
             }
 
-            let composite =
-                self.document_composite(set_index, &cache.covered_tiles).ok_or_else(|| EngineError::Other(format!("no texture set {set_index}")))?;
-            let coverage = cache.gbuf.coverage_mask();
-            let input = ExportInput {
-                project: &self.doc.project,
-                ts: set_index,
-                composite: &composite,
-                baked: self.doc.baked.get(&set_index).unwrap_or(&empty),
-                coverage: &coverage,
-                mesh_name: &mesh_name,
-            };
-            out.extend(texturecraft_formats::export::render_planned_maps(&input, options, plans).map_err(fe)?);
+            let files =
+                self.with_export_input(set_index, &mesh_name, |input| texturecraft_formats::export::render_planned_maps(input, options, plans).map_err(fe))?;
+            out.extend(files);
         }
 
         Ok(out)
+    }
+
+    /// Run `with` on texture set `set_index`'s export input: its document composite, coverage and baked maps
+    fn with_export_input<T>(&self, set_index: usize, mesh_name: &str, with: impl FnOnce(&ExportInput) -> Result<T>) -> Result<T> {
+        let missing = || EngineError::Other(format!("no texture set {set_index}"));
+        let cache = self.caches.get(set_index).ok_or_else(missing)?;
+        let composite = self.document_composite(set_index, &cache.covered_tiles).ok_or_else(missing)?;
+        let coverage = cache.gbuf.coverage_mask();
+        let empty = Default::default();
+        let input = ExportInput {
+            project: &self.doc.project,
+            ts: set_index,
+            composite: &composite,
+            baked: self.doc.baked.get(&set_index).unwrap_or(&empty),
+            coverage: &coverage,
+            mesh_name,
+        };
+        with(&input)
+    }
+
+    /// A picture at most `side` pixels wide of output map `map` for the first texture set `params` names; None when it writes no file for the map
+    pub fn export_preview(&mut self, params: &Value, map: usize, side: u32) -> Result<Option<MapPreview>> {
+        let options = export_options(self, params, "export.preview")?;
+        let Some(&set_index) = sets_param(self, params, "export.preview")?.first() else { return Ok(None) };
+
+        if self.solo.is_none() {
+            self.update();
+        }
+        let mesh_name = stem_of(self.doc.project.mesh.trim_start_matches("builtin:"));
+        self.with_export_input(set_index, &mesh_name, |input| MapPreview::sample(input, &options, map, side).map_err(fe))
     }
 }
 
@@ -430,6 +461,22 @@ fn sets_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<usize>> {
 
 fn set_index(s: &Session, v: &Value, cmd: &str) -> Result<usize> {
     v.as_u64().and_then(|index| usize::try_from(index).ok()).filter(|index| *index < s.set_count()).ok_or_else(|| bad(cmd, "invalid `ts`"))
+}
+
+fn preview(session: &mut Session, params: &Value) -> Result<Value> {
+    let map = u64p(params, "map").and_then(|map| usize::try_from(map).ok());
+    let map = map.ok_or_else(|| bad("export.preview", "`map` (an output map index) is required"))?;
+    let side = u64p(params, "side").map_or(DEFAULT_PREVIEW_SIDE_PIXELS, |side| side.clamp(1, u64::from(texturecraft_formats::MAX_PREVIEW_SIDE)) as u32);
+
+    Ok(match session.export_preview(params, map, side)? {
+        Some(preview) => json!({
+            "width": preview.width,
+            "height": preview.height,
+            "channels": preview.channels.iter().map(|dest| format!("{dest:?}")).collect::<Vec<_>>(),
+            "pixels": preview.pixels,
+        }),
+        None => Value::Null,
+    })
 }
 
 fn plan(session: &mut Session, params: &Value) -> Result<Value> {
