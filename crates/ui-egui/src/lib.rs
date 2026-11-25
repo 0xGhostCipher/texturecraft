@@ -138,6 +138,8 @@ pub mod settings_window;
 pub mod shader_settings;
 pub mod shelf;
 pub mod shelf_custom_preview;
+pub mod shelf_drag_ghost;
+pub mod shelf_drag_verdict;
 mod shelf_entry;
 pub mod shelf_favorite;
 mod shelf_folders;
@@ -1196,6 +1198,9 @@ impl eframe::App for TextureCraftApp {
         let panel_frame = if hide_ui { egui::Frame::NONE.fill(tokens.viewport) } else { egui::Frame::NONE.fill(tokens.chrome).inner_margin(theme::GUTTER) };
         egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| if hide_ui { viewport::central(self, ui) } else { docking::show(self, ui) });
         windows::show(self, &ctx);
+
+        // After every drop target has said whether it takes the dragged asset
+        shelf_drag_ghost::show(&ctx);
 
         // Finish after the dock and windows have requested their thumbnails
         self.layer_panel.end(&ctx, &self.session);

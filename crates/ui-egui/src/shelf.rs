@@ -108,10 +108,12 @@ impl Asset {
 }
 
 /// The drag-and-drop payload of a shelf tile.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ShelfDrag {
     pub asset: Asset,
     pub label: String,
+    /// The tile's thumbnail, shown at the pointer while dragging (the name when there is none)
+    pub thumb: Option<egui::TextureHandle>,
 }
 
 /// Apply `asset` the way a shelf click does: a simple material becomes the brush's material (no
@@ -217,8 +219,14 @@ pub fn drop_target(app: &mut TextureCraftApp, ui: &Ui, response: &egui::Response
         Asset::SmartMask(_) | Asset::SavedMask(_) | Asset::Filter(_) => false,
     };
     let onto_set = |asset: &Asset| zone == DropZone::View3d && asset.goes_onto_set();
-    if response.dnd_hover_payload::<ShelfDrag>().is_some_and(|drag| accepts(&drag) && !onto_set(&drag.asset)) {
-        ui.painter().rect_stroke(response.rect.shrink(1.0), 3.0, Stroke::new(2.0, tokens.accent), egui::StrokeKind::Inside);
+    if let Some(drag) = response.dnd_hover_payload::<ShelfDrag>().filter(|drag| accepts(drag)) {
+        // The 3D view outlines the set under the pointer itself; its background takes nothing
+        if !onto_set(&drag.asset) {
+            ui.painter().rect_stroke(response.rect.shrink(1.0), 3.0, Stroke::new(2.0, tokens.accent), egui::StrokeKind::Inside);
+            crate::shelf_drag_ghost::accept(ui.ctx());
+        } else if set_under_pointer(app, ui, response).is_some() {
+            crate::shelf_drag_ghost::accept(ui.ctx());
+        }
     }
 
     let pointer = ui.input(|input| input.pointer.interact_pos());
@@ -252,7 +260,6 @@ pub fn drop_target(app: &mut TextureCraftApp, ui: &Ui, response: &egui::Response
 
 /// The Assets panel body (a dock tab)
 pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
-    let ctx = ui.ctx().clone();
     let filter = app.ui.shelf_filter.to_lowercase();
     scan_library(app);
     let all_entries = ShelfEntry::all(app);
@@ -334,7 +341,6 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         grid(app, ui, &entries, grid_rect.height(), [saved_materials, saved_masks], show_user_brushes, &filter);
     });
     ui.scope_builder(egui::UiBuilder::new().max_rect(toolbar_rect), |ui| crate::shelf_toolbar::show(app, ui));
-    drag_preview(&ctx);
 }
 
 /// The tiles of `entries` in a scroll area `height` high, then user brushes, saved smart materials and saved smart masks when selected
@@ -389,18 +395,6 @@ fn search_field(app: &mut TextureCraftApp, ui: &mut Ui) {
             app.ui.shelf_filter.clear();
         }
     });
-}
-
-/// The dragged asset's name next to the pointer.
-fn drag_preview(ctx: &egui::Context) {
-    let tk = Tokens::get(ctx);
-    let (Some(d), Some(pos)) = (egui::DragAndDrop::payload::<ShelfDrag>(ctx), ctx.input(|i| i.pointer.hover_pos())) else { return };
-    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("shelf_drag")));
-    let galley = p.layout_no_wrap(d.label.clone(), egui::FontId::proportional(11.0), tk.text_strong);
-    let rect = egui::Rect::from_min_size(pos + vec2(14.0, 12.0), galley.size() + vec2(12.0, 6.0));
-    p.rect_filled(rect, 3.0, tk.row_selected);
-    p.rect_stroke(rect, 3.0, Stroke::new(1.0, tk.accent), egui::StrokeKind::Inside);
-    p.galley(rect.min + vec2(6.0, 3.0), galley, tk.text_strong);
 }
 
 pub(crate) fn matches(filter: &str, texts: &[&str]) -> bool {
@@ -501,7 +495,7 @@ fn library(app: &mut TextureCraftApp, ui: &mut Ui, filter: &str, masks: bool) {
             let location = path.display().to_string();
             let asset = if masks { Asset::SavedMask(location) } else { Asset::Library(location) };
             if response.drag_started() {
-                response.dnd_set_drag_payload(ShelfDrag { asset, label: label.to_owned() });
+                response.dnd_set_drag_payload(ShelfDrag { asset, label: label.to_owned(), thumb: None });
             } else {
                 selected.push(asset);
             }
@@ -604,7 +598,7 @@ fn tile_in_view(
     if let Some(asset) = drag
         && response.drag_started()
     {
-        response.dnd_set_drag_payload(ShelfDrag { asset: asset.clone(), label: label.to_string() });
+        response.dnd_set_drag_payload(ShelfDrag { asset: asset.clone(), label: label.to_string(), thumb: texture.clone() });
     }
 
     let painter = ui.painter();

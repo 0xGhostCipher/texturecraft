@@ -686,6 +686,64 @@ fn smart_material_shelf_snapshot() {
     save(&mut harness, &output_dir, "smart-material-hover");
 }
 
+/// A smart material dragged from the Assets panel over a texture set, then over the background
+#[test]
+#[ignore]
+fn shelf_drag_ghost_snapshots() {
+    use egui::{Event, Modifiers, PointerButton, vec2};
+    use texturecraft_engine::geom::glam::Vec2;
+    use texturecraft_engine::materials::MATERIALS;
+
+    let Some(output_dir) = std::env::var_os("TC_UI_SNAPSHOTS").map(PathBuf::from) else { return };
+    std::fs::create_dir_all(&output_dir).unwrap();
+    let session = texturecraft_engine::sample_session(256, 64).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .with_pixels_per_point(1.0)
+        // The system draws the pointer, not the app
+        .with_render_cursor(false)
+        .wgpu()
+        .build_eframe(|context| TextureCraftApp::new(context, session));
+    harness.state_mut().ui.shelf_tab = 1;
+    let material = MATERIALS.iter().find(|material| material.id == "steel_painted_worn").unwrap();
+    let context = harness.ctx.clone();
+    let started = std::time::Instant::now();
+    while harness.state_mut().thumbs.material(&context, material.id).is_none() {
+        assert!(started.elapsed() < std::time::Duration::from_secs(120), "the material's thumbnail did not arrive");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        harness.run_steps(1);
+    }
+    harness.run_steps(2);
+
+    // The first view points showing a texture set and the background
+    let point_over = |harness: &Harness<'_, TextureCraftApp>, set: Option<usize>| {
+        let app = harness.state();
+        let rect = app.viewport_rect;
+        let steps = |length: f32| (1..(length / 8.0) as usize).map(|step| step as f32 * 8.0);
+        steps(rect.height())
+            .flat_map(|y| steps(rect.width()).map(move |x| (x, y)))
+            .find(|&(x, y)| app.session.texture_set_at(Vec2::new(x, y), app.session.viewport) == set)
+            .map(|(x, y)| rect.min + vec2(x, y))
+            .unwrap()
+    };
+    let (on_set, background) = (point_over(&harness, Some(0)), point_over(&harness, None));
+    let on_set = on_set + vec2(40.0, 40.0);
+
+    let tile = harness.get_by_role_and_label(egui::Role::Button, material.label).rect().center();
+    harness.event(Event::PointerButton { pos: tile, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    harness.run_steps(2);
+    harness.hover_at(tile + vec2(12.0, 12.0));
+    harness.run_steps(2);
+    for (target, name) in [(on_set, "drag-ghost-valid"), (background, "drag-ghost-not-valid")] {
+        harness.hover_at(target);
+        harness.run_steps(2);
+        save(&mut harness, &output_dir, name);
+        if let Some(shown) = texturecraft_ui_egui::shelf_drag_ghost::shown(&harness.ctx) {
+            std::fs::write(output_dir.join(format!("{name}.pointer.txt")), format!("{} {} {:?}", target.x, target.y, shown.verdict)).unwrap();
+        }
+    }
+}
+
 /// Compact nested rows must keep their content, mask and effect controls in the panel.
 #[test]
 #[ignore]
