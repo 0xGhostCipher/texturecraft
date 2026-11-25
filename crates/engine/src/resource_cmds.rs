@@ -184,10 +184,8 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = strp(p, "path").ok_or_else(|| bad("resource.import", "`path` is required"))?;
     let prefix = strp(p, "prefix").unwrap_or("");
 
-    // Taken before reading, so a write during the read still shows as a change in the Resources Updater
-    let modified_ms = crate::resource_update_cmds::modified_ms_of(std::path::Path::new(path));
+    let source = crate::resource_update_cmds::file_source(path);
     let bytes = read_image_file("resource.import", path, MAX_BYTES as u64)?;
-    let source = texturecraft_core::ResourceSource { path: crate::resource_update_cmds::absolute_path(path), modified_ms };
 
     let name = s.edit("Import resource", |session| {
         let name = session.add_image_resource_prefixed(prefix, path, bytes, texturecraft_formats::MAX_RESOURCE_TEXELS)?;

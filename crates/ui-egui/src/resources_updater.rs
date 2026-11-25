@@ -7,7 +7,6 @@ mod row_request;
 
 use std::collections::BTreeSet;
 
-use egui::{Key, Modifiers};
 use serde_json::json;
 use texturecraft_engine::{ResourceState, ResourceStatus};
 
@@ -25,7 +24,7 @@ use row_request::RowRequest;
 const WINDOW_WIDTH_POINTS: f32 = 640.0;
 /// Height of the resource list
 const LIST_HEIGHT_POINTS: f32 = 360.0;
-// Initial space for the header, tabs, filters and footer
+/// Initial space for the header, tabs, filters and footer
 const WINDOW_CHROME_HEIGHT_POINTS: f32 = 160.0;
 /// Side of a row's thumbnail
 const THUMBNAIL_POINTS: f32 = 40.0;
@@ -39,6 +38,8 @@ const ROW_MARGIN: egui::Margin = egui::Margin::same(4);
 const OUTDATED_TINT: f32 = 0.18;
 /// How long the "changed on disk" notice stays, in seconds: long enough to reach its button
 const NOTICE_SECONDS: f64 = 12.0;
+/// Shortest time between two checks after document changes, in seconds (each check looks at every file)
+const RECHECK_SECONDS: f64 = 0.5;
 
 /// Opens the window, or closes it when it is open (the shelf button)
 pub(crate) fn toggle(app: &mut TextureCraftApp) {
@@ -54,13 +55,26 @@ pub(crate) fn open(app: &mut TextureCraftApp) {
         rows: app.session.resource_states(),
         project: app.session.project_id,
         checked_revision: app.session.revision,
+        checked_at: app.last_time,
         ..window
     });
 }
 
-/// The app has the focus back: check the files again and, when other resources than last time
-/// are outdated, show a notice whose button updates them
-pub(crate) fn check_on_focus(app: &mut TextureCraftApp) {
+/// Check once when another project is open (files may have changed while it was closed), and
+/// forget what was announced for the last one
+pub(crate) fn follow_project(app: &mut TextureCraftApp) {
+    if !app.session.project_open || app.resources_project == Some(app.session.project_id) {
+        return;
+    }
+
+    app.resources_project = Some(app.session.project_id);
+    app.resources_notified.clear();
+    check_files(app);
+}
+
+/// Check the files again (the app has the focus back, or a project opened) and, when other
+/// resources than last time are outdated, show a notice whose button updates them
+pub(crate) fn check_files(app: &mut TextureCraftApp) {
     if !app.session.project_open {
         return;
     }
@@ -70,6 +84,7 @@ pub(crate) fn check_on_focus(app: &mut TextureCraftApp) {
     if let Some(window) = app.ui.windows.resources_updater.as_mut() {
         window.rows = rows;
         window.checked_revision = app.session.revision;
+        window.checked_at = app.last_time;
     }
 
     if !outdated.is_empty() && outdated != app.resources_notified {
@@ -81,7 +96,7 @@ pub(crate) fn check_on_focus(app: &mut TextureCraftApp) {
         app.toast(text, false);
         if let Some(toast) = app.toasts.last_mut() {
             toast.until = app.last_time + NOTICE_SECONDS;
-            toast.action = Some(ToastAction::UpdateResources);
+            toast.action = Some(ToastAction::UpdateResources { project: app.session.project_id });
         }
     }
     app.resources_notified = outdated;
@@ -137,13 +152,6 @@ fn show_in_folder(app: &mut TextureCraftApp, path: &str) {
     }
 }
 
-/// The keys of the open window: Escape closes it (an open dropdown takes it first, see `menus`)
-pub(crate) fn keys_in(app: &mut TextureCraftApp, input: &mut egui::InputState) {
-    if input.consume_key(Modifiers::NONE, Key::Escape) {
-        app.ui.windows.resources_updater = None;
-    }
-}
-
 /// Whether `row` passes the window's status and name filters
 fn shown(window: &ResourcesUpdater, row: &ResourceState) -> bool {
     let name_filter = window.name_filter.trim().to_lowercase();
@@ -164,18 +172,31 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         return;
     }
 
-    // Every change (an update, undo, redo, a removed resource) is checked again
+    // Every change (an update, undo, redo, a removed resource) is checked again, at most twice a second
     if window.checked_revision != app.session.revision {
-        window.rows = app.session.resource_states();
-        window.checked_revision = app.session.revision;
+        let wait = window.checked_at + RECHECK_SECONDS - app.last_time;
+        if wait <= 0.0 {
+            window.rows = app.session.resource_states();
+            window.checked_revision = app.session.revision;
+            window.checked_at = app.last_time;
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
+    }
+
+    // Escape closes the window only while one of its controls had the keyboard (egui takes the focus away on it); otherwise it cancels a stroke as usual
+    // egui consumes that Escape to take the focus away, so the raw events are read
+    let escape = ctx.input(|input| input.raw.events.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })));
+    if window.had_keyboard && escape && !egui::Popup::is_any_open(ctx) {
+        return;
     }
 
     let tokens = Tokens::get(ctx);
-    let mut open = true;
+    let mut window_open = true;
     let (mut refresh, mut update_all) = (false, false);
     let mut request = None;
 
-    crate::windows::dialog(ctx, "resources_updater", tr("Resources Updater"), &mut open)
+    let shown = crate::windows::dialog(ctx, "resources_updater", tr("Resources Updater"), &mut window_open)
         .default_size(egui::vec2(WINDOW_WIDTH_POINTS, LIST_HEIGHT_POINTS + WINDOW_CHROME_HEIGHT_POINTS))
         .show(ctx, |ui| {
             ui.label(format!("{} {}", tr("Project :"), app.session.doc.project.name));
@@ -216,7 +237,9 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.horizontal(|ui| {
-                    refresh = ui.button(tr("Refresh")).clicked();
+                    let refresh_button = ui.button(tr("Refresh"));
+                    refresh_button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Refresh resources")));
+                    refresh = refresh_button.clicked();
                     ui.label(summary(&window.rows));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let outdated = window.rows.iter().any(|row| row.status == ResourceStatus::Outdated);
@@ -252,15 +275,16 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             });
         });
 
-    if !open {
+    let focused = ctx.memory(|memory| memory.focused()).and_then(|id| ctx.read_response(id));
+    window.had_keyboard = shown.as_ref().zip(focused.as_ref()).is_some_and(|(shown, focused)| focused.layer_id == shown.response.layer_id);
+    if !window_open {
         return;
     }
 
     app.ui.windows.resources_updater = Some(window);
 
-    if refresh {
-        open(app);
-    }
+    // Its own changes and Refresh show at once
+    let check_now = refresh || update_all || matches!(request, Some(RowRequest::Update(_)));
     if update_all {
         update(app, None);
     }
@@ -269,6 +293,10 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         Some(RowRequest::SelectNew(name)) => select_new_resource(app, name),
         Some(RowRequest::ShowFolder(path)) => show_in_folder(app, &path),
         None => {}
+    }
+
+    if check_now {
+        open(app);
     }
 }
 
@@ -297,8 +325,7 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
             }
             ui.label(number.to_string());
 
-            // Buttons take their room on the right first, so the texts truncate in what is left
-            // Each button's accessible name says which resource it acts on
+            // Buttons go first, so the texts truncate in what is left; each accessible name names its resource
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let update = ui.add_enabled(outdated, egui::Button::new(tr("Update")));
                 let update_name = format!("{} {}", tr("Update"), row.name);
@@ -325,6 +352,7 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
 
                 ui.vertical(|ui| {
                     ui.add(egui::Label::new(format!("{} {}", tr("Name :"), row.name)).truncate());
+                    ui.label(format!("{} {}", tr("Shelf :"), tr("project")));
                     let file = row.path.as_deref().unwrap_or(tr("No source file"));
                     ui.add(egui::Label::new(format!("{} {}", tr("File :"), file)).truncate()).on_hover_text(file);
                     let status = ui.label(tr(row.status.label()));
@@ -352,30 +380,35 @@ mod tests {
         image::RgbaImage::from_pixel(size, size, image::Rgba([10, 200, 30, 255])).save(path).unwrap();
     }
 
-    fn notices(app: &TextureCraftApp) -> usize {
-        app.toasts.iter().filter(|toast| toast.action == Some(ToastAction::UpdateResources)).count()
+    fn notices(app: &TextureCraftApp) -> Vec<ToastAction> {
+        app.toasts.iter().filter_map(|toast| toast.action).collect()
     }
 
     #[test]
     fn a_changed_file_is_announced_once_and_the_notice_updates_it() {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!("texturecraft-resources-notice-{}.png", std::process::id()));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notice.png");
         write_png(&path, 4);
         let session = Session::new_project("Test", texturecraft_engine::geom::primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
         let mut harness = Harness::builder().build_eframe(|cc| TextureCraftApp::new(cc, session));
         let app = harness.state_mut();
         let name = app.run("resource.import", json!({ "path": path.to_str().unwrap() })).unwrap()["name"].as_str().unwrap().to_string();
 
-        check_on_focus(app);
-        assert_eq!(notices(app), 0, "nothing changed yet");
+        check_files(app);
+        assert!(notices(app).is_empty(), "nothing changed yet");
 
         write_png(&path, 8);
-        check_on_focus(app);
-        check_on_focus(app);
-        assert_eq!(notices(app), 1, "the same change is announced once");
+        check_files(app);
+        check_files(app);
+        let announced = notices(app);
+        assert_eq!(announced, [ToastAction::UpdateResources { project: app.session.project_id }], "the same change is announced once");
 
-        ToastAction::UpdateResources.run(app);
-        std::fs::remove_file(&path).ok();
+        // A notice about another project does nothing
+        ToastAction::UpdateResources { project: app.session.project_id + 1 }.run(app);
+        assert_eq!(app.session.images[&name].width, 4);
+
+        announced[0].run(app);
 
         assert_eq!(app.session.images[&name].width, 8, "the notice's button updated the resource");
         assert_eq!(app.session.history_labels().last().map(String::as_str), Some("Update resources"));

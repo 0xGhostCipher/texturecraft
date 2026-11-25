@@ -14,4 +14,8 @@ pub struct ResourceSource {
     /// (0 when unknown). An unchanged time and size skip reading the file again.
     #[serde(default)]
     pub modified_ms: u64,
+    /// The mesh map the file was imported as (`textureSet.meshMap.import`): an update resamples it
+    /// again while the map still holds what this file gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_map: Option<crate::MeshMapSlot>,
 }

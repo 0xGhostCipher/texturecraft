@@ -132,15 +132,19 @@ const HOST_PATH_KEYS: [&str; 2] = ["path", "dir"];
 
 /// Refuses engine commands that would reach host paths around the workspace roots, so clients use the workspace tools
 pub fn authorize_command(id: &str, params: &Value) -> Result<(), AutomationError> {
+    // The Resources Updater reads the files a project names, which may lie outside the read root
+    if matches!(id, "resource.status" | "resource.update" | "resource.relink") {
+        return Err(bad(format!(
+            "`{id}` reads the image files the project names on this machine, so it is disabled for automation; re-import changed files with resource_import"
+        )));
+    }
+
     let has_path = names_host_path(params) || params.get("files").and_then(Value::as_array).is_some_and(|files| files.iter().any(names_host_path));
 
     // `file.save` is refused even without a path: a headless session's path is workspace-relative, not a host path
     let allowed = match id {
         "file.close" | "file.removeUnused" => true,
         "file.reimportMesh" => !has_path,
-
-        // The Resources Updater reads the files a project names, which may lie outside the read root
-        "resource.status" | "resource.update" | "resource.relink" => false,
         _ => !id.starts_with("file.") && !has_path,
     };
     if allowed {
@@ -249,7 +253,8 @@ mod tests {
         assert!(authorize_command("file.reimportMesh", &json!({})).is_ok());
         assert!(authorize_command("file.close", &json!({})).is_ok());
         for id in ["resource.status", "resource.update", "resource.relink"] {
-            assert!(authorize_command(id, &json!({})).is_err(), "{id} reads the host paths a project names");
+            let error = authorize_command(id, &json!({})).unwrap_err().to_string();
+            assert!(error.contains("reads the image files"), "{id}: {error}");
         }
         assert!(authorize_command("layer.add.fill", &json!({"color": "#ff0000", "path": null})).is_ok());
     }

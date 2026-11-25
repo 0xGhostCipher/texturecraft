@@ -468,17 +468,22 @@ printf '%s\n' '{"id":1,"method":"command.run","params":{"id":"project.new","para
 
 ## Resources Updater
 
-An image resource imported with `resource.import {path}` remembers that file (its absolute path and
-modification time, saved with the project). The shelf's Resources Updater window lists the project's
-image resources through these commands and checks them again when it opens, on Refresh, after every
-change and when the app gets the focus back; then a notice ("N resources changed on disk", with an
-Update button) appears when the set of outdated resources changed since the last notice.
+An image resource read from a file remembers that file (its absolute path and modification time,
+saved with the project): `resource.import {path}`, the images `file.importPbrFolder` stores unchanged
+(not ORM channels split out, not archive entries), the images of `file.importMaterialX` and the files of
+`textureSet.meshMap.import` (with their mesh map: an update resamples it while it still holds what the
+old file gave it, so a bake or another image set over it since is kept). The shelf's Resources Updater
+window lists the project's image resources through these commands and checks them when it opens, on
+Refresh, after changes (at most twice a second), once after a project opens and when the app gets the
+focus back; a notice ("N resources changed on disk", with an Update button) appears when the set of
+outdated resources differs from the last notice. A file whose size matches but whose time changed is
+read once; its verdict is kept until its size or time changes again.
 
 | Command | Params and result |
 |---|---|
 | `resource.status` | `{}` → `{resources: [{name, status, path?, error?}], total, outdated}`; `status` is `outdated` (the file's size or contents differ from the resource), `missing` (the file is gone or unreadable, `error` says why), `upToDate` or `noSource` (made in the app or imported without a path); outdated first, then by name. A file is read only when its size matches but its modification time does not |
 | `resource.update` | `{names?: [name]}` (default: every outdated resource) → `{updated, failed: [{name, error}]}`: reads the files again and replaces the resources' bytes and pixels under the same names, so every layer, mask and view using them recomposites; one undo step, none when nothing changed. A file that cannot be read fails alone; when none could be read the command is an error. Unknown names and resources without a file are refused |
-| `resource.relink` | `{name, path}` → `{name, path}`: the resource takes the image file's pixels (within the image import limits) and follows that file from then on; one undo step |
+| `resource.relink` | `{name, path}` → `{name, path}`: an image resource takes the image file's pixels (within the image import limits) and follows that file from then on; one undo step |
 
 These commands read host paths stored in the project, so MCP and `serve` refuse them through
 `command_run`; the desktop app's control channel and the trusted local CLI run them.

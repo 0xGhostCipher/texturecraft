@@ -39,6 +39,7 @@ pub mod image_input;
 pub mod layer;
 pub mod lighting_output;
 pub mod mask_outline;
+pub mod mesh_map_slot;
 pub mod mirror;
 pub mod mirror_corner;
 pub mod mirror_mode;
@@ -120,6 +121,7 @@ pub use layer::{
 };
 pub use lighting_output::LightingOutput;
 pub use mask_outline::MaskOutline;
+pub use mesh_map_slot::MeshMapSlot;
 pub use mirror::Mirror;
 pub use mirror_corner::MirrorCorner;
 pub use mirror_mode::MirrorMode;

@@ -4,13 +4,14 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Key, Role};
+use egui::{Key, Role, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 use texturecraft_engine::Session;
 use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::file_dialogs::{Answer, Request};
+use texturecraft_ui_egui::state::ViewLayout;
 
 use super::temp_dir::TempDir;
 
@@ -59,40 +60,44 @@ fn width_of(h: &Harness<'_, TextureCraftApp>, name: &str) -> u32 {
 #[test]
 fn the_window_opens_from_the_keyboard_and_updates_an_outdated_resource_as_one_undo_step() {
     let dir = TempDir::new("resources-updater-update");
-    let (kept, changed) = (png(&dir, "kept.png", 4), png(&dir, "changed.png", 4));
+    let (kept, changed) = (png(&dir, "aa_kept.png", 4), png(&dir, "zz_changed.png", 4));
     let mut h = app();
     import(&mut h, &kept);
     import(&mut h, &changed);
-    png(&dir, "changed.png", 8);
+    png(&dir, "zz_changed.png", 8);
 
     activate(&mut h, "Resources Updater");
 
     let rows = &h.state().ui.windows.resources_updater.as_ref().expect("the window is open").rows;
-    assert_eq!(rows[0].name, "changed.png", "outdated resources come first");
+    assert_eq!(rows[0].name, "zz_changed.png", "outdated resources come first, before names that sort earlier");
     assert!(shows(&h, "Project : Test"));
+    assert_eq!(h.get_all_by_label("Shelf : project").count(), 2, "the reference's shelf line, one per row");
     assert!(shows(&h, "(2 resources, 1 outdated)"));
     assert!(shows(&h, "Outdated"), "the status is written out, not only coloured");
-    assert!(h.get_by_role_and_label(Role::Button, "Update kept.png").accesskit_node().is_disabled(), "only outdated resources update");
+    assert!(h.get_by_role_and_label(Role::Button, "Update aa_kept.png").accesskit_node().is_disabled(), "only outdated resources update");
 
     let steps = h.state().session.history_labels().len();
-    activate(&mut h, "Update changed.png");
+    activate(&mut h, "Update zz_changed.png");
 
-    assert_eq!(width_of(&h, "changed.png"), 8, "the new file's pixels are in the project");
+    assert_eq!(width_of(&h, "zz_changed.png"), 8, "the new file's pixels are in the project");
     assert_eq!(h.state().session.history_labels().len(), steps + 1, "one undo step");
     assert!(shows(&h, "(2 resources, 0 outdated)"));
 
-    // Undo brings the old pixels back, so the list shows the file as changed again
+    // Undo brings the old pixels back, so Refresh shows the file as changed again
     h.state_mut().run("edit.undo", json!({})).unwrap();
-    h.run_steps(3);
+    activate(&mut h, "Refresh resources");
 
-    assert_eq!(width_of(&h, "changed.png"), 4);
+    assert_eq!(width_of(&h, "zz_changed.png"), 4);
     assert!(shows(&h, "(2 resources, 1 outdated)"));
 
     activate(&mut h, "Update All");
-    assert_eq!(width_of(&h, "changed.png"), 8);
+    assert_eq!(width_of(&h, "zz_changed.png"), 8);
 
+    // Update All went grey with nothing left to update; the keyboard moves on to another button of the window
+    h.get_by_role_and_label(Role::Button, "Select new resource aa_kept.png").focus();
+    h.run_steps(2);
     press(&mut h, Key::Escape);
-    assert!(h.state().ui.windows.resources_updater.is_none(), "Escape closes the window");
+    assert!(h.state().ui.windows.resources_updater.is_none(), "Escape closes the window while it has the keyboard");
 }
 
 #[test]
@@ -134,4 +139,32 @@ fn show_in_folder_shows_the_folder_of_the_resource_file() {
     let shown = h.state().file_dialogs.shown_folders().to_vec();
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].file_name(), dir.file_name(), "the file's own folder");
+}
+
+#[test]
+fn escape_cancels_a_stroke_while_the_window_is_open_without_the_keyboard() {
+    const FRAMES_PER_DRAG_EVENT: usize = 2;
+
+    let mut h = app();
+    h.state_mut().run("layer.add.paint", json!({})).unwrap();
+    h.state_mut().ui.layout = ViewLayout::Only3D;
+    h.run_steps(3);
+    let center = h.state().viewport_rect.center();
+    h.drag_at(center);
+    h.run_steps(FRAMES_PER_DRAG_EVENT);
+    h.hover_at(center + vec2(20.0, 0.0));
+    h.run_steps(FRAMES_PER_DRAG_EVENT);
+    assert!(h.state().session.stroke_active());
+
+    // Opened from the shelf mid-stroke, the keyboard stays on the shelf button
+    activate(&mut h, "Resources Updater");
+    assert!(h.state().ui.windows.resources_updater.is_some());
+    assert!(h.state().session.stroke_active());
+
+    press(&mut h, Key::Escape);
+
+    assert!(!h.state().session.stroke_active(), "Escape cancels the stroke");
+    assert!(h.state().ui.windows.resources_updater.is_some(), "the window keeps open: its controls do not have the keyboard");
+    h.drop_at(center + vec2(30.0, 0.0));
+    h.run_steps(3);
 }

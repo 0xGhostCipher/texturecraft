@@ -16,4 +16,8 @@ pub struct ResourcesUpdater {
     pub project: u64,
     /// The session revision the rows were checked at
     pub(crate) checked_revision: u64,
+    /// When the rows were checked, in app seconds
+    pub(crate) checked_at: f64,
+    /// Whether a control of the window had the keyboard focus when it was last drawn (Escape then closes it)
+    pub(crate) had_keyboard: bool,
 }

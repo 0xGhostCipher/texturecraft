@@ -7,6 +7,7 @@ use crate::resource_status::ResourceStatus;
 pub struct ResourceState {
     /// The resource's name in the project.
     pub name: String,
+    /// How the resource compares with its file now.
     pub status: ResourceStatus,
     /// The file it was imported from or relinked to (None: made in the app or imported without a path).
     pub path: Option<String>,

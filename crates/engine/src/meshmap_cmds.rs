@@ -54,6 +54,17 @@ pub(crate) const FIRST_TILE: u32 = *UDIM_RANGE.start();
 
 /// Use `images` (by UV tile; one at [`FIRST_TILE`] without UV tiles) as mesh map `map` of set `ts` in the caller's edit; returns its width
 pub(crate) fn use_images(s: &mut Session, cmd: &str, ts: usize, map: BakedMap, images: &BTreeMap<u32, Arc<ImageRes>>) -> Result<u32> {
+    let (width, data) = resampled(s, cmd, ts, map, images)?;
+
+    let entry = s.doc.baked.entry(ts).or_default();
+    entry.resolution = width;
+    entry.maps.insert(map, Arc::new(data));
+    s.doc.project.texture_set_mut(ts)?.baked.insert(map);
+    Ok(width)
+}
+
+/// The pixels [`use_images`] would give mesh map `map` of set `ts`, and their width
+pub(crate) fn resampled(s: &Session, cmd: &str, ts: usize, map: BakedMap, images: &BTreeMap<u32, Arc<ImageRes>>) -> Result<(u32, Vec<f32>)> {
     let texture_set = s.doc.project.texture_set(ts)?;
     let grid = texture_set.tile_grid();
     if let Some(tile) = texture_set.uv_tiles.iter().find(|tile| grid.is_some() && !images.contains_key(tile)) {
@@ -74,11 +85,7 @@ pub(crate) fn use_images(s: &mut Session, cmd: &str, ts: usize, map: BakedMap, i
         }),
     };
 
-    let entry = s.doc.baked.entry(ts).or_default();
-    entry.resolution = width;
-    entry.maps.insert(map, Arc::new(data));
-    s.doc.project.texture_set_mut(ts)?.baked.insert(map);
-    Ok(width)
+    Ok((width, data))
 }
 
 /// Dimensions shared by imported mesh maps, checked before allocating the resampled pixels

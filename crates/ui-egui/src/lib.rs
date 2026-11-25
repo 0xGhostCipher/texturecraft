@@ -325,6 +325,9 @@ pub struct TextureCraftApp {
     /// The outdated resources the last "changed on disk" notice named, so an unchanged set is not announced again
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) resources_notified: std::collections::BTreeSet<String>,
+    /// The project the Resources Updater last checked on opening (see `resources_updater::follow_project`)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) resources_project: Option<u64>,
     /// The update check and prompt (desktop only).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) updates_rt: updates_ui::Runtime,
@@ -448,6 +451,8 @@ impl TextureCraftApp {
             focused: true,
             #[cfg(not(target_arch = "wasm32"))]
             resources_notified: std::collections::BTreeSet::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            resources_project: None,
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1130,9 +1135,11 @@ impl eframe::App for TextureCraftApp {
 
             // Files may have been edited in another app meanwhile
             #[cfg(not(target_arch = "wasm32"))]
-            resources_updater::check_on_focus(self);
+            resources_updater::check_files(self);
         }
         self.focused = focused;
+        #[cfg(not(target_arch = "wasm32"))]
+        resources_updater::follow_project(self);
 
         let scale = self.ui.prefs.ui_scale.clamp(*UI_SCALE_APPLIED.start(), *UI_SCALE_APPLIED.end());
         if (ctx.zoom_factor() - scale).abs() > SAME_ZOOM_TOLERANCE {
@@ -1335,11 +1342,13 @@ fn toasts(app: &mut TextureCraftApp, ctx: &egui::Context) {
                                 show_log = true;
                                 dismissed = Some(i);
                             }
-                            if let Some(action) = t.action
-                                && ui.button(i18n::tr(action.label())).clicked()
-                            {
-                                clicked_action = Some(action);
-                                dismissed = Some(i);
+                            if let Some(action) = t.action {
+                                let button = ui.button(i18n::tr(action.label()));
+                                button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, i18n::tr(action.accessible_name())));
+                                if button.clicked() {
+                                    clicked_action = Some(action);
+                                    dismissed = Some(i);
+                                }
                             }
                         });
                         if sticky && widgets::icon_button(ui, egui_phosphor::regular::X, i18n::tr("Dismiss"), false, 18.0).clicked() {

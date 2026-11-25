@@ -98,13 +98,15 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   and alpha images become the brush alpha. Filter by role or remove selected rows before importing.
   Failed rows stay in the dialog for retry. Color LUT, post effects and asset-library import are
   unavailable. The browser imports images straight from its file picker.
-- **Resources Updater:** the shelf button under the tools lists the project's image resources with
-  their files, outdated ones first. An imported image remembers its file; when that file changes on
-  disk, *Update* (or *Update All*) reads it again and every layer using it recomposites, as one undo
-  step. *Select new resource* points a resource at another file, *Show in folder* opens its folder,
-  and the list filters by status and name. When the app gets the focus back after files changed, a
-  notice offers *Update*. Desktop only; there is no Shaders tab, since TextureCraft has no shader
-  resources.
+- **Resources Updater:** the shelf button under the tools lists the project's image resources,
+  outdated ones first: name, *Shelf : project* as in the reference, and an extra *File :* line with
+  the file it came from. An image read from a file (Import resources, PBR folders, MaterialX, imported
+  mesh maps) remembers it; when the file changes on disk, *Update* (or *Update All*) reads it again
+  and every layer and imported mesh map using it follows, as one undo step. *Select new resource*
+  points a resource at another file, *Show in folder* opens its folder, and the list filters by status
+  and name. After a project opens and when the app gets the focus back after files changed, a notice
+  offers *Update*. Desktop only; there is no Shaders tab (TextureCraft has no shader resources), no
+  Pin window and no × to clear a link.
 - **Your own library:** right-click a layer or folder, choose *Create smart material*, and it
   appears under *My smart materials*, pixels and images included. *Create smart mask* in the same
   menu saves just the layer's mask (all its effects, painted pixels and images); it appears under

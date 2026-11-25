@@ -71,6 +71,9 @@ pub mod quick_mask;
 // Reloading resource files reads paths on native targets only
 #[cfg(not(target_arch = "wasm32"))]
 mod reloaded_file;
+// Remembered file comparisons exist on native targets only
+#[cfg(not(target_arch = "wasm32"))]
+mod resource_check;
 pub mod resource_cmds;
 pub mod resource_state;
 pub mod resource_status;
@@ -103,9 +106,9 @@ pub use fill_hit_test::FillHitTest;
 pub use fill_mode::FillMode;
 pub use log::{LogEntry, LogLevel, SessionLog};
 pub use path_tool::PathState;
+pub use project_cmds::sample_session;
 pub use resource_state::ResourceState;
 pub use resource_status::ResourceStatus;
-pub use project_cmds::sample_session;
 pub use session::{
     CloneFrom, CloneSource, Document, HISTORY_TEMPLATES, NORMAL_HEIGHT_MESH_LABEL, Session, SetCache, StackTarget, StencilLook, StencilState, Tool, ToolState,
     ViewMode, history_label, stroke_template,
