@@ -376,7 +376,7 @@ fn write_batch_atomic_with_hook<'a>(
     write_batch_atomic_with_root(BatchRoot::Ambient, entries, before_rename)
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, unix))]
 pub(crate) fn write_batch_atomic_in_dir_with_hook<'a>(
     root: &cap_std::fs::Dir,
     entries: impl IntoIterator<Item = (&'a std::path::Path, &'a [u8])>,
