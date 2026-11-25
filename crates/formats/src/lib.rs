@@ -319,19 +319,16 @@ fn create_temp_with_mode(
     // Bound retries when stale files, batch targets, or concurrent writers occupy candidate names
     const MAX_TEMP_ATTEMPTS: u32 = 256;
 
-    // Capability-scoped writes keep temporary files in the output root so a parent folder that is
-    // replaced after staging cannot hide the staged file, and so two maps with the same basename
-    // in different folders do not share a temporary name
+    // Capability-scoped writes keep a short temporary name in the output root so a parent folder
+    // that is replaced after staging cannot hide the staged file, and so a long nested export name
+    // cannot overflow the filesystem name limit
     let (parent, name) = match root {
         BatchRoot::Ambient => {
             let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
             let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("out").to_owned();
             (parent.to_path_buf(), name)
         }
-        BatchRoot::Dir(_) => {
-            let name: String = path.iter().map(|part| part.to_string_lossy()).collect::<Vec<_>>().join("_");
-            (std::path::PathBuf::from("."), if name.is_empty() { "out".into() } else { name })
-        }
+        BatchRoot::Dir(_) => (std::path::PathBuf::from("."), "export".into()),
     };
 
     for attempt in 0..MAX_TEMP_ATTEMPTS {

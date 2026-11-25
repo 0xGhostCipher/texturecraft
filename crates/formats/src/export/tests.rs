@@ -1559,3 +1559,19 @@ fn folder_templates_reject_in_tree_symlink_aliases() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn write_files_accepts_a_long_nested_folder_and_stem() {
+    let fx = Fx::new(&default_channels());
+    let files = fx.render_preset("Unreal Engine (Packed)");
+    let folder = "a".repeat(200);
+    let stem = "b".repeat(200);
+    let name = format!("{folder}/{stem}.png");
+    let dir = std::env::temp_dir().join(format!("tc-formats-export-long-nested-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let paths = write_files(&[ExportedFile { name: name.clone(), ..files[0].clone() }], &dir).unwrap();
+    assert_eq!(paths, [dir.join(&folder).join(format!("{stem}.png"))]);
+    assert!(paths[0].is_file());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
