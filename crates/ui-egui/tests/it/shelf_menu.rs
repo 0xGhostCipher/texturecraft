@@ -44,6 +44,7 @@ fn a_built_in_tile_menu_says_what_the_asset_is_and_where_it_lives() {
         assert!(harness.query_by_label(&row).is_some(), "the menu has the info row {row:?}");
     }
     assert!(harness.get_by_label("Export resource...").accesskit_node().is_disabled(), "a built-in has no file to export");
+    assert!(harness.get_by_label("Show in").accesskit_node().is_disabled(), "a built-in has no file to show");
 
     harness.get_by_label("Close").click();
     harness.run_steps(3);
@@ -144,4 +145,51 @@ fn a_project_image_menu_renames_it_and_reloads_only_a_file_from_this_session() {
 
     let resources = &harness.state().session.doc.resources;
     assert!(resources.contains_key("stone.png") && !resources.contains_key(&name), "Enter renames the image, keeping its extension");
+}
+
+#[test]
+fn show_in_opens_the_folder_of_a_saved_brush() {
+    let dir = super::temp_dir::TempDir::new("shelf-show-in");
+    let mut harness = shelf(BRUSHES_TYPE);
+    harness.state_mut().session.brush_presets.dir = Some(dir.to_path_buf());
+    texturecraft_engine::execute(&mut harness.state_mut().session, "brush.preset.store", &json!({"name": "Aa ink"})).unwrap();
+    harness.run_steps(3);
+
+    right_click(&mut harness, "Aa ink");
+    harness.get_by_label("Show in").click();
+    harness.run_steps(3);
+    let item = if cfg!(target_os = "windows") {
+        "Show in Explorer..."
+    } else if cfg!(target_os = "macos") {
+        "Show in Finder..."
+    } else {
+        "Show in file manager..."
+    };
+    harness.get_by_label(item).click();
+    harness.run_steps(3);
+
+    let shown = harness.state().file_dialogs.shown_folders().to_vec();
+    assert!(shown.iter().any(|folder| folder.canonicalize().ok() == dir.canonicalize().ok()), "the brush's folder is shown: {shown:?}");
+}
+
+#[test]
+fn shift_f10_opens_the_menu_of_the_focused_tile_on_its_first_row_and_escape_returns_to_it() {
+    let mut harness = shelf(TEXTURES_TYPE);
+    let mut bytes = Vec::new();
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([180, 90, 40, 255])).write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    let name = harness.state_mut().session.import_resource_bytes("plate.png", bytes).unwrap();
+    harness.run_steps(3);
+
+    harness.get_all_by_label(&name).next().unwrap().focus();
+    harness.run_steps(2);
+    assert!(harness.get_all_by_label(&name).next().unwrap().is_focused(), "the tile takes the focus");
+    harness.key_press_modifiers(Modifiers::SHIFT, Key::F10);
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Usages texture").is_some(), "Shift+F10 opens the menu");
+    assert!(harness.get_by_label("Delete").is_focused(), "the first row that can be picked takes the focus (Reload can't: no file)");
+
+    harness.key_press(Key::Escape);
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Usages texture").is_none(), "Escape closes it");
+    assert!(harness.get_all_by_label(&name).next().unwrap().accesskit_node().is_focused(), "the focus is back on the tile");
 }

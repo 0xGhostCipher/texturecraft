@@ -121,9 +121,9 @@ impl Session {
         Ok(name)
     }
 
-    /// Whether image resource `name` was imported from a file in this session, so `resource.reload` can read it again
-    pub fn reloadable(&self, name: &str) -> bool {
-        self.resource_sources.contains_key(name)
+    /// The file image resource `name` was imported from in this session (what `resource.reload` reads again)
+    pub fn resource_source(&self, name: &str) -> Option<&std::path::Path> {
+        self.resource_sources.get(name).map(std::path::PathBuf::as_path)
     }
 
     /// Decode resources that are not decoded yet and forget removed ones (after undo, redo, load).

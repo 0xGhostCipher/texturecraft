@@ -1,10 +1,10 @@
 //! An asset tile's right-click menu: what the asset is (name, usages, path, category), then what can be done with it; the Name of an asset the user owns is a field that renames it
 
-use egui::{Align2, Color32, CornerRadius, FontId, Response, Sense, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Id, Response, Sense, Ui, pos2, vec2};
 use serde_json::json;
 
 use crate::TextureCraftApp;
-use crate::i18n::tr;
+use crate::i18n::{n_, tr};
 use crate::shelf_entry::{LIBRARIES, ShelfEntry};
 use crate::theme::Tokens;
 
@@ -29,10 +29,36 @@ const FIELD_TEXT_INSET: f32 = 8.0;
 /// The air above and below the separators, in points
 const SEPARATOR_SPACE: f32 = 3.0;
 
+/// A menu just opened from the keyboard gives the focus to its first row that can be picked (ctx temp data)
+const FOCUS_FIRST_ROW: &str = "shelf_menu_focus_first_row";
+
 /// The right-click menu on the tile whose response is `response`
 pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &ShelfEntry) {
     // Clicks inside keep the menu open, so the Name field can be typed in; its rows close it themselves
-    let menu = egui::Popup::context_menu(response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let mut menu = egui::Popup::context_menu(response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    response.ctx.accesskit_node_builder(response.id, |node| node.set_has_popup(egui::accesskit::HasPopup::Menu));
+
+    // The keyboard opens it on the focused tile, and Escape gives the focus back to the tile
+    let keyboard_id = response.id.with("menu_from_keyboard");
+    let return_focus = menu.is_open() && response.ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    if response.has_focus()
+        && response
+            .ctx
+            .input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::F10) || input.consume_key(egui::Modifiers::NONE, egui::Key::Menu))
+    {
+        menu = menu.open_memory(Some(egui::SetOpenCommand::Bool(true)));
+        response.ctx.data_mut(|data| {
+            data.insert_temp(keyboard_id, true);
+            data.insert_temp(Id::unique(FOCUS_FIRST_ROW), true);
+        });
+    } else if response.secondary_clicked() {
+        response.ctx.data_mut(|data| data.remove::<bool>(keyboard_id));
+    }
+
+    // A menu opened from the keyboard has no pointer position to open at: it opens at the tile
+    if response.ctx.data(|data| data.get_temp::<bool>(keyboard_id)).unwrap_or_default() {
+        menu = menu.anchor(response);
+    }
     menu.show(|ui| {
         let tokens = Tokens::get(ui.ctx());
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
@@ -62,7 +88,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
 
         match entry {
             ShelfEntry::Image(name) => {
-                let reloadable = app.session.reloadable(name);
+                let reloadable = app.session.resource_source(name).is_some();
                 let reload = row(ui, width, tr("Reload"), reloadable, &tokens);
                 if reload.clicked() {
                     app.run("resource.reload", json!({"name": name}));
@@ -78,11 +104,6 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
                 separator(ui, &tokens);
                 if row(ui, width, tr("Export resource..."), true, &tokens).clicked() {
                     export_image(app, name);
-                    ui.close();
-                }
-                separator(ui, &tokens);
-                if row(ui, width, tr("Add as decal (view center)"), true, &tokens).clicked() {
-                    app.run("layer.add.decal", json!({"image": name}));
                     ui.close();
                 }
             }
@@ -105,12 +126,23 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
                 row(ui, width, tr("Export resource..."), false, &tokens).on_hover_text(tr("Built-in assets have no file to export"));
             }
         }
+        show_in(app, ui, width, entry, &tokens);
+        if let ShelfEntry::Image(name) = entry {
+            separator(ui, &tokens);
+            if row(ui, width, tr("Add as decal (view center)"), true, &tokens).clicked() {
+                app.run("layer.add.decal", json!({"image": name}));
+                ui.close();
+            }
+        }
 
         separator(ui, &tokens);
         if row(ui, width, tr("Close"), true, &tokens).clicked() {
             ui.close();
         }
     });
+    if return_focus {
+        response.request_focus();
+    }
 }
 
 /// The info block's label and value rows: rows only where the asset has the data
@@ -127,7 +159,7 @@ fn info_rows(entry: &ShelfEntry) -> Vec<(&'static str, String)> {
 
 /// The labels of the rows under the info block, for the menu's width
 fn row_labels(entry: &ShelfEntry) -> Vec<&'static str> {
-    let mut labels = vec![tr("Export resource..."), tr("Close")];
+    let mut labels = vec![tr("Export resource..."), tr("Show in"), tr("Close")];
     match entry {
         ShelfEntry::Image(_) => labels.extend([tr("Reload"), tr("Delete"), tr("Add as decal (view center)")]),
         ShelfEntry::SavedBrush { .. } => labels.extend([tr("Replace with the current brush"), tr("Delete")]),
@@ -229,11 +261,84 @@ fn separator(ui: &mut Ui, tokens: &Tokens) {
     ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, tokens.separator));
 }
 
+/// The file manager's own name for showing a file in it
+fn show_in_folder_label() -> &'static str {
+    if cfg!(target_os = "windows") {
+        tr("Show in Explorer...")
+    } else if cfg!(target_os = "macos") {
+        tr("Show in Finder...")
+    } else {
+        tr("Show in file manager...")
+    }
+}
+
+/// The Show in row: a submenu that opens the folder of the asset's file, greyed for an asset with no file on this computer
+fn show_in(app: &mut TextureCraftApp, ui: &mut Ui, width: f32, entry: &ShelfEntry, tokens: &Tokens) {
+    let file = match entry {
+        ShelfEntry::SavedBrush { name, .. } => app.session.brush_presets.file_for(name),
+        ShelfEntry::Image(name) => app.session.resource_source(name).map(std::path::Path::to_path_buf),
+        _ => None,
+    };
+    let folder = file.as_deref().and_then(std::path::Path::parent).filter(|folder| folder.is_dir()).map(std::path::Path::to_path_buf);
+
+    // Reserved under the row, so the row stays highlighted while its submenu is open
+    let open_highlight = ui.painter().add(egui::Shape::Noop);
+    let response = row(ui, width, tr("Show in"), folder.is_some(), tokens);
+    let caret_color = if folder.is_some() { tokens.text } else { tokens.text_dim };
+    ui.painter().text(
+        pos2(response.rect.right() - TEXT_X, response.rect.center().y),
+        Align2::RIGHT_CENTER,
+        egui_phosphor::regular::CARET_RIGHT,
+        FontId::proportional(TEXT_SIZE),
+        caret_color,
+    );
+    let Some(folder) = folder else {
+        let reason = match (file.is_some(), entry) {
+            (true, _) => n_("The folder of this asset's file is gone"),
+            (false, ShelfEntry::Image(_)) => n_("Imported before this session: no file to show"),
+            (false, ShelfEntry::SavedBrush { .. }) => n_("This brush isn't saved to a file"),
+            (false, _) => n_("Built-in assets have no file to show"),
+        };
+
+        response.on_hover_text(tr(reason));
+        return;
+    };
+
+    let submenu = egui::containers::menu::SubMenu::new().show(ui, &response, |ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        let label = show_in_folder_label();
+        let submenu_width = text_width(ui, label) + TEXT_X + RIGHT_PADDING;
+        if row(ui, submenu_width, label, true, tokens).clicked() {
+            open_folder(app, &folder);
+            ui.close();
+        }
+    });
+    if submenu.is_some() {
+        let highlight = egui::Shape::rect_filled(response.rect.shrink2(vec2(HOVER_INSET, 0.0)), CornerRadius::same(HOVER_ROUNDING), tokens.button);
+        ui.painter().set(open_highlight, highlight);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn open_folder(app: &mut TextureCraftApp, folder: &std::path::Path) {
+    if let Err(error) = app.file_dialogs.show_folder(folder) {
+        app.toast(crate::i18n::trf("Could not open the folder: {error}", &[("error", &error)]), true);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_folder(app: &mut TextureCraftApp, _: &std::path::Path) {
+    app.toast(tr("Showing files needs the desktop app"), true);
+}
+
 /// One menu row: a hover face inset from the sides, its text dim and unclickable when not `enabled`
 fn row(ui: &mut Ui, width: f32, label: &str, enabled: bool, tokens: &Tokens) -> Response {
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    if enabled && ui.data_mut(|data| data.remove_temp::<bool>(Id::unique(FOCUS_FIRST_ROW))).unwrap_or_default() {
+        response.request_focus();
+    }
     let painter = ui.painter();
     if enabled && (response.hovered() || response.has_focus()) {
         painter.rect_filled(rect.shrink2(vec2(HOVER_INSET, 0.0)), CornerRadius::same(HOVER_ROUNDING), tokens.button);
