@@ -255,6 +255,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 - **Its own title bar** with the app icon, menus and window buttons on Windows (and on Linux
   desktops that leave the frame to the app, such as GNOME), the macOS traffic lights over the same
   strip, and Settings › General › Appearance › System title bar for the system's frame instead.
+- **A pen on a Linux Wayland desktop** opens the window through Xwayland, where the pen moves the
+  cursor and paints (some compositors send a pen nothing in a native Wayland window);
+  `TEXTURECRAFT_NATIVE_WAYLAND=1` keeps native Wayland.
 - **Dockable, tabbed and floating panels**, saved layouts, and panels that reopen where you closed
   them. The right bar's panels (Export, Log, Display Settings, Shader Settings, History) pop out
   beside it; *Undock* makes one a floating window, and its *Dock* button puts it back on the bar.

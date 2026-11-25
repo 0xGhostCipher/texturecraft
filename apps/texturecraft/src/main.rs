@@ -15,6 +15,8 @@ mod nightly_session;
 mod process_identity;
 mod profile_root;
 mod window_frame;
+#[cfg(target_os = "linux")]
+mod xwayland_pen;
 
 use std::ffi::OsString;
 
@@ -398,6 +400,14 @@ fn main() {
     }
     let viewport = title_bar.viewport(viewport);
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persistence_path, ..Default::default() };
+    // winit picks Wayland whenever `WAYLAND_DISPLAY` is set; a pen works only through Xwayland there
+    #[cfg(target_os = "linux")]
+    if xwayland_pen::opens_through_xwayland() {
+        use winit::platform::x11::EventLoopBuilderExtX11 as _;
+        options.event_loop_builder = Some(Box::new(|builder| {
+            builder.with_x11();
+        }));
+    }
     if let Err(e) = gpu::configure(&mut options, args.gpu, args.power_pref) {
         fatal(&e.to_string(), true);
         std::process::exit(2);

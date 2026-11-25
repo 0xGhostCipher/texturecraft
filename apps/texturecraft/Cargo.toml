@@ -35,6 +35,11 @@ winsafe = { version = "0.0.29", default-features = false, features = ["user", "s
 # The update helper is a copy of this program (`main`).
 craft-update = { workspace = true }
 
+# Opening the window through Xwayland for a pen on Wayland (src/xwayland_pen.rs): winit's
+# `EventLoopBuilderExtX11`. Already in Cargo.lock through eframe.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }
+
 # Quit (Cmd+Q) asks about unsaved changes (src/main.rs); winit's own Quit does not.
 [target.'cfg(target_os = "macos")'.dependencies]
 craft-menu = { workspace = true }
