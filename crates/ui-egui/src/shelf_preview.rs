@@ -190,12 +190,11 @@ fn settings_hash(generator: &Generator, images: &[(String, Arc<ImageRes>)]) -> u
 
 #[cfg(test)]
 mod tests {
+    use texturecraft_engine::core::TextureLayer;
     use texturecraft_engine::filter_lib::FILTERS;
     use texturecraft_engine::materials::MATERIALS;
     use texturecraft_engine::paint::alphas;
     use texturecraft_engine::paint::presets::PRESETS;
-
-    use texturecraft_engine::core::TextureLayer;
 
     use super::*;
 
