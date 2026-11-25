@@ -321,14 +321,19 @@ fn create_temp_with_mode(
 
     // Capability-scoped writes keep a short temporary name in the output root so a parent folder
     // that is replaced after staging cannot hide the staged file, and so a long nested export name
-    // cannot overflow the filesystem name limit
+    // cannot overflow the filesystem name limit. Each allocation gets its own identifier so a large
+    // batch, including backups of existing files, does not exhaust the shared 256-name retry set
     let (parent, name) = match root {
         BatchRoot::Ambient => {
             let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
             let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("out").to_owned();
             (parent.to_path_buf(), name)
         }
-        BatchRoot::Dir(_) => (std::path::PathBuf::from("."), "export".into()),
+        BatchRoot::Dir(_) => {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            (std::path::PathBuf::from("."), format!("export-{id}"))
+        }
     };
 
     for attempt in 0..MAX_TEMP_ATTEMPTS {
@@ -672,6 +677,28 @@ mod atomic_tests {
         assert!(!outside.join("second.png").exists());
 
         let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn write_batch_atomic_in_dir_can_stage_more_files_than_the_collision_retry_limit() -> std::io::Result<()> {
+        let directory = std::env::temp_dir().join(format!("tc-dir-many-temps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory)?;
+        let names: Vec<std::path::PathBuf> = (0..257).map(|i| std::path::PathBuf::from(format!("f{i}.png"))).collect();
+        let bytes = vec![b"x".to_vec(); names.len()];
+        let entries: Vec<(&std::path::Path, &[u8])> = names.iter().map(std::path::PathBuf::as_path).zip(bytes.iter().map(Vec::as_slice)).collect();
+
+        let root_dir = cap_std::fs::Dir::open_ambient_dir(&directory, cap_std::ambient_authority())?;
+        crate::write_batch_atomic_in_dir(&root_dir, entries).map_err(std::io::Error::other)?;
+        assert!(names.iter().all(|name| directory.join(name).is_file()));
+
+        let bytes = vec![b"y".to_vec(); names.len()];
+        let entries: Vec<(&std::path::Path, &[u8])> = names.iter().map(std::path::PathBuf::as_path).zip(bytes.iter().map(Vec::as_slice)).collect();
+        crate::write_batch_atomic_in_dir(&root_dir, entries).map_err(std::io::Error::other)?;
+        assert!(names.iter().all(|name| std::fs::read(directory.join(name)).ok() == Some(b"y".to_vec())));
+
+        let _ = std::fs::remove_dir_all(&directory);
         Ok(())
     }
 }
