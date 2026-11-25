@@ -52,7 +52,7 @@ pub(crate) fn input<G: Gizmo>(app: &mut TextureCraftApp, ctx: &egui::Context, re
     ctx.set_cursor_icon(gizmo.unwrap_or(&drag.start).cursor(drag.grab, true));
 
     if let Some(pointer) = response.interact_pointer_pos().filter(|_| ctx.input(|input| input.pointer.delta() != egui::Vec2::ZERO))
-        && let Some((command, params)) = drag.start.edit(app, rect, drag.grab, drag.from, pointer)
+        && let Some((command, params)) = drag.start.edit_with_snap(app, rect, drag.grab, drag.from, pointer, ctx.input(|input| input.modifiers.command))
     {
         edit_in_one_step(&mut app.session, command, params, &mut drag.edited_revision);
 

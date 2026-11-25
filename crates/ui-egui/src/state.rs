@@ -624,6 +624,9 @@ pub struct UiState {
     /// How the 3D view shows symmetry
     #[serde(default)]
     pub symmetry: crate::symmetry::SymmetryDisplay,
+    /// The warp tool bar: the gizmo's mode and space, its size, and the steps its drags snap to
+    #[serde(default)]
+    pub warp_toolbar: crate::frame_gizmo::warp_toolbar::WarpToolbarSettings,
     /// The brush, symmetry and other tool settings of the last session, which the next one starts with
     #[serde(default)]
     pub tool_settings: texturecraft_engine::ToolSettings,
@@ -791,6 +794,7 @@ impl Default for UiState {
             keymap: Keymap::new(),
             bake_paint_brush: crate::bake_mode::BakePaintBrush::default(),
             symmetry: crate::symmetry::SymmetryDisplay::default(),
+            warp_toolbar: crate::frame_gizmo::warp_toolbar::WarpToolbarSettings::default(),
             tool_settings: Default::default(),
             bake_visualization: crate::bake_mode::BakeVisualizationToggles::default(),
             named_layouts: Vec::new(),

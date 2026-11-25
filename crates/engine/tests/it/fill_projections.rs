@@ -337,6 +337,30 @@ fn warp_projection_bends_to_its_corners_reaches_its_depth_and_resets_its_frame()
     assert!(execute(&mut s, "layer.fill.resetFrame", &json!({"layer": layer.0})).is_err(), "only a warp has a frame to reset");
 }
 
+/// Restore the global transformation refits a warp's frame and keeps its pulled corners, in one undo step, none when the frame is fitted
+#[test]
+fn a_warps_frame_resets_apart_from_its_corners() {
+    let mut s = session();
+    let layer = checker_fill(&mut s);
+    set(&mut s, layer, json!({"projection": "warp"}));
+    let Projection::Warp { frame: fitted, .. } = projection(&s, layer) else { panic!("a warp") };
+    let pulled = [[-0.5, 0.5], [0.9, 0.9], [0.5, -0.5], [-0.5, -0.5]];
+    set(&mut s, layer, json!({"warpCorners": pulled}));
+    execute(&mut s, "layer.decal.set", &json!({"layer": layer.0, "rotation": 30})).unwrap();
+    let steps = s.history_labels().len();
+
+    execute(&mut s, "layer.fill.resetFrame", &json!({"layer": layer.0, "keepCorners": true})).unwrap();
+    let Projection::Warp { frame, corners, .. } = projection(&s, layer) else { panic!("a warp") };
+
+    assert_eq!(frame, fitted, "the frame goes back around the mesh");
+    assert_eq!(corners, pulled, "the pulled corners stay");
+    assert_eq!(s.history_labels().len(), steps + 1);
+
+    execute(&mut s, "layer.fill.resetFrame", &json!({"layer": layer.0, "keepCorners": true})).unwrap();
+
+    assert_eq!(s.history_labels().len(), steps + 1, "a fitted frame adds no undo step");
+}
+
 /// Depth culling keeps planar and warp projections off surfaces hidden behind others from the projector; new ones start with it on, older saves without it
 #[test]
 fn depth_culling_keeps_planar_and_warp_projections_off_hidden_surfaces() {

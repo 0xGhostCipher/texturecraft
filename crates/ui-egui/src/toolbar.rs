@@ -7,6 +7,7 @@ use texturecraft_engine::Tool;
 
 use crate::TextureCraftApp;
 use crate::drawn_icon::DrawnIcon;
+use crate::frame_gizmo::warp_toolbar;
 use crate::i18n::{tr, trf};
 use crate::keymap::{shortcut_of, tip};
 use crate::state::{Mode, ViewLayout};
@@ -61,7 +62,7 @@ pub fn paint_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
                 ui.add(egui::Separator::default().spacing(BAR_SEPARATOR_WIDTH));
                 if !scroll_views {
                     view_buttons(app, ui);
-                    if app.session.tool_usable(app.session.tool.tool) {
+                    if tool_bar_controls_shown(app) {
                         ui.add(egui::Separator::default().spacing(BAR_SEPARATOR_WIDTH));
                     }
                 }
@@ -72,6 +73,11 @@ pub fn paint_bar(app: &mut TextureCraftApp, ui: &mut egui::Ui) {
             });
         });
     });
+}
+
+/// Whether the bar's left side shows controls: a warp fill's, or the selected tool's when it can act on the selection
+fn tool_bar_controls_shown(app: &TextureCraftApp) -> bool {
+    warp_toolbar::shown(app) || app.session.tool_usable(app.session.tool.tool)
 }
 
 /// Width of `view_buttons`, so the bar knows when to move them into the scrolling strip
@@ -224,13 +230,15 @@ fn scrolling_tool_controls(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens:
             scroll_area.show(ui, |ui| {
                 ui.scroll_with_delta(vec2(scroll_delta, 0.0));
                 ui.horizontal_centered(|ui| {
-                    // A tool that can't act on the selection leaves the bar, as the shelf greys it
-                    let tool_usable = app.session.tool_usable(app.session.tool.tool);
-                    if tool_usable {
+                    // A warp fill's controls take the tool's place; a tool that can't act on the selection leaves the bar, as the shelf greys it
+                    let controls_shown = tool_bar_controls_shown(app);
+                    if warp_toolbar::shown(app) {
+                        warp_toolbar::controls(app, ui);
+                    } else if controls_shown {
                         tool_controls(app, ui, tokens);
                     }
                     if scroll_views {
-                        if tool_usable {
+                        if controls_shown {
                             ui.add(egui::Separator::default().spacing(BAR_SEPARATOR_WIDTH));
                         }
                         let size = vec2(view_buttons_width(button_size, ui.spacing().item_spacing.x), ui.available_height());

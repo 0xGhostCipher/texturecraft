@@ -4,8 +4,8 @@ use serde_json::Value;
 use texturecraft_core::{Decal, Projection};
 use texturecraft_geom::Mesh;
 
-use crate::commands::{CommandSpec, bad, has_layer};
-use crate::layer_cmds::{fill_target, placement_mut};
+use crate::commands::{CommandSpec, bad, boolp, has_layer};
+use crate::layer_cmds::{FillTarget, fill_target, placement_mut};
 use crate::{Result, Session, cmd};
 
 /// Reset frame's command id, the prefix of its errors
@@ -17,7 +17,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Reset frame",
         [],
         None,
-        "{layer? | effect?: content or mask fill effect id} — a warp projection's frame back around the mesh, seen from the front, with its corners unpulled (Projection Depth and the other settings stay)",
+        "{layer? | effect?: content or mask fill effect id, keepCorners?: true keeps the corners where they are} — a warp projection's frame back around the mesh, seen from the front, with its corners unpulled unless `keepCorners` (Projection Depth and the other settings stay)",
         has_layer,
         reset_frame
     )]
@@ -44,25 +44,33 @@ pub(crate) fn fitted_frame(mesh: &Mesh) -> Decal {
 /// A fitted frame's smallest side, relative to the mesh diagonal (a flat mesh still gets a frame)
 const SMALLEST_SIDE: f32 = 1e-3;
 
+/// The frame and corners of the warp projection at `target`; `command` names it in the error of any other projection
+fn warp_mut<'a>(s: &'a mut Session, target: FillTarget, command: &str) -> Result<(&'a mut Decal, &'a mut [[f32; 2]; 4])> {
+    match placement_mut(s, target)? {
+        (Projection::Warp { frame, corners, .. }, _) => Ok((frame, corners)),
+        _ => Err(bad(command, "the fill's projection is not a warp projection")),
+    }
+}
+
 fn reset_frame(s: &mut Session, p: &Value) -> Result<Value> {
     let target = fill_target(s, p, RESET_FRAME)?;
+    let keep_corners = boolp(p, "keepCorners").unwrap_or(false);
     let fitted = fitted_frame(&s.mesh);
-    let (Projection::Warp { frame, corners, .. }, _) = placement_mut(s, target)? else {
-        return Err(bad(RESET_FRAME, "the fill's projection is not a warp projection"));
-    };
+    let (frame, corners) = warp_mut(s, target, RESET_FRAME)?;
 
-    // A frame already fitted with unpulled corners adds no undo step
-    if *frame == fitted && *corners == Projection::FRAME_CORNERS {
+    // A frame already fitted, with its corners unpulled or kept, adds no undo step
+    if *frame == fitted && (keep_corners || *corners == Projection::FRAME_CORNERS) {
         return Ok(Value::Null);
     }
 
-    s.edit("Reset frame", |s| {
-        let (Projection::Warp { frame, corners, .. }, _) = placement_mut(s, target)? else {
-            return Err(bad(RESET_FRAME, "the fill's projection is not a warp projection"));
-        };
+    let label = if keep_corners { "Restore the global transformation" } else { "Reset frame" };
+    s.edit(label, |s| {
+        let (frame, corners) = warp_mut(s, target, RESET_FRAME)?;
 
         *frame = fitted;
-        *corners = Projection::FRAME_CORNERS;
+        if !keep_corners {
+            *corners = Projection::FRAME_CORNERS;
+        }
         Ok(())
     })?;
     Ok(Value::Null)

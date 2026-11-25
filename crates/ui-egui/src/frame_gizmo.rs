@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use texturecraft_engine::compose::axis_frame::{placed_from_axis, placing_moves_pattern};
 use texturecraft_engine::compose::frame_placement::folded;
 use texturecraft_engine::compose::pattern::{decal_axes, decal_corners};
-use texturecraft_engine::core::{Decal, EffectKind, Fill, LayerId, LayerKind, Projection};
-use texturecraft_engine::geom::glam::Vec3;
+use texturecraft_engine::core::{Decal, EffectKind, Fill, LayerId, LayerKind, Projection, Source};
+use texturecraft_engine::geom::glam::{Vec2, Vec3};
 
 use crate::TextureCraftApp;
 use crate::projection_gizmo::{Gizmo, dragging};
@@ -14,8 +14,10 @@ use crate::theme::{AXIS_COLORS, SHAFT_HALO, SHAFT_HALO_EXTRA_WIDTH, SHAFT_WIDTH,
 use crate::viewport::{project, view_ray};
 
 mod frame_grab;
+pub(crate) mod warp_toolbar;
 
 pub(crate) use frame_grab::FrameGrab;
+use warp_toolbar::{GizmoSpace, WarpToolbarSettings, to_step};
 
 /// The selected fill's frame as the 3D view shows it
 #[derive(Clone, Copy, Debug)]
@@ -35,11 +37,16 @@ pub(crate) struct FrameGizmo {
     pub arrows: [Option<Pos2>; 3],
     /// On screen, the turn ring round the centre in the frame's plane (None when it is edge on)
     pub ring: Option<[Pos2; TURN_RING_POINTS]>,
+    /// A warp's tool bar settings: which handles show, their size and snapping, and the space the arrows move in
+    pub tools: Option<WarpToolbarSettings>,
     /// In the world: the frame's centre, and its across, up and out directions
     origin: Vec3,
     axes: [Vec3; 3],
     /// Screen movement per world unit along each direction at the centre
     steps: [Option<egui::Vec2>; 3],
+    /// The directions the arrows move along (the frame's own, or the world's in World space) and their screen movement per world unit
+    move_axes: [Vec3; 3],
+    move_steps: [Option<egui::Vec2>; 3],
 }
 
 /// Screen length of the axis arrows, and their heads (points): long enough to grab each one apart from the others
@@ -69,32 +76,7 @@ impl FrameGizmo {
 
     /// The frame of the selected fill layer, or of the selected mask fill effect, with a planar or warp projection
     pub(crate) fn of(app: &TextureCraftApp, rect: Rect) -> Option<FrameGizmo> {
-        use texturecraft_engine::StackTarget;
-
-        if app.ui.mode != crate::state::Mode::Painting {
-            return None;
-        }
-
-        let layers = &app.session.doc.project;
-        let selected = app.session.selected_layer()?;
-        let (layer, effect, projection, sources) = match app.session.target {
-            StackTarget::Content => {
-                let layer = layers.content_layer(selected)?;
-                let LayerKind::Fill(Fill { projection, sources, .. }) = &layer.kind else { return None };
-
-                (layer.id, None, projection, sources.values().collect::<Vec<_>>())
-            }
-            StackTarget::Effect(effect) => {
-                // Only the selected layer's effective mask may supply a frame, including an instance's inherited mask
-                let owner = layers.mask_owner(selected);
-                let mask = layers.layer(owner).ok()?.mask.as_ref()?;
-                let mask_effect = mask.effects.iter().find(|candidate| candidate.id == effect)?;
-                let EffectKind::Fill { projection, source, .. } = &mask_effect.kind else { return None };
-
-                (owner, Some(effect), projection, vec![source])
-            }
-            StackTarget::Mask => return None,
-        };
+        let (layer, effect, projection, sources) = selected_fill_projection(app)?;
 
         // An axis planar reading a pattern keeps its axis (see [`placing_moves_pattern`]): it has no frame to move
         let unplaced = matches!(projection, Projection::Planar { placed: None, .. });
@@ -126,11 +108,21 @@ impl FrameGizmo {
         let sides = [0, 1, 2, 3].map(|side| corners[side].lerp(corners[(side + 1) % 4], 0.5));
         let center = project(app, rect, origin)?;
 
-        // Screen movement per world unit along each direction, and an arrow along each one not pointing at the camera
+        // A warp follows the tool bar: its size scales the arrows and ring, its space picks the directions the arrows move along
+        let tools = warp.map(|_| app.ui.warp_toolbar);
+        let scale = tools.map_or(1.0, |tools| tools.gizmo_scale());
+
+        // Screen movement per world unit along each direction, and an arrow along each moving one not pointing at the camera
         let reach = decal.size[0].max(decal.size[1]);
         let axes = [across, up, out];
-        let steps = axes.map(|axis| Some((project(app, rect, origin + axis * reach)? - center) / reach.max(f32::MIN_POSITIVE)));
-        let arrows = steps.map(|step| step.filter(|step| step.length() * reach > MIN_SCREEN_SPAN).map(|step| center + step.normalized() * ARROW));
+        let move_axes = match tools {
+            Some(tools) if tools.space == GizmoSpace::World => [Vec3::X, Vec3::Y, Vec3::Z],
+            _ => axes,
+        };
+        let step_along = |axis: Vec3| Some((project(app, rect, origin + axis * reach)? - center) / reach.max(f32::MIN_POSITIVE));
+        let steps = axes.map(step_along);
+        let move_steps = move_axes.map(step_along);
+        let arrows = move_steps.map(|step| step.filter(|step| step.length() * reach > MIN_SCREEN_SPAN).map(|step| center + step.normalized() * ARROW * scale));
 
         // The turn ring, unless the frame is seen too near edge on to grab it
         let ring = steps[0]
@@ -139,7 +131,7 @@ impl FrameGizmo {
                 across_step.length() > f32::EPSILON && solve(*across_step, *up_step, egui::Vec2::X).is_some() && ring_open(app, rect, center, out)
             })
             .and_then(|(step, _)| {
-                let radius = TURN_RING / step.length();
+                let radius = TURN_RING * scale / step.length();
                 let last = (TURN_RING_POINTS - 1) as f32;
                 let points = (0..TURN_RING_POINTS).map(|index| {
                     let (sin, cos) = (index as f32 / last * std::f32::consts::TAU).sin_cos();
@@ -148,13 +140,23 @@ impl FrameGizmo {
                 points.collect::<Option<Vec<_>>>()?.try_into().ok()
             });
 
-        Some(FrameGizmo { layer, effect, decal, warp, corners, sides, center, arrows, ring, origin, axes, steps })
+        Some(FrameGizmo { layer, effect, decal, warp, corners, sides, center, arrows, ring, tools, origin, axes, steps, move_axes, move_steps })
     }
 
     /// The frame's offset after sliding it across its plane by screen movement `delta` (None when the frame is edge-on)
     pub(crate) fn slid_on_screen(&self, delta: egui::Vec2) -> Option<[f32; 2]> {
         let [across, up] = solve(self.steps[0]?, self.steps[1]?, delta)?;
         Some(self.slid(across, up))
+    }
+
+    /// The tool bar's grid step and angle step (0: no snapping) while a drag snaps
+    fn snap_steps(&self, snapping: bool) -> (f32, f32) {
+        self.tools.filter(|_| snapping).map_or((0.0, 0.0), |tools| (tools.grid_step(), tools.angle_step()))
+    }
+
+    /// Whether the tool bar's mode offers `grab` (a planar's frame, with no tool bar, offers every handle but Place on surface's)
+    fn offers(&self, grab: FrameGrab) -> bool {
+        self.tools.map_or(grab != FrameGrab::Place, |tools| grab.offered_in(tools.mode))
     }
 
     /// Where screen point `p` meets the frame's plane, across and up in frame sizes from its centre
@@ -175,6 +177,36 @@ impl FrameGizmo {
     fn slid(&self, across: f32, up: f32) -> [f32; 2] {
         let (sin, cos) = self.decal.rotation.to_radians().sin_cos();
         [self.decal.offset[0] + across * cos - up * sin, self.decal.offset[1] + across * sin + up * cos]
+    }
+}
+
+/// The selected fill layer's (or selected mask fill effect's) projection with the layer, the effect and the sources it reads: none outside painting mode
+pub(crate) fn selected_fill_projection(app: &TextureCraftApp) -> Option<(LayerId, Option<LayerId>, &Projection, Vec<&Source>)> {
+    use texturecraft_engine::StackTarget;
+
+    if app.ui.mode != crate::state::Mode::Painting {
+        return None;
+    }
+
+    let layers = &app.session.doc.project;
+    let selected = app.session.selected_layer()?;
+    match app.session.target {
+        StackTarget::Content => {
+            let layer = layers.content_layer(selected)?;
+            let LayerKind::Fill(Fill { projection, sources, .. }) = &layer.kind else { return None };
+
+            Some((layer.id, None, projection, sources.values().collect::<Vec<_>>()))
+        }
+        StackTarget::Effect(effect) => {
+            // Only the selected layer's effective mask may supply a frame, including an instance's inherited mask
+            let owner = layers.mask_owner(selected);
+            let mask = layers.layer(owner).ok()?.mask.as_ref()?;
+            let mask_effect = mask.effects.iter().find(|candidate| candidate.id == effect)?;
+            let EffectKind::Fill { projection, source, .. } = &mask_effect.kind else { return None };
+
+            Some((owner, Some(effect), projection, vec![source]))
+        }
+        StackTarget::Mask => None,
     }
 }
 
@@ -255,7 +287,10 @@ impl Gizmo for FrameGizmo {
         if let Some(ring) = &self.ring {
             handles.push((FrameGrab::Turn, ring.windows(2).map(|pair| distance_to_segment(at, pair[0], pair[1])).fold(f32::INFINITY, f32::min)));
         }
-        nearest(handles)
+
+        // Place on surface takes any press the handles do not: just within reach, so a nearer corner wins
+        handles.push((FrameGrab::Place, GRAB));
+        nearest(handles.into_iter().filter(|(grab, _)| self.offers(*grab)))
     }
 
     fn same_projection(&self, other: &FrameGizmo) -> bool {
@@ -264,17 +299,27 @@ impl Gizmo for FrameGizmo {
 
     /// The command and params a drag of `grab` from `from` to `to` runs
     fn edit(&self, app: &TextureCraftApp, rect: Rect, grab: FrameGrab, from: Pos2, to: Pos2) -> Option<(&'static str, Value)> {
+        self.edit_with_snap(app, rect, grab, from, to, false)
+    }
+
+    /// As [`Gizmo::edit`]; with `snapping` a warp's moves and turns jump by the tool bar's grid and angle steps
+    fn edit_with_snap(&self, app: &TextureCraftApp, rect: Rect, grab: FrameGrab, from: Pos2, to: Pos2, snapping: bool) -> Option<(&'static str, Value)> {
         let delta = to - from;
         let center = self.center;
+        let (grid_step, angle_step) = self.snap_steps(snapping);
+        let world = self.tools.is_some_and(|tools| tools.space == GizmoSpace::World);
         let mut params = match grab {
-            FrameGrab::Slide => json!({"offset": self.slid_on_screen(delta)?}),
+            FrameGrab::Slide => {
+                let [across, up] = solve(self.steps[0]?, self.steps[1]?, delta)?;
+                json!({"offset": self.slid(to_step(across, grid_step), to_step(up, grid_step))})
+            }
             FrameGrab::Axis(axis) => {
-                let step = (*self.steps.get(axis)?)?;
-                let distance = delta.dot(step) / step.length_sq().max(f32::MIN_POSITIVE);
+                let step = (*self.move_steps.get(axis)?)?;
+                let distance = to_step(delta.dot(step) / step.length_sq().max(f32::MIN_POSITIVE), grid_step);
                 match axis {
-                    0 => json!({"offset": self.slid(distance, 0.0)}),
-                    1 => json!({"offset": self.slid(0.0, distance)}),
-                    _ => json!({"position": (self.origin + self.axes[2] * distance).to_array(), "normal": self.axes[2].to_array()}),
+                    0 if !world => json!({"offset": self.slid(distance, 0.0)}),
+                    1 if !world => json!({"offset": self.slid(0.0, distance)}),
+                    _ => json!({"position": (self.origin + self.move_axes[axis] * distance).to_array(), "normal": self.axes[2].to_array()}),
                 }
             }
             FrameGrab::Scale => {
@@ -288,12 +333,18 @@ impl Gizmo for FrameGizmo {
                 size[1 - side % 2] *= stretch;
                 json!({"size": size})
             }
+            FrameGrab::Place => {
+                // Off the model the frame waits where it last touched it
+                let on_view = to - rect.min;
+                let hit = app.session.pick(Vec2::new(on_view.x, on_view.y), app.session.viewport)?;
+                json!({"position": hit.pos.to_array(), "normal": hit.nrm.to_array()})
+            }
             FrameGrab::Turn => {
                 // Measure the turn in the frame's own plane so a tilted frame follows the pointer
                 let angle = |p: Pos2| self.on_plane(app, rect, p).map(|[across, up]| (up * self.decal.size[1]).atan2(across * self.decal.size[0]).to_degrees());
                 let swept = angle(to)? - angle(from)?;
                 let swept = (swept + HALF_TURN).rem_euclid(2.0 * HALF_TURN) - HALF_TURN;
-                json!({"rotation": self.decal.rotation + swept})
+                json!({"rotation": self.decal.rotation + to_step(swept, angle_step)})
             }
             FrameGrab::Corner(corner) => {
                 let mut corners = self.warp?;
@@ -328,7 +379,7 @@ pub(crate) fn overlay(ui: &Ui, rect: Rect, gizmo: &FrameGizmo) {
     let mut outline = gizmo.corners.to_vec();
     outline.push(gizmo.corners[0]);
     dashed_outline(&painter, &outline);
-    if let Some(ring) = &gizmo.ring {
+    if let Some(ring) = gizmo.ring.as_ref().filter(|_| gizmo.offers(FrameGrab::Turn)) {
         let color = if lit(FrameGrab::Turn) { tokens.viewport_accent } else { AXIS_COLORS[2] };
         painter.add(egui::Shape::line(ring.to_vec(), Stroke::new(SHAFT_WIDTH + SHAFT_HALO_EXTRA_WIDTH, SHAFT_HALO)));
         painter.add(egui::Shape::line(ring.to_vec(), Stroke::new(SHAFT_WIDTH, color)));
@@ -345,12 +396,14 @@ pub(crate) fn overlay(ui: &Ui, rect: Rect, gizmo: &FrameGizmo) {
             }
         }
     }
-    for (index, side) in gizmo.sides.into_iter().enumerate() {
+    for (index, side) in gizmo.sides.into_iter().enumerate().filter(|(index, _)| gizmo.offers(FrameGrab::Side(*index))) {
         handle_dot(&painter, side, SIDE_DOT, dot_fill(FrameGrab::Side(index)));
     }
 
     let arrow_color = |axis: usize| if lit(FrameGrab::Axis(axis)) { tokens.viewport_accent } else { AXIS_COLORS[axis] };
-    move_handles(&painter, gizmo.center, gizmo.arrows, arrow_color, dot_fill(FrameGrab::Slide));
+    if gizmo.offers(FrameGrab::Slide) {
+        move_handles(&painter, gizmo.center, gizmo.arrows, arrow_color, dot_fill(FrameGrab::Slide));
+    }
 }
 
 /// The centre square (filled `square`) with its X/Y/Z arrows to `arrows`, coloured by `arrow_color`; shafts and heads over a dark halo like the symmetry manipulator's
@@ -409,6 +462,7 @@ pub(crate) mod tests {
     use texturecraft_engine::core::{LayerId, LayerKind, Projection};
 
     use super::*;
+    use crate::frame_gizmo::warp_toolbar::GizmoMode;
 
     /// The test window: big enough that the docked panels leave the 3D view room for the ball with every gizmo handle round it
     const TEST_WINDOW: egui::Vec2 = vec2(1600.0, 960.0);
@@ -421,6 +475,12 @@ pub(crate) mod tests {
         let mut harness = builder.build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(4);
         harness
+    }
+
+    /// A warp's gizmo in `mode`, as the tool bar's buttons set it (a planar's has no modes)
+    pub(crate) fn show_handles(harness: &mut egui_kittest::Harness<'_, TextureCraftApp>, mode: GizmoMode) {
+        harness.state_mut().ui.warp_toolbar.mode = mode;
+        harness.run_steps(2);
     }
 
     /// The ball with a selected fill layer projecting `projection`
@@ -519,7 +579,7 @@ pub(crate) mod tests {
         ["X", "Y", "Z"].map(|tag| harness.get_by_label(&format!("{row} {tag}")).accesskit_node().numeric_value().unwrap() as f32)
     }
 
-    fn gizmo(harness: &egui_kittest::Harness<'_, TextureCraftApp>) -> FrameGizmo {
+    pub(crate) fn gizmo(harness: &egui_kittest::Harness<'_, TextureCraftApp>) -> FrameGizmo {
         FrameGizmo::of(harness.state(), harness.state().viewport_rect).unwrap()
     }
 
@@ -645,6 +705,7 @@ pub(crate) mod tests {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for kind in ["warp", "planar"] {
             let (mut harness, _) = fill_app(kind);
+            show_handles(&mut harness, GizmoMode::Rotate);
             let start = gizmo(&harness);
             let ring = start.ring.unwrap_or_else(|| panic!("{kind}: a frame facing the camera shows its ring"));
             let on_ring = *ring
@@ -667,6 +728,7 @@ pub(crate) mod tests {
         }
 
         let (mut harness, layer) = fill_app("warp");
+        show_handles(&mut harness, GizmoMode::Scale);
         let warp = gizmo(&harness);
         assert_eq!(warp.grab(warp.sides[1]), Some(FrameGrab::Side(1)));
 
