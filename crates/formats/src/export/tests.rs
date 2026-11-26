@@ -2154,6 +2154,42 @@ fn feedback_psd_preview_matches_layer_rgba() {
 }
 
 #[test]
+fn psd_layers_hold_the_samples_of_the_same_png_at_every_layout_and_depth() {
+    let fx = Fx::new(&[Channel::Roughness, Channel::BaseColor]);
+    let base_colour = |component| SourceRef::Channel { channel: Channel::BaseColor, component };
+    let mut gray_alpha = roughness();
+    gray_alpha.push((Dest::A, SourceRef::Constant(0.5)));
+    let mut rgb = rgba_half_alpha();
+    rgb.pop();
+    let layouts = [roughness(), vec![(Dest::L, base_colour(0))], gray_alpha, rgb, rgba_half_alpha()];
+
+    for channels in layouts {
+        for (depth, dither) in [(8, false), (8, true), (16, false)] {
+            let mut png_options = one_map(FileFormat::Png, depth, channels.clone());
+            png_options.dither = dither;
+            let mut psd_options = png_options.clone();
+            psd_options.format_override = Some(FileFormat::Psd);
+
+            let png = decode(&fx.render(&png_options)[0]);
+            let psd = craft_psd::PsdFile::from_bytes(&fx.render(&psd_options)[0].bytes).unwrap();
+            let layer = psd.iter_layers().next().unwrap();
+
+            let context = format!("{channels:?} at {depth} bits, dithering {dither}");
+            if depth == 16 {
+                // Planes of big-endian samples: red, green, blue, then transparency
+                let planes: Vec<Vec<u8>> = [0, 1, 2, -1].into_iter().map(|id| layer.channel_bytes(id).unwrap()).collect();
+                let texel_count = planes[0].len() / 2;
+                let samples: Vec<u16> =
+                    (0..texel_count).flat_map(|texel| planes.iter().map(move |plane| u16::from_be_bytes([plane[2 * texel], plane[2 * texel + 1]]))).collect();
+                assert!(samples == png.to_rgba16().into_raw(), "{context}");
+            } else {
+                assert!(layer.rgba8().unwrap().data == png.to_rgba8().into_raw(), "{context}");
+            }
+        }
+    }
+}
+
+#[test]
 fn feedback_psd_layer_names_keep_literal_and_explicit_tile_numbers() {
     let mut fx = Fx::new(&default_channels());
     fx.project.texture_sets[0].uv_tiles = vec![1001];

@@ -88,9 +88,8 @@ pub(super) fn render_psd(renderer: &MapRenderer, planned: PlannedFile, size: (u3
     for layer in layers.iter().rev() {
         let map = renderer.render(layer.map, tile, FileFormat::Psd, bit_depth)?;
         embedded = map.embed.or(embedded);
-        let rgba = to_rgba(map.data, map.component_count, &map.srgb);
         let encoding = Encoding { format: FileFormat::Psd, depth: bit_depth, dither: layer.dither };
-        let layer_pixels = pixel_data(rgba, map.size.0, encoding)?;
+        let layer_pixels = rgba_pixel_data(map.data, map.component_count, &map.srgb, map.size.0, encoding)?;
         pixels.push((layer.name.as_str(), map.size, layer_pixels));
     }
     if let Some(space) = embedded {
@@ -105,36 +104,6 @@ pub(super) fn render_psd(renderer: &MapRenderer, planned: PlannedFile, size: (u3
     }
 
     Ok(ExportedFile { name, bytes, width: size.0, height: size.1, warnings })
-}
-
-/// L, LA, RGB or RGBA samples as RGBA (gray repeated, opaque without alpha), sRGB transfer applied to the components `srgb` marks, values clamped to 0-1
-fn to_rgba(mut data: Vec<f32>, component_count: usize, srgb: &[bool]) -> Vec<f32> {
-    let encode = |component: usize, value: f32| if srgb.get(component).copied().unwrap_or(false) { linear_to_srgb(value) } else { value.clamp(0.0, 1.0) };
-
-    if component_count == PSD_RGBA_PLANES {
-        for texel in data.as_chunks_mut::<PSD_RGBA_PLANES>().0 {
-            for (component, value) in texel.iter_mut().enumerate() {
-                *value = encode(component, *value);
-            }
-        }
-
-        return data;
-    }
-
-    data.chunks_exact(component_count.max(1))
-        .flat_map(|texel| {
-            let encoded = |component| encode(component, texel.get(component).copied().unwrap_or(0.0));
-            match component_count {
-                1 | 2 => {
-                    let gray = encoded(0);
-                    let alpha = if component_count == 2 { encoded(1) } else { 1.0 };
-                    [gray, gray, gray, alpha]
-                }
-                3 => [encoded(0), encoded(1), encoded(2), 1.0],
-                _ => [encoded(0), encoded(1), encoded(2), encoded(3)],
-            }
-        })
-        .collect()
 }
 
 /// The merged image of `layers` (bottom first, as the file stores them), one row at a time
@@ -206,16 +175,36 @@ fn over(canvas: &mut [f32], canvas_width: u32, layer: &[f32], layer_width: u32) 
     }
 }
 
-/// Quantize directly into the sample type the PSD builder accepts.
-fn pixel_data(samples: Vec<f32>, width: u32, encoding: Encoding) -> Result<PixelData> {
+/// L, LA, RGB or RGBA samples quantized as the RGBA the PSD builder accepts: gray repeated, opaque without alpha, sRGB transfer applied to the components `srgb` marks, values clamped to 0-1
+fn rgba_pixel_data(mut data: Vec<f32>, component_count: usize, srgb: &[bool], width: u32, encoding: Encoding) -> Result<PixelData> {
+    let component_count = component_count.max(1);
+    for texel in data.chunks_exact_mut(component_count) {
+        for (component, value) in texel.iter_mut().enumerate() {
+            *value = if srgb.get(component).copied().unwrap_or(false) { linear_to_srgb(*value) } else { value.clamp(0.0, 1.0) };
+        }
+    }
+
+    // Widen each texel while quantizing, so no floating-point RGBA copy of the layer is made
+    let texel_count = data.len() / component_count;
+    let rgba = (0..texel_count * PSD_RGBA_PLANES).map(|index| {
+        let (texel, component) = (index / PSD_RGBA_PLANES, index % PSD_RGBA_PLANES);
+        let source = match component_count {
+            1 | 2 if component < ALPHA_INDEX => Some(0),
+            1 | 3 if component == ALPHA_INDEX => None,
+            2 => Some(1),
+            _ => Some(component),
+        };
+        source.map_or(1.0, |source| data.get(texel * component_count + source).copied().unwrap_or(0.0))
+    });
+
     if encoding.depth == 16 {
         let mut pixels = Vec::new();
-        pixels.try_reserve_exact(samples.len()).map_err(|error| FormatError::Invalid(format!("PSD sample buffer allocation failed: {error}")))?;
-        pixels.extend(samples.into_iter().map(quantize_u16));
+        pixels.try_reserve_exact(rgba.len()).map_err(|error| FormatError::Invalid(format!("PSD sample buffer allocation failed: {error}")))?;
+        pixels.extend(rgba.map(quantize_u16));
         return Ok(PixelData::Rgba16(pixels));
     }
 
-    quantize_integer(encoding, width, PSD_RGBA_PLANES, samples.into_iter()).map(PixelData::Rgba8)
+    quantize_integer(encoding, width, PSD_RGBA_PLANES, rgba).map(PixelData::Rgba8)
 }
 
 /// An RGB PSD of `layers` (bottom first, each named by its `/`-separated group path) over the merged `composite`, uncompressed so its size is known up front
