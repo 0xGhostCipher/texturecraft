@@ -102,7 +102,7 @@ fn a_changed_file_is_outdated_and_update_replaces_its_pixels_as_one_undo_step() 
 }
 
 #[test]
-fn outdated_resources_come_first_then_missing_up_to_date_and_unlinked() {
+fn outdated_resources_come_first_then_missing_up_to_date_unlinked_and_materials() {
     let dir = tempfile::tempdir().unwrap();
     let [fine, gone, changed] = ["b_fine.png", "c_gone.png", "d_changed.png"].map(|name| dir.path().join(name));
     for file in [&fine, &gone, &changed] {
@@ -114,12 +114,30 @@ fn outdated_resources_come_first_then_missing_up_to_date_and_unlinked() {
     for file in [&fine, &gone, &changed] {
         import(&mut s, file);
     }
+
+    // The environment map and the brush alpha are image resources like any other
+    let environment = format!("{}b_fine.png", texturecraft_engine::core::project::ENV_RESOURCE_PREFIX);
+    execute(&mut s, "display.set", &json!({"environment": environment})).unwrap();
+    execute(&mut s, "tool.brush", &json!({"alpha": {"image": "d_changed.png"}})).unwrap();
+
+    // A linked MaterialCraft material keeps its package as a resource without a file
+    s.doc.resources.insert("a_brick.mcmat".to_string(), Arc::new(b"package".to_vec()));
+    let layer = execute(&mut s, "layer.add.fill", &Value::Null).unwrap()["layer"].as_u64().unwrap();
+    let link = serde_json::from_value(json!({"name": "Brick", "package": "a_brick.mcmat", "graph": "Brick", "params": [], "size": 4})).unwrap();
+    if let texturecraft_engine::core::LayerKind::Fill(fill) = &mut s.doc.project.layers.get_mut(&texturecraft_engine::core::LayerId(layer)).unwrap().kind {
+        fill.link = Some(link);
+    }
+
     std::fs::remove_file(&gone).unwrap();
     write_png(&changed, 8, GREEN);
 
-    let order: Vec<String> = s.resource_states().into_iter().map(|state| state.name).collect();
+    let states = s.resource_states();
+    let order: Vec<&str> = states.iter().map(|state| state.name.as_str()).collect();
+    let statuses: Vec<&str> = states.iter().map(|state| state.status.id()).collect();
 
-    assert_eq!(order, ["d_changed.png", "c_gone.png", "b_fine.png", "a_unlinked.png"], "by status first, against the name order");
+    assert_eq!(order, ["d_changed.png", "c_gone.png", "b_fine.png", "a_unlinked.png", "a_brick.mcmat"], "by status first, against the name order");
+    assert_eq!(statuses, ["outdated", "missing", "upToDate", "noSource", "material"], "the alpha's and the environment's files are checked too");
+    assert!(execute(&mut s, "resource.update", &json!({"names": ["a_brick.mcmat"]})).is_err(), "a material has no file to read again");
 }
 
 #[test]

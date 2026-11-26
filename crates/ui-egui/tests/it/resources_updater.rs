@@ -130,11 +130,21 @@ fn select_new_resource_follows_the_chosen_file_and_the_name_filter_narrows_the_l
 }
 
 #[test]
-fn show_in_folder_shows_the_folder_of_the_resource_file() {
+fn show_in_folder_shows_the_folder_of_the_resource_file_and_materials_have_no_file() {
     let dir = TempDir::new("resources-updater-folder");
     let file = png(&dir, "bricks.png", 4);
     let mut h = app();
     import(&mut h, &file);
+
+    // A linked MaterialCraft material keeps its package as a resource without a file
+    let layer = h.state_mut().run("layer.add.fill", json!({})).unwrap()["layer"].as_u64().unwrap();
+    let session = &mut h.state_mut().session;
+    session.doc.resources.insert("brick.mcmat".to_string(), std::sync::Arc::new(b"package".to_vec()));
+    let link = serde_json::from_value(json!({"name": "Brick", "package": "brick.mcmat", "graph": "Brick", "params": [], "size": 4})).unwrap();
+    if let texturecraft_engine::core::LayerKind::Fill(fill) = &mut session.doc.project.layers.get_mut(&texturecraft_engine::core::LayerId(layer)).unwrap().kind
+    {
+        fill.link = Some(link);
+    }
     activate(&mut h, "Resources Updater");
 
     activate(&mut h, "Show in folder bricks.png");
@@ -142,6 +152,9 @@ fn show_in_folder_shows_the_folder_of_the_resource_file() {
     let shown = h.state().file_dialogs.shown_folders().to_vec();
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].file_name(), dir.file_name(), "the file's own folder");
+    assert!(shows(&h, "Name : brick.mcmat"), "the material is listed");
+    assert!(h.query_by_label("Select new resource brick.mcmat").is_none(), "a material cannot point at an image file");
+    assert!(h.query_by_label("Show in folder brick.mcmat").is_none(), "it has no file");
 }
 
 #[test]

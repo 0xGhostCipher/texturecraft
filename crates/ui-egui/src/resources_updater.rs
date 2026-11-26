@@ -329,11 +329,15 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
                     request = Some(RowRequest::Update(row.name.clone()));
                 }
 
-                let select = ui.button(tr("Select new resource"));
-                let select_name = format!("{} {}", tr("Select new resource"), row.name);
-                select.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &select_name));
-                if select.clicked() {
-                    request = Some(RowRequest::SelectNew(row.name.clone()));
+                // A material is no image file, so it cannot point at one
+                let material = row.status == ResourceStatus::Material;
+                if !material {
+                    let select = ui.button(tr("Select new resource"));
+                    let select_name = format!("{} {}", tr("Select new resource"), row.name);
+                    select.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &select_name));
+                    if select.clicked() {
+                        request = Some(RowRequest::SelectNew(row.name.clone()));
+                    }
                 }
 
                 if let Some(path) = &row.path {
@@ -353,6 +357,8 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
                     let status = ui.label(tr(row.status.label()));
                     if let Some(error) = &row.error {
                         status.on_hover_text(error);
+                    } else if material {
+                        status.on_hover_text(tr("A MaterialCraft material has no file on disk: it updates when MaterialCraft cooks it again"));
                     }
                 });
             });

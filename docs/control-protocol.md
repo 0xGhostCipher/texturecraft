@@ -506,7 +506,7 @@ read once; its verdict is kept until its size or time changes again.
 
 | Command | Params and result |
 |---|---|
-| `resource.status` | `{}` → `{resources: [{name, status, path?, error?}], total, outdated}`; `status` is `outdated` (the file's size or contents differ from the resource), `missing` (the file is gone or unreadable, `error` says why), `upToDate` or `noSource` (made in the app or imported without a path); outdated first, then by name. A file is read only when its size matches but its modification time does not |
+| `resource.status` | `{}` → `{resources: [{name, status, path?, error?}], total, outdated}`; `status` is `outdated` (the file's size or contents differ from the resource), `missing` (the file is gone or unreadable, `error` says why), `upToDate`, `noSource` (made in the app or imported without a path) or `material` (the package of a linked MaterialCraft material: it has no file and updates with `material.link.cook`); outdated first, then by name. A file is read only when its size matches but its modification time does not |
 | `resource.update` | `{names?: [name]}` (default: every outdated resource) → `{updated, failed: [{name, error}]}`: reads the files again and replaces the resources' bytes and pixels under the same names, so every layer, mask and view using them recomposites; one undo step, none when nothing changed. A file that cannot be read fails alone; when none could be read the command is an error. Unknown names and resources without a file are refused |
 | `resource.relink` | `{name, path}` → `{name, path}`: an image resource takes the image file's pixels (within the image import limits) and follows that file from then on; one undo step |
 

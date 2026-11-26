@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Check resources on disk",
             [],
             None,
-            "{} → {resources: [{name, status: outdated|missing|upToDate|noSource, path?, error?}] (outdated first), total, outdated}",
+            "{} → {resources: [{name, status: outdated|missing|upToDate|noSource|material, path?, error?}] (outdated first; material: a linked MaterialCraft package, updated by material.link.cook), total, outdated}",
             always,
             |s, _| Ok(status(s))
         ),
@@ -49,8 +49,31 @@ impl Session {
     /// not, and that verdict is kept until the file's size or time changes again.
     pub fn resource_states(&mut self) -> Vec<ResourceState> {
         let mut states = self.compare_resources();
+        let materials = self.material_packages().into_iter();
+        states.extend(materials.map(|name| ResourceState { name, status: ResourceStatus::Material, path: None, error: None }));
         states.sort_by(|a, b| a.status.cmp(&b.status).then_with(|| a.name.cmp(&b.name)));
         states
+    }
+
+    /// The packages of linked MaterialCraft materials (fill layers and material effects) the project holds
+    fn material_packages(&self) -> std::collections::BTreeSet<String> {
+        use texturecraft_core::{EffectKind, Fill, LayerKind};
+
+        let package_of = |fill: &Fill| fill.link.as_ref().map(|link| link.package.clone());
+        let mut packages = std::collections::BTreeSet::new();
+        for layer in self.doc.project.layers.values() {
+            if let LayerKind::Fill(fill) = &layer.kind {
+                packages.extend(package_of(fill));
+            }
+            for effect in layer.mask.iter().flat_map(|mask| &mask.effects).chain(&layer.content_effects) {
+                if let EffectKind::Material(fill) = &effect.kind {
+                    packages.extend(package_of(fill));
+                }
+            }
+        }
+
+        packages.retain(|name| self.doc.resources.contains_key(name));
+        packages
     }
 
     /// Whether `name` is an image resource the Resources Updater lists

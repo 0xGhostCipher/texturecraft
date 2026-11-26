@@ -1,6 +1,6 @@
-//! Whether an image resource still matches the file it was imported from
+//! Whether a resource still matches the file it was imported from
 
-/// How an image resource compares with its file on disk. The order is the Resources Updater's
+/// How a resource compares with its file on disk (materials have none). The order is the Resources Updater's
 /// list order: what needs attention first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ResourceStatus {
@@ -12,10 +12,14 @@ pub enum ResourceStatus {
     UpToDate,
     /// Made in the app or imported without a file path: there is nothing to compare with.
     NoSource,
+    /// A linked MaterialCraft material's package: it has no file to compare with and updates by
+    /// cooking it again (`material.link.cook`).
+    Material,
 }
 
 impl ResourceStatus {
-    pub const ALL: [ResourceStatus; 4] = [ResourceStatus::Outdated, ResourceStatus::Missing, ResourceStatus::UpToDate, ResourceStatus::NoSource];
+    pub const ALL: [ResourceStatus; 5] =
+        [ResourceStatus::Outdated, ResourceStatus::Missing, ResourceStatus::UpToDate, ResourceStatus::NoSource, ResourceStatus::Material];
 
     /// The id used by the control protocol
     pub fn id(self) -> &'static str {
@@ -24,6 +28,7 @@ impl ResourceStatus {
             ResourceStatus::Missing => "missing",
             ResourceStatus::UpToDate => "upToDate",
             ResourceStatus::NoSource => "noSource",
+            ResourceStatus::Material => "material",
         }
     }
 
@@ -34,6 +39,7 @@ impl ResourceStatus {
             ResourceStatus::Missing => "Missing",
             ResourceStatus::UpToDate => "Up to date",
             ResourceStatus::NoSource => "No source file",
+            ResourceStatus::Material => "Material",
         }
     }
 }
