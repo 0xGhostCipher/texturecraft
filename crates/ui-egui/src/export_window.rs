@@ -363,6 +363,8 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         params["reservedNames"] = job.written.iter().chain(&job.material_udim_patterns).map(|name| json!(name)).collect();
     }
 
+    let directory = std::path::PathBuf::from(params["dir"].as_str().unwrap_or_default());
+
     // The last command writes the USD asset from the params of every command, so a canceled or failed export writes none
     if let Some(job) = app.ui.export.job.as_mut().filter(|job| job.usd_asset) {
         job.sent.push(params.clone());
@@ -382,9 +384,15 @@ fn export_step(app: &mut TextureCraftApp, frame: u64) {
         app.toast(warning.to_string(), true);
     }
 
-    let files: Vec<String> = response_strings(&response, "files")
-        .map(|file| std::path::Path::new(file).file_name().map_or_else(|| file.to_string(), |n| n.to_string_lossy().into_owned()))
-        .collect();
+    // Names relative to the output folder keep a template's folders
+    let relative = |file: &str| {
+        let path = std::path::Path::new(file);
+        match path.strip_prefix(&directory) {
+            Ok(inside) => inside.components().map(|part| part.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"),
+            Err(_) => path.file_name().map_or_else(|| file.to_string(), |name| name.to_string_lossy().into_owned()),
+        }
+    };
+    let files: Vec<String> = response_strings(&response, "files").map(relative).collect();
     let mut lines = vec![set(), ConsoleLine::Step(tr("Saving texture files").into())];
     // The USD asset is no texture: it stays in the list of written files only
     for file in files.iter().filter(|file| !file.to_ascii_lowercase().ends_with(".usd")) {

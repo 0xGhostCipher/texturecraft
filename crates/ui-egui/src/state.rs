@@ -126,6 +126,9 @@ pub struct Windows {
     /// Window ▸ Reset UI is waiting for its answer.
     #[serde(skip)]
     pub confirm_reset_ui: bool,
+    /// The generator effect whose preview is open enlarged in its own window
+    #[serde(skip)]
+    pub generator_preview: Option<u64>,
 }
 
 /// An action that replaces or ends the project, held while the project has unsaved changes.
@@ -172,7 +175,8 @@ pub struct Prefs {
     pub reserved_cores: u32,
     /// Maximum decompressed project size accepted on open, in GiB (at least one).
     pub project_open_limit_gib: u32,
-    /// Percent of the free RAM a project save may hold at once (desktop; 1 to 100).
+    /// Percentage of free RAM available to a project save on desktop (0 to 100).
+    /// A stored zero uses the minimum budget of 1%.
     pub save_ram_percent: u8,
     /// Worker threads for painting, baking and export (desktop; 0: one per logical CPU). Read at
     /// startup, before the first parallel job.
@@ -192,6 +196,21 @@ pub struct Prefs {
     /// The plain background of the 3D and 2D views at Environment Opacity 0 (Settings > General >
     /// Background color): the color at the top and at the bottom, linear RGB.
     pub background: [[f32; 3]; 2],
+    /// The 3D view draws the X, Y and Z axes in its corner.
+    pub show_world_axes: bool,
+    /// Settings > General > Show keyboard helper. Stored only: TextureCraft has no keyboard helper yet.
+    pub show_keyboard_helper: bool,
+    /// Settings > General > Only display the selected material when painting. Stored only: the
+    /// views always show every texture set.
+    pub only_selected_material_when_painting: bool,
+    /// Settings > Baking options > Save preprocessed scene files. Stored only: bakes keep no
+    /// preprocessed scene files.
+    pub save_preprocessed_scene_files: bool,
+    /// Settings > Baking options > Enable live preview baking process.
+    pub live_preview_baking: bool,
+    /// Settings > Preview options > Local cache directory (desktop). Empty or relative uses the
+    /// app's default cache directory. Stored only until TextureCraft has a preview cache.
+    pub local_cache_directory: String,
 }
 
 /// The orbit speed the built-in navigation runs at.
@@ -205,7 +224,7 @@ impl Default for Prefs {
             ui_scale: 1.0,
             autosave_minutes: 10,
             recent_projects_limit: 10,
-            language: "en".into(),
+            language: crate::i18n::SYSTEM_LANGUAGE.into(),
             viewport_texture: 0,
             brightness: crate::theme::Brightness::default(),
             accent: crate::theme::Accent::default(),
@@ -223,6 +242,12 @@ impl Default for Prefs {
             gpu_raytracing: true,
             libraries: Vec::new(),
             background: texturecraft_render::DEFAULT_BACKGROUND,
+            show_world_axes: true,
+            show_keyboard_helper: true,
+            only_selected_material_when_painting: false,
+            save_preprocessed_scene_files: true,
+            live_preview_baking: true,
+            local_cache_directory: String::new(),
         }
     }
 }
@@ -297,6 +322,9 @@ pub struct NewProject {
     /// Import settings > Import cameras: keep the cameras stored in the mesh file
     #[serde(default = "import_cameras_default")]
     pub import_cameras: bool,
+    /// Import settings > Rebuild mesh UVs.
+    #[serde(default)]
+    pub rebuild_uvs: bool,
     /// Color management as chosen in the window (the project is always created as Legacy)
     #[serde(skip)]
     pub color_management: crate::project_form::ColorManagement,
@@ -334,6 +362,7 @@ impl Default for NewProject {
             template: default_template(),
             normal_format: None,
             import_cameras: true,
+            rebuild_uvs: false,
             color_management: crate::project_form::ColorManagement::Legacy,
             baked_maps: Vec::new(),
         }
@@ -629,6 +658,9 @@ pub struct UiState {
     /// How the 3D view shows symmetry
     #[serde(default)]
     pub symmetry: crate::symmetry::SymmetryDisplay,
+    /// The warp tool bar: the gizmo's mode and space, its size, and the steps its drags snap to
+    #[serde(default)]
+    pub warp_toolbar: crate::frame_gizmo::warp_toolbar::WarpToolbarSettings,
     /// The brush, symmetry and other tool settings of the last session, which the next one starts with
     #[serde(default)]
     pub tool_settings: texturecraft_engine::ToolSettings,
@@ -716,6 +748,12 @@ impl UiState {
         self.rail_panel = None;
     }
 
+    /// Reset the workspace and return the interface to the system language.
+    pub(crate) fn reset_ui(&mut self) {
+        self.adopt_layout(Self::default());
+        self.prefs.language.clear();
+    }
+
     /// Take `layout`'s panels, windows and view settings, keeping this state's dialogs, settings, files and shelf query
     pub fn adopt_layout(&mut self, layout: UiState) {
         let keep = std::mem::replace(self, layout);
@@ -736,6 +774,7 @@ impl UiState {
         self.nav_buttons = keep.nav_buttons;
         self.keymap = keep.keymap;
         self.tool_settings = keep.tool_settings;
+        self.warp_toolbar = keep.warp_toolbar;
         self.named_layouts = keep.named_layouts;
         self.bake_presets = keep.bake_presets;
         self.layout_dialog = None;
@@ -796,6 +835,7 @@ impl Default for UiState {
             keymap: Keymap::new(),
             bake_paint_brush: crate::bake_mode::BakePaintBrush::default(),
             symmetry: crate::symmetry::SymmetryDisplay::default(),
+            warp_toolbar: crate::frame_gizmo::warp_toolbar::WarpToolbarSettings::default(),
             tool_settings: Default::default(),
             bake_visualization: crate::bake_mode::BakeVisualizationToggles::default(),
             named_layouts: Vec::new(),
@@ -850,8 +890,12 @@ mod tests {
     }
 
     #[test]
-    fn adopting_a_layout_keeps_recent_files_export_settings_and_shortcuts() {
+    fn adopting_a_layout_keeps_recent_files_and_user_settings() {
+        use crate::frame_gizmo::warp_toolbar::{GizmoMode, GizmoSpace, WarpToolbarSettings};
+
+        let warp_toolbar = WarpToolbarSettings { mode: GizmoMode::Rotate, space: GizmoSpace::World, manipulator_size: 0.4, grid_steps: 0.5, angle_steps: 30.0 };
         let mut ui = UiState { recent: vec!["a.tcraft".into()], ..UiState::default() };
+        ui.warp_toolbar = warp_toolbar;
         ui.export.preset = "Mine".into();
         ui.keymap.insert("file.save".into(), "F5".into());
         let mut layout = UiState::default();
@@ -863,6 +907,7 @@ mod tests {
         assert_eq!(ui.recent, vec!["a.tcraft".to_string()]);
         assert_eq!(ui.export.preset, "Mine");
         assert_eq!(ui.keymap.get("file.save").map(String::as_str), Some("F5"));
+        assert_eq!(ui.warp_toolbar, warp_toolbar, "loading a layout keeps the user's warp settings");
     }
 
     #[test]
