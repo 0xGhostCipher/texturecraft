@@ -141,6 +141,8 @@ mod resource_picker;
 mod resource_picker_item;
 mod round_gizmo;
 mod running_bake;
+#[cfg(not(target_arch = "wasm32"))]
+mod sample_project;
 pub mod saved_search;
 mod screen_color_pick;
 pub mod screen_pick;
@@ -259,6 +261,9 @@ pub struct TextureCraftApp {
     pub session: Session,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) session_log_file: Option<session_log_file::SessionLogFile>,
+    /// The folder File > Open Sample Project starts in, under the data folder
+    #[cfg(not(target_arch = "wasm32"))]
+    pub samples_folder: std::path::PathBuf,
     viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
@@ -297,6 +302,10 @@ pub struct TextureCraftApp {
     pub(crate) live_preview: bake_mode::LivePreview,
     /// Last frame's viewport rect (logical points), for scripted input.
     pub viewport_rect: egui::Rect,
+    /// Project and texture-set index from the last completed UI pass.
+    hovered_texture_set: Option<(u64, usize)>,
+    /// The set under the pointer in this pass, independent of dock drawing order.
+    next_hovered_texture_set: Option<(u64, usize)>,
     pub fps: f32,
     /// User smart materials found in the library folder (refreshed on demand).
     pub library: Option<Vec<std::path::PathBuf>>,
@@ -429,6 +438,8 @@ impl TextureCraftApp {
             session,
             #[cfg(not(target_arch = "wasm32"))]
             session_log_file: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            samples_folder: std::path::PathBuf::new(),
             viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds::default(),
             ui,
             ui_store,
@@ -450,6 +461,8 @@ impl TextureCraftApp {
             bake_map_thumbnails: bake_mode::MapThumbnails::default(),
             live_preview: bake_mode::LivePreview::default(),
             viewport_rect: egui::Rect::NOTHING,
+            hovered_texture_set: None,
+            next_hovered_texture_set: None,
             fps: 0.0,
             ui_ms: 0.0,
             profiler: profile::Profiler::default(),
@@ -509,6 +522,7 @@ impl TextureCraftApp {
         {
             // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
+            app.samples_folder = user_dir(sample_project::SAMPLES_FOLDER);
 
             if cc.winit_window().is_some() {
                 match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
@@ -1273,6 +1287,13 @@ impl eframe::App for TextureCraftApp {
                 docking::show(self, ui);
             }
         });
+
+        let hovered_texture_set = self.next_hovered_texture_set.take();
+        if self.hovered_texture_set != hovered_texture_set {
+            self.hovered_texture_set = hovered_texture_set;
+            ctx.request_repaint();
+        }
+
         windows::show(self, &ctx);
 
         // Finish after the dock and windows have requested their thumbnails
