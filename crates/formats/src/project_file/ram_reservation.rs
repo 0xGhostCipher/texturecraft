@@ -56,7 +56,7 @@ impl RamReservation {
         Some(Self(RamOperation::Save))
     }
 
-    pub fn save_bytes(&mut self, project_file: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<Vec<u8>> {
+    pub fn save_bytes(&mut self, project_file: &ProjectFile<impl Borrow<Vec<u8>>, impl Borrow<Vec<u8>>>) -> Result<Vec<u8>> {
         self.check_save()?;
         let mut out = Cursor::new(Vec::new());
         write_project(&mut out, project_file, None)?;
@@ -64,13 +64,18 @@ impl RamReservation {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn save(&mut self, path: &std::path::Path, project_file: &ProjectFile<impl Borrow<Vec<u8>>>) -> Result<()> {
+    pub fn save(&mut self, path: &std::path::Path, project_file: &ProjectFile<impl Borrow<Vec<u8>>, impl Borrow<Vec<u8>>>) -> Result<()> {
         self.check_save()?;
         super::write_project_atomic(path, project_file, None)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn save_with_progress(&mut self, path: &std::path::Path, project_file: &ProjectFile<impl Borrow<Vec<u8>>>, progress: &SaveProgress) -> Result<()> {
+    pub fn save_with_progress(
+        &mut self,
+        path: &std::path::Path,
+        project_file: &ProjectFile<impl Borrow<Vec<u8>>, impl Borrow<Vec<u8>>>,
+        progress: &SaveProgress,
+    ) -> Result<()> {
         self.check_save()?;
         super::write_project_atomic(path, project_file, Some(progress))
     }

@@ -121,6 +121,9 @@ pub struct Windows {
     /// Window ▸ Reset UI is waiting for its answer.
     #[serde(skip)]
     pub confirm_reset_ui: bool,
+    /// The generator effect whose preview is open enlarged in its own window
+    #[serde(skip)]
+    pub generator_preview: Option<u64>,
 }
 
 /// An action that replaces or ends the project, held while the project has unsaved changes.
@@ -292,6 +295,9 @@ pub struct NewProject {
     /// Import settings > Import cameras: keep the cameras stored in the mesh file
     #[serde(default = "import_cameras_default")]
     pub import_cameras: bool,
+    /// Import settings > Rebuild mesh UVs.
+    #[serde(default)]
+    pub rebuild_uvs: bool,
     /// Color management as chosen in the window (the project is always created as Legacy)
     #[serde(skip)]
     pub color_management: crate::project_form::ColorManagement,
@@ -329,6 +335,7 @@ impl Default for NewProject {
             template: default_template(),
             normal_format: None,
             import_cameras: true,
+            rebuild_uvs: false,
             color_management: crate::project_form::ColorManagement::Legacy,
             baked_maps: Vec::new(),
         }
@@ -624,6 +631,9 @@ pub struct UiState {
     /// How the 3D view shows symmetry
     #[serde(default)]
     pub symmetry: crate::symmetry::SymmetryDisplay,
+    /// The warp tool bar: the gizmo's mode and space, its size, and the steps its drags snap to
+    #[serde(default)]
+    pub warp_toolbar: crate::frame_gizmo::warp_toolbar::WarpToolbarSettings,
     /// The brush, symmetry and other tool settings of the last session, which the next one starts with
     #[serde(default)]
     pub tool_settings: texturecraft_engine::ToolSettings,
@@ -731,6 +741,7 @@ impl UiState {
         self.nav_buttons = keep.nav_buttons;
         self.keymap = keep.keymap;
         self.tool_settings = keep.tool_settings;
+        self.warp_toolbar = keep.warp_toolbar;
         self.named_layouts = keep.named_layouts;
         self.bake_presets = keep.bake_presets;
         self.layout_dialog = None;
@@ -791,6 +802,7 @@ impl Default for UiState {
             keymap: Keymap::new(),
             bake_paint_brush: crate::bake_mode::BakePaintBrush::default(),
             symmetry: crate::symmetry::SymmetryDisplay::default(),
+            warp_toolbar: crate::frame_gizmo::warp_toolbar::WarpToolbarSettings::default(),
             tool_settings: Default::default(),
             bake_visualization: crate::bake_mode::BakeVisualizationToggles::default(),
             named_layouts: Vec::new(),
@@ -845,8 +857,12 @@ mod tests {
     }
 
     #[test]
-    fn adopting_a_layout_keeps_recent_files_export_settings_and_shortcuts() {
+    fn adopting_a_layout_keeps_recent_files_and_user_settings() {
+        use crate::frame_gizmo::warp_toolbar::{GizmoMode, GizmoSpace, WarpToolbarSettings};
+
+        let warp_toolbar = WarpToolbarSettings { mode: GizmoMode::Rotate, space: GizmoSpace::World, manipulator_size: 0.4, grid_steps: 0.5, angle_steps: 30.0 };
         let mut ui = UiState { recent: vec!["a.tcraft".into()], ..UiState::default() };
+        ui.warp_toolbar = warp_toolbar;
         ui.export.preset = "Mine".into();
         ui.keymap.insert("file.save".into(), "F5".into());
         let mut layout = UiState::default();
@@ -858,6 +874,7 @@ mod tests {
         assert_eq!(ui.recent, vec!["a.tcraft".to_string()]);
         assert_eq!(ui.export.preset, "Mine");
         assert_eq!(ui.keymap.get("file.save").map(String::as_str), Some("F5"));
+        assert_eq!(ui.warp_toolbar, warp_toolbar, "loading a layout keeps the user's warp settings");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use texturecraft_engine::{Result, file_cmds::SaveOutput, formats::project_file::SaveProgress};
+use texturecraft_engine::formats::project_file::SaveProgress;
 
 use crate::{
     TextureCraftApp,
@@ -11,14 +11,11 @@ use crate::{
     state::Unsaved,
 };
 
-pub(crate) struct SaveJob {
-    progress: Arc<SaveProgress>,
-    output: mpsc::Receiver<Result<SaveOutput>>,
-    project_id: u64,
-    for_prompt: bool,
-    remember: bool,
-    pub(crate) quit_after_save: bool,
-}
+mod save_job;
+
+pub(crate) use save_job::SaveJob;
+
+const SAVE_POLL_INTERVAL: Duration = Duration::from_millis(80);
 
 pub(crate) fn is_save(id: &str) -> bool {
     matches!(id, "file.save" | "file.saveAs" | "file.saveCopy")
@@ -30,6 +27,7 @@ impl TextureCraftApp {
             self.toast(tr("A project save is already running"), true);
             return false;
         }
+
         if let Err(error) = self.session.end_stroke() {
             self.toast(error.to_string(), true);
             return false;
@@ -39,8 +37,36 @@ impl TextureCraftApp {
         let progress = Arc::new(SaveProgress::default());
         let worker_progress = progress.clone();
         let output = crate::spawn_worker("texturecraft-save", move || task.run(Some(&worker_progress)));
-        self.save_job = Some(SaveJob { progress, output, project_id: self.session.project_id, for_prompt, remember, quit_after_save: false });
+        self.save_job = Some(SaveJob { progress, output, project_id: self.session.project_id, for_prompt, remember, quit_requested_by: None });
         true
+    }
+
+    pub(crate) fn hold_close_for_save(&mut self) -> bool {
+        let Some(job) = &mut self.save_job else { return false };
+
+        // A close on a replacement project still waits for the outstanding archive
+        job.quit_requested_by = Some(self.session.project_id);
+        true
+    }
+
+    pub(crate) fn cancel_close_after_save(&mut self) {
+        self.quit_after_stroke = None;
+        if let Some(job) = &mut self.save_job {
+            job.quit_requested_by = None;
+        }
+    }
+
+    pub(crate) fn resume_close_after_stroke(&mut self, ctx: &egui::Context) {
+        let Some(project_id) = self.quit_after_stroke else { return };
+
+        if project_id == self.session.project_id && self.session.stroke_active() {
+            return;
+        }
+
+        self.quit_after_stroke = None;
+        if project_id == self.session.project_id && !crate::windows::ask_to_save(self, Unsaved::Quit) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     pub(crate) fn save_progress(&self) -> Option<f32> {
@@ -49,18 +75,21 @@ impl TextureCraftApp {
 
     pub(crate) fn poll_save(&mut self, ctx: &egui::Context) {
         let Some(job) = &self.save_job else { return };
+
         let result = match job.output.try_recv() {
             Ok(result) => result.map_err(|error| error.to_string()),
             Err(mpsc::TryRecvError::Empty) => {
-                ctx.request_repaint_after(Duration::from_millis(80));
+                ctx.request_repaint_after(SAVE_POLL_INTERVAL);
                 return;
             }
             Err(mpsc::TryRecvError::Disconnected) => Err(tr("The project save worker stopped").into()),
         };
+
         let Some(job) = self.save_job.take() else { return };
         let same_project = job.project_id == self.session.project_id;
-        let continue_prompt = job.for_prompt && self.saving_for_prompt;
-        if job.for_prompt {
+        let quit_requested = job.quit_requested_by == Some(self.session.project_id);
+        let continue_prompt = same_project && job.for_prompt && self.saving_for_prompt;
+        if continue_prompt {
             self.saving_for_prompt = false;
         }
 
@@ -71,9 +100,13 @@ impl TextureCraftApp {
                 if job.remember {
                     crate::windows::remember(self, &output.path);
                 }
-                let clean = same_project && !self.session.modified && !self.session.stroke_active();
-                quitting = job.quit_after_save && clean;
-                self.prompt_saved = continue_prompt && clean && !quitting;
+
+                let clean = !self.session.modified && !self.session.stroke_active();
+                quitting = quit_requested && clean;
+                if continue_prompt {
+                    self.prompt_saved = clean && !quitting;
+                }
+
                 self.toast(trf("Saved {path}", &[("path", &output.path)]), false);
                 if quitting {
                     self.ui.windows.unsaved = None;
@@ -87,14 +120,15 @@ impl TextureCraftApp {
             }
         }
 
-        // A close that the save could not finish asks about the changes it left, once an open stroke ends
-        if job.quit_after_save && !quitting {
+        // An open stroke settles before the pending close checks for unsaved edits
+        if quit_requested && !quitting {
             if self.session.stroke_active() {
                 self.quit_after_stroke = Some(self.session.project_id);
             } else {
                 crate::windows::ask_to_save(self, Unsaved::Quit);
             }
         }
+
         if let Some(toast) = self.toasts.last_mut() {
             toast.announce = true;
         }
@@ -106,14 +140,20 @@ mod tests {
     use egui::{ViewportCommand, ViewportEvent, ViewportId};
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT as _, Queryable as _};
-    use texturecraft_engine::file_cmds::SaveTask;
+    use texturecraft_engine::{
+        Result,
+        file_cmds::{SaveOutput, SaveTask},
+    };
 
     use super::*;
 
     fn harness() -> Harness<'static, TextureCraftApp> {
         let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
         session.modified = true;
-        let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|cc| TextureCraftApp::new(cc, session));
 
         // Match English labels independently of the system locale
         h.state_mut().ui.prefs.language = "en".into();
@@ -133,7 +173,7 @@ mod tests {
         let task = app.session.save_task(&path.display().to_string(), adopt);
         let (sender, output) = mpsc::channel();
         app.save_job =
-            Some(SaveJob { progress: Arc::default(), output, project_id: app.session.project_id, for_prompt: false, remember: false, quit_after_save: false });
+            Some(SaveJob { progress: Arc::default(), output, project_id: app.session.project_id, for_prompt: false, remember: false, quit_requested_by: None });
         (task, sender)
     }
 
@@ -308,6 +348,85 @@ mod tests {
         assert!(!closed, "the old project's close does not quit the new one");
         assert!(h.state().ui.windows.unsaved.is_none());
         assert!(h.state().quit_after_stroke.is_none());
+    }
+
+    #[test]
+    fn replacing_the_project_during_a_save_drops_its_pending_close() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for stroke_active in [false, true] {
+            let test = if stroke_active { "replace-saving-stroke" } else { "replace-saving-dirty" };
+            let file = temp_file(test);
+            let mut h = harness();
+            h.state_mut().session.modified = false;
+            let (task, sender) = start_held_save(&mut h, &file, true);
+
+            request_close(&mut h);
+            assert_eq!(h.state().save_job.as_ref().unwrap().quit_requested_by, Some(h.state().session.project_id));
+            h.state_mut().session = texturecraft_engine::sample_session(256, 64).unwrap();
+            if stroke_active {
+                h.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
+            } else {
+                assert!(h.state_mut().run("textureSet.rename", serde_json::json!({"ts": 0, "name": "Replacement edit"})).is_some());
+            }
+
+            assert!(!finish(&mut h, task, &sender));
+            assert!(file.exists(), "the old archive still finished");
+            assert!(h.state().session.path.is_none(), "the replacement does not adopt the old archive");
+            assert!(h.state().ui.windows.unsaved.is_none(), "the old close does not prompt about the replacement");
+            if stroke_active {
+                h.state_mut().session.cancel_stroke();
+                assert!(!sends_close(&mut h), "the old close does not survive the replacement's stroke");
+            }
+        }
+    }
+
+    #[test]
+    fn replacing_a_project_with_an_open_quit_prompt_discards_its_answer() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file = temp_file("replace-prompt");
+        let mut h = harness();
+        let (task, sender) = start_held_save(&mut h, &file, true);
+        request_close(&mut h);
+        assert_eq!(h.state().ui.windows.unsaved, Some(Unsaved::Quit));
+
+        let ctx = h.ctx.clone();
+        let result = crate::control::handle(h.state_mut(), &ctx, "command.run", &serde_json::json!({ "id": "file.close" }));
+        assert_eq!(result["ok"], true);
+        assert!(!finish(&mut h, task, &sender));
+
+        assert!(h.state().ui.windows.unsaved.is_none(), "the discarded project's prompt cannot act on the replacement");
+    }
+
+    #[test]
+    fn closing_the_replacement_waits_for_the_original_archive() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file = temp_file("close-replacement");
+        let mut h = harness();
+        let (task, sender) = start_held_save(&mut h, &file, true);
+        let replacement = texturecraft_engine::sample_session(256, 64).unwrap();
+        h.state_mut().session.switch_to(replacement);
+
+        assert!(crate::windows::close_requested(h.state_mut()), "the new close must hold the process open for the pending write");
+        let closed = finish(&mut h, task, &sender);
+
+        assert!(file.exists());
+        assert!(closed, "the replacement's own close resumes once the writer finishes");
+        assert!(h.state().session.path.is_none());
+        assert!(h.state().ui.windows.unsaved.is_none());
+    }
+
+    #[test]
+    fn canceling_a_stroke_after_a_successful_save_leaves_the_saved_edits_clean() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file = temp_file("saved-then-cancel-stroke");
+        let mut h = harness();
+        let (task, sender) = start_held_save(&mut h, &file, true);
+        h.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
+
+        assert!(!finish(&mut h, task, &sender));
+        h.state_mut().session.cancel_stroke();
+
+        assert!(!crate::windows::close_requested(h.state_mut()), "the saved edits and canceled stroke need no second save");
     }
 
     #[test]

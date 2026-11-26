@@ -16,7 +16,10 @@ use super::temp_dir::TempDir;
 fn harness(modified: bool) -> Harness<'static, TextureCraftApp> {
     let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
     session.modified = modified;
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.run_steps(4);
     h
 }
@@ -80,7 +83,12 @@ fn a_canceled_dialog_changes_nothing() {
 
 #[test]
 fn the_sample_picker_asks_to_save_only_after_a_path_is_chosen() {
+    let samples = super::temp_dir::TempDir::new("sample-picker");
     let mut h = harness(true);
+    let samples_folder = samples.join("Samples");
+    std::fs::create_dir(&samples_folder).unwrap();
+    std::fs::write(samples_folder.join("Material Ball.tcraft"), b"stand-in").unwrap();
+    h.state_mut().samples_folder = samples_folder;
     answer(&mut h, |_| Answer::Cancelled);
     invoke(&mut h, "project.sample");
     assert_eq!(h.state().file_dialogs.pending(), 1);
@@ -272,11 +280,13 @@ fn save_in_the_prompt_goes_on_once_the_dialog_has_saved() {
         let file = temp.join(if untitled { "new.tcraft" } else { "existing.tcraft" });
         let mut h = harness(true);
         h.state_mut().session.path = (!untitled).then(|| file.display().to_string());
+
         request_close(&mut h);
         let path = file.clone();
         answer(&mut h, move |_| Answer::Paths(vec![path.clone()]));
         h.get_by_label("Save").click();
         wait_for(&mut h, |h| h.output().viewport_output.get(&ViewportId::ROOT).is_some_and(|v| v.commands.contains(&ViewportCommand::Close)));
+
         assert!(file.exists());
         assert!(!h.state().session.modified);
         assert!(h.state().ui.windows.unsaved.is_none());
@@ -290,12 +300,14 @@ fn a_background_save_preserves_edits_made_while_the_file_is_written() {
     let mut h = harness(true);
     h.state_mut().session.path = Some(file.display().to_string());
     let original = h.state().session.doc.project.texture_sets[0].name.clone();
+
     invoke(&mut h, "file.save");
     assert!(!texturecraft_ui_egui::menus::enabled(h.state(), "file.save"), "the save returns with a worker still to collect");
     let rename = h.state_mut().run("textureSet.rename", serde_json::json!({"ts": 0, "name": "Edited while saving"}));
     assert!(rename.is_some(), "editing remains available");
 
     wait_for(&mut h, |h| texturecraft_ui_egui::menus::enabled(h.state(), "file.save"));
+
     let saved = texturecraft_engine::formats::load_project(&file).unwrap();
     assert_eq!(saved.project.texture_sets[0].name, original, "the first save writes the snapshot it started with");
     assert_eq!(h.state().session.doc.project.texture_sets[0].name, "Edited while saving");
@@ -304,6 +316,7 @@ fn a_background_save_preserves_edits_made_while_the_file_is_written() {
     invoke(&mut h, "file.save");
     h.state_mut().run("camera.view.front", serde_json::Value::Null);
     wait_for(&mut h, |h| texturecraft_ui_egui::menus::enabled(h.state(), "file.save"));
+
     let saved = texturecraft_engine::formats::load_project(&file).unwrap();
     assert_eq!(saved.project.texture_sets[0].name, "Edited while saving");
     assert!(!h.state().session.modified, "moving the camera alone does not create an unsaved edit");
@@ -317,8 +330,10 @@ fn a_failed_background_save_keeps_the_project_and_its_path() {
     let mut h = harness(true);
     h.state_mut().session.path = Some(file.display().to_string());
     answer(&mut h, move |_| Answer::Paths(vec![missing_parent.clone()]));
+
     invoke(&mut h, "file.saveAs");
     wait_for(&mut h, |h| h.state().toasts.iter().any(|toast| toast.error));
+
     assert!(h.state().session.modified);
     assert_eq!(h.state().session.path.as_deref(), file.to_str());
     assert!(texturecraft_ui_egui::menus::enabled(h.state(), "file.saveAs"));
