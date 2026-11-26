@@ -15,17 +15,34 @@ use crate::{FormatError, Result};
 /// Where alpha sits in an RGBA texel
 const ALPHA_INDEX: usize = 3;
 
-/// Budget for the pixel buffers of one PSD export, including the renderer's padding and encoder
-const MAX_PSD_WORKING_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
-/// Check file and working memory limits, returning the canvas size and estimated encoded bytes.
+/// Check the file limits and the working memory against `working_limit` (None: unlimited), returning the canvas size and estimated encoded bytes
 pub(super) fn preflight<'a>(
     set: &TextureSet,
     options: &ExportOptions,
     tile: Option<u32>,
     depth: u8,
     layers: impl Iterator<Item = &'a PlannedLayer> + Clone,
+    working_limit: Option<u64>,
 ) -> Result<((u32, u32), u64)> {
+    let (canvas, file_bytes, working_bytes) = working_set(set, options, tile, depth, layers)?;
+    if working_limit.is_some_and(|limit| working_bytes >= limit) {
+        let (width, height) = canvas;
+        return Err(FormatError::Invalid(format!(
+            "a PSD at {width}×{height} would exceed the working memory budget; use a smaller export size, fewer PSD maps or another format"
+        )));
+    }
+
+    Ok((canvas, file_bytes))
+}
+
+/// The canvas size, estimated encoded bytes and peak working bytes of one PSD, after checking the file limits
+fn working_set<'a>(
+    set: &TextureSet,
+    options: &ExportOptions,
+    tile: Option<u32>,
+    depth: u8,
+    layers: impl Iterator<Item = &'a PlannedLayer> + Clone,
+) -> Result<((u32, u32), u64, u64)> {
     let texels = |(width, height)| u64::from(width) * u64::from(height);
     let folder_count = layers.clone().map(|layer| layer.name.matches('/').count()).sum();
     let sizes = layers.map(|layer| psd_size(set, tile, options.map_size(layer.map)));
@@ -33,7 +50,9 @@ pub(super) fn preflight<'a>(
     let float_bytes_per_texel = (PSD_RGBA_PLANES * size_of::<f32>()) as u64;
     let source_bytes = texels(psd_size(set, tile, None)).saturating_mul(float_bytes_per_texel);
     let largest_layer_bytes = sizes.map(texels).max().unwrap_or(0) * float_bytes_per_texel;
-    let composite_bytes = texels(canvas) * float_bytes_per_texel;
+
+    // The merged image is built a row at a time: a canvas row and a layer row in floating point
+    let merge_bytes = 2 * u64::from(canvas.0) * float_bytes_per_texel;
 
     // Resizing overlaps source and destination, and RGBA conversion can overlap two output buffers
     let mut scratch_bytes = source_bytes.saturating_add(largest_layer_bytes).max(2 * largest_layer_bytes);
@@ -52,34 +71,24 @@ pub(super) fn preflight<'a>(
         padding_peak = padding_bytes.saturating_add(atlas_texels.saturating_mul((4 * size_of::<usize>()) as u64));
     }
 
-    // The encoder can hold staged pixels, planes and the output at once
-    let rendering = scratch_bytes.saturating_add(composite_bytes).saturating_add(file_bytes);
+    // The quantized layers kept so far and the merged image are part of the file; the encoder can hold staged pixels, planes and the output at once
+    let rendering = scratch_bytes.max(merge_bytes).saturating_add(file_bytes);
     let encoding = 3 * file_bytes;
     let working_bytes = padding_bytes.saturating_add(rendering.max(encoding)).max(padding_peak);
-    if working_bytes >= MAX_PSD_WORKING_BYTES {
-        let (width, height) = canvas;
-        return Err(FormatError::Invalid(format!(
-            "a PSD at {width}×{height} would exceed the working memory budget; use a smaller export size, fewer PSD maps or another format"
-        )));
-    }
-
-    Ok((canvas, file_bytes))
+    Ok((canvas, file_bytes, working_bytes))
 }
 
 /// Render each layer at its requested size, aligned to the upper-left corner of the PSD canvas.
 pub(super) fn render_psd(renderer: &MapRenderer, planned: PlannedFile, size: (u32, u32)) -> Result<ExportedFile> {
     let PlannedFile { name, tile, bit_depth, mut warnings, layers, .. } = planned;
 
-    // Keep only the current layer in floating point alongside the merged image
-    let mut composite = vec![0.0f32; size.0 as usize * size.1 as usize * PSD_RGBA_PLANES];
+    // Only the current layer is in floating point; the others are kept as the file stores them
     let mut pixels = Vec::with_capacity(layers.len());
     let mut embedded = None;
     for layer in layers.iter().rev() {
         let map = renderer.render(layer.map, tile, FileFormat::Psd, bit_depth)?;
         embedded = map.embed.or(embedded);
         let rgba = to_rgba(map.data, map.component_count, &map.srgb);
-        over(&mut composite, size.0, &rgba, map.size.0);
-
         let encoding = Encoding { format: FileFormat::Psd, depth: bit_depth, dither: layer.dither };
         let layer_pixels = pixel_data(rgba, map.size.0, encoding)?;
         pixels.push((layer.name.as_str(), map.size, layer_pixels));
@@ -88,8 +97,7 @@ pub(super) fn render_psd(renderer: &MapRenderer, planned: PlannedFile, size: (u3
         warnings.push(format!("PSD export does not embed a colour space; the colours are in {}", space.name()));
     }
 
-    let encoding = Encoding { format: FileFormat::Psd, depth: bit_depth, dither: false };
-    let composite = pixel_data(composite, size.0, encoding)?;
+    let composite = merged_image(size, bit_depth, &pixels)?;
 
     let bytes = write_layers(size, bit_depth, pixels, composite).map_err(|error| FormatError::Invalid(format!("psd encoding failed: {error}")))?;
     if bytes.len() as u64 >= PSD_MAX_FILE_BYTES {
@@ -127,6 +135,53 @@ fn to_rgba(mut data: Vec<f32>, component_count: usize, srgb: &[bool]) -> Vec<f32
             }
         })
         .collect()
+}
+
+/// The merged image of `layers` (bottom first, as the file stores them), one row at a time
+fn merged_image((width, height): (u32, u32), depth: u8, layers: &[(&str, (u32, u32), PixelData)]) -> Result<PixelData> {
+    let row_len = width as usize * PSD_RGBA_PLANES;
+    let sample_count = row_len * height as usize;
+    let mut merged_row = vec![0.0f32; row_len];
+    let mut layer_row = Vec::with_capacity(row_len);
+    let reserve_error = |error| FormatError::Invalid(format!("PSD merged image allocation failed: {error}"));
+    if depth == 16 {
+        let mut merged = Vec::new();
+        merged.try_reserve_exact(sample_count).map_err(reserve_error)?;
+        for y in 0..height as usize {
+            merge_row(y, width, layers, &mut merged_row, &mut layer_row);
+            merged.extend(merged_row.iter().map(|&value| quantize_u16(value)));
+        }
+        return Ok(PixelData::Rgba16(merged));
+    }
+
+    let mut merged = Vec::new();
+    merged.try_reserve_exact(sample_count).map_err(reserve_error)?;
+    let encoding = Encoding { format: FileFormat::Psd, depth, dither: false };
+    for y in 0..height as usize {
+        merge_row(y, width, layers, &mut merged_row, &mut layer_row);
+        merged.extend(quantize_integer(encoding, width, PSD_RGBA_PLANES, merged_row.iter().copied())?);
+    }
+    Ok(PixelData::Rgba8(merged))
+}
+
+/// Row `y` of the merged image into `merged_row`, each layer's row decoded into `layer_row` in turn
+fn merge_row(y: usize, width: u32, layers: &[(&str, (u32, u32), PixelData)], merged_row: &mut [f32], layer_row: &mut Vec<f32>) {
+    merged_row.fill(0.0);
+    for (_, (layer_width, layer_height), samples) in layers {
+        if y >= *layer_height as usize {
+            continue;
+        }
+
+        let span = *layer_width as usize * PSD_RGBA_PLANES;
+        let range = y * span..(y + 1) * span;
+        layer_row.clear();
+        match samples {
+            PixelData::Rgba8(samples) => layer_row.extend(samples.get(range).unwrap_or_default().iter().map(|&v| f32::from(v) / f32::from(u8::MAX))),
+            PixelData::Rgba16(samples) => layer_row.extend(samples.get(range).unwrap_or_default().iter().map(|&v| f32::from(v) / f32::from(u16::MAX))),
+            _ => continue,
+        }
+        over(merged_row, width, layer_row, *layer_width);
+    }
 }
 
 /// Composite a straight-alpha RGBA layer at the top left of the canvas.

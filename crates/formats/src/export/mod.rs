@@ -31,12 +31,14 @@ mod map_override;
 mod map_preview;
 mod map_renderer;
 mod planned_layer;
+mod psd_budget;
 mod rendered_map;
 use encoding::Encoding;
 pub use map_override::MapOverride;
 pub use map_preview::{MAX_PREVIEW_SIDE, MapPreview};
 use map_renderer::MapRenderer;
 pub use planned_layer::PlannedLayer;
+use psd_budget::PsdBudget;
 
 /// Height-to-normal slope: with strength 1, a height change of 1 across 1/16 of the texture
 /// width tilts the normal 45°, at any resolution.
@@ -44,8 +46,6 @@ const HEIGHT_SPAN: f32 = 16.0;
 const JPEG_QUALITY: u8 = 95;
 const PSD_MAX_SIDE_PIXELS: u32 = 30_000;
 const PSD_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-/// Bound retained PSD payloads before rendering, with headroom for a document's working buffers and ZIP packaging
-const MAX_PSD_BATCH_BYTES: u64 = 1024 * 1024 * 1024;
 /// Planes of a PSD image or layer: red, green, blue and alpha
 const PSD_RGBA_PLANES: usize = 4;
 /// Preset limits (user presets are untrusted JSON).
@@ -716,6 +716,11 @@ pub fn sanitize_file_path(s: &str) -> String {
 
 /// The files `opts` produces for texture set `ts` without rendering ([`FILE_TOKENS`] are the template variables); PSD maps are layers of one file
 pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOptions) -> Result<Vec<PlannedFile>> {
+    plan_outputs(project, ts, mesh_name, opts, PsdBudget::TARGET)
+}
+
+/// [`list_outputs`] with the PSD memory limits of `budget`
+fn plan_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOptions, budget: PsdBudget) -> Result<Vec<PlannedFile>> {
     opts.preset.validate()?;
     let set = project.texture_set(ts)?;
     for requested_size in opts.size.iter().chain(opts.maps.values().filter_map(|own| own.size.as_ref())) {
@@ -832,13 +837,12 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
     let mut tiled_bases = HashMap::new();
 
     // Each tile's PSD maps are the layers of one file named after the texture set
+    let mut psd_failures = Vec::new();
     for (&tile, in_tile) in tiles.iter().zip(psd_layers) {
         let Some((first_layer, ..)) = in_tile.first() else { continue };
 
         let first_map = first_layer.map;
         let bit_depth = in_tile.iter().map(|(_, depth, _)| *depth).max().unwrap_or(8);
-        layered_psd::preflight(set, opts, tile, bit_depth, in_tile.iter().map(|(layer, ..)| layer))?;
-
         let mut warnings = Vec::new();
         let mut layers = Vec::with_capacity(in_tile.len());
         let mut dither_requested = false;
@@ -866,10 +870,25 @@ pub fn list_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &Export
             (untiled_psd_stem(project, mesh_name, ts, set, opts.atlas), None)
         };
         let (name, renamed) = unique_name(&mut used, &stem, ext, &mut warnings);
+        if let Err(error) = layered_psd::preflight(set, opts, tile, bit_depth, layers.iter(), budget.working_bytes) {
+            psd_failures.push((name, error));
+            continue;
+        }
+
         claim_path(&mut active_files, &mut active_dirs, &name)?;
         let udim_name = udim_stem.map(|stem| format!("{stem}{renamed}.{ext}"));
         let dither = bit_depth == 8 && dither_requested;
         out.push(PlannedFile { name, map: first_map, format: FileFormat::Psd, bit_depth, dither, tile, udim_name, warnings, layers });
+    }
+
+    // A PSD that cannot be written leaves the set's other files to export, its reason a warning on the first of them
+    for (name, error) in psd_failures {
+        let Some(first) = out.first_mut() else { return Err(error) };
+        let reason = match error {
+            FormatError::Invalid(reason) | FormatError::TooLarge(reason) => reason,
+            other => other.to_string(),
+        };
+        first.warnings.push(format!("\"{name}\" was not written: {reason}"));
     }
     Ok(out)
 }
@@ -933,16 +952,21 @@ fn psd_size(set: &TextureSet, tile: Option<u32>, export_size: Option<u32>) -> (u
 
 /// Plan a selection in export order, keeping only the first case-insensitive use of a name.
 pub fn list_set_outputs(project: &Project, sets: &[usize], mesh_name: &str, opts: &ExportOptions) -> Result<Vec<(usize, PlannedFile)>> {
+    plan_set_outputs(project, sets, mesh_name, opts, PsdBudget::TARGET)
+}
+
+/// [`list_set_outputs`] with the PSD memory limits of `budget`
+fn plan_set_outputs(project: &Project, sets: &[usize], mesh_name: &str, opts: &ExportOptions, budget: PsdBudget) -> Result<Vec<(usize, PlannedFile)>> {
     let mut files = Vec::new();
     for &index in sets {
-        let planned = list_outputs(project, index, mesh_name, opts)?;
+        let planned = plan_outputs(project, index, mesh_name, opts, budget)?;
         files.extend(planned.into_iter().map(|file| (index, file)));
     }
 
     let files = keep_first_planned_names(files);
     let mut psd_bytes = 0;
     for (index, file) in files.iter().filter(|(_, file)| file.format == FileFormat::Psd) {
-        check_psd_batch(project.texture_set(*index)?, opts, std::slice::from_ref(file), &mut psd_bytes)?;
+        check_psd_batch_within(project.texture_set(*index)?, opts, std::slice::from_ref(file), &mut psd_bytes, budget)?;
     }
 
     Ok(files)
@@ -1118,21 +1142,25 @@ pub fn render_maps(input: &ExportInput, options: &ExportOptions) -> Result<Vec<E
     render_planned_maps(input, options, planned)
 }
 
-/// Add one set's PSD output estimate to a batch that holds encoded files in memory.
+/// Add one set's PSD output estimate to a batch that holds encoded files in memory (limited only in a browser tab)
 pub fn check_psd_batch(set: &TextureSet, options: &ExportOptions, planned: &[PlannedFile], total_bytes: &mut u64) -> Result<()> {
+    check_psd_batch_within(set, options, planned, total_bytes, PsdBudget::TARGET)
+}
+
+fn check_psd_batch_within(set: &TextureSet, options: &ExportOptions, planned: &[PlannedFile], total_bytes: &mut u64, budget: PsdBudget) -> Result<()> {
     let mut estimate = *total_bytes;
     for file in planned.iter().filter(|file| file.format == FileFormat::Psd) {
-        let (_, file_bytes) = layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter())?;
-        add_psd_batch_bytes(&mut estimate, file_bytes)?;
+        let (_, file_bytes) = layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter(), budget.working_bytes)?;
+        add_psd_batch_bytes(&mut estimate, file_bytes, budget.batch_bytes)?;
     }
 
     *total_bytes = estimate;
     Ok(())
 }
 
-fn add_psd_batch_bytes(total_bytes: &mut u64, file_bytes: u64) -> Result<()> {
+fn add_psd_batch_bytes(total_bytes: &mut u64, file_bytes: u64, limit: Option<u64>) -> Result<()> {
     let estimate = total_bytes.saturating_add(file_bytes);
-    if estimate > MAX_PSD_BATCH_BYTES {
+    if limit.is_some_and(|limit| estimate > limit) {
         return Err(FormatError::TooLarge("total PSD output would exceed 1 GiB; use a smaller export size, fewer PSD maps or separate exports".into()));
     }
 
@@ -1142,6 +1170,11 @@ fn add_psd_batch_bytes(total_bytes: &mut u64, file_bytes: u64) -> Result<()> {
 
 /// Render the retained plans from `list_outputs` for this input and these options.
 pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned: Vec<PlannedFile>) -> Result<Vec<ExportedFile>> {
+    render_planned_maps_within(input, options, planned, PsdBudget::TARGET)
+}
+
+/// [`render_planned_maps`] with the PSD memory limits of `budget`
+fn render_planned_maps_within(input: &ExportInput, options: &ExportOptions, planned: Vec<PlannedFile>, budget: PsdBudget) -> Result<Vec<ExportedFile>> {
     if planned.is_empty() {
         return Ok(Vec::new());
     }
@@ -1161,8 +1194,8 @@ pub fn render_planned_maps(input: &ExportInput, options: &ExportOptions, planned
         let mut psd_bytes = 0;
         for file in &planned {
             if file.format == FileFormat::Psd {
-                let (size, file_bytes) = layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter())?;
-                add_psd_batch_bytes(&mut psd_bytes, file_bytes)?;
+                let (size, file_bytes) = layered_psd::preflight(set, options, file.tile, file.bit_depth, file.layers.iter(), budget.working_bytes)?;
+                add_psd_batch_bytes(&mut psd_bytes, file_bytes, budget.batch_bytes)?;
                 psd_sizes.push(Some(size));
             } else {
                 psd_sizes.push(None);

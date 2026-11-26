@@ -1350,11 +1350,45 @@ fn feedback_psd_rejects_large_working_set_during_planning() {
     let mut options = one_map(FileFormat::Psd, 8, rgba_half_alpha());
     options.size = Some(8192);
 
-    let error = list_outputs(&fx.project, 0, "sphere", &options).unwrap_err();
+    let error = plan_outputs(&fx.project, 0, "sphere", &options, PsdBudget::WEB).unwrap_err();
 
     assert!(error.to_string().contains("working memory"), "{error}");
     options.size = Some(4096);
-    assert!(list_outputs(&fx.project, 0, "sphere", &options).is_ok());
+    assert!(plan_outputs(&fx.project, 0, "sphere", &options, PsdBudget::WEB).is_ok());
+}
+
+#[test]
+fn a_native_export_plans_psds_a_browser_tab_cannot_hold() {
+    let mut fx = Fx::new(&default_channels());
+    let mut one = one_map(FileFormat::Psd, 8, rgba_half_alpha());
+    one.size = Some(MAX_IMAGE_SIZE / 2);
+    let mut separate = ExportOptions::new(builtin_preset("Separate maps").unwrap());
+    separate.format_override = Some(FileFormat::Psd);
+    separate.size = Some(4096);
+    fx.project.texture_sets[0].uv_tiles = (1001..1005).collect();
+
+    let plans = [list_outputs(&fx.project, 0, "sphere", &one), list_outputs(&fx.project, 0, "sphere", &separate)];
+
+    for plan in plans {
+        let plan = plan.unwrap();
+        assert!(!plan.is_empty() && plan.iter().all(|file| file.format == FileFormat::Psd), "{plan:?}");
+    }
+    assert!(list_set_outputs(&fx.project, &[0], "sphere", &separate).is_ok(), "a desktop batch holds every tile's PSD");
+}
+
+#[test]
+fn a_psd_that_cannot_be_planned_leaves_the_sets_other_maps() {
+    let fx = Fx::new(&default_channels());
+    let mut options = one_map(FileFormat::Png, 8, roughness());
+    let mut psd = options.preset.maps[0].clone();
+    (psd.file, psd.format, psd.bit_depth, psd.channels) = ("layered".into(), FileFormat::Psd, 16, rgba_half_alpha());
+    options.preset.maps.push(psd);
+    options.size = Some(MAX_IMAGE_SIZE);
+
+    let plan = list_outputs(&fx.project, 0, "sphere", &options).unwrap();
+
+    assert!(plan.len() == 1 && plan[0].format == FileFormat::Png, "{plan:?}");
+    assert!(plan[0].warnings.iter().any(|warning| warning.contains(".psd") && warning.contains("2 GiB")), "{:?}", plan[0].warnings);
 }
 
 #[test]
@@ -1397,7 +1431,7 @@ fn psd_byte_limit_includes_the_merged_image_and_keeps_separate_tiles_valid() {
 
     assert!(error.to_string().contains("2 GiB"), "{error}");
     options.size = Some(4096);
-    assert!(list_outputs(&fx.project, 0, "sphere", &options).unwrap_err().to_string().contains("working memory"));
+    assert!(plan_outputs(&fx.project, 0, "sphere", &options, PsdBudget::WEB).unwrap_err().to_string().contains("working memory"));
     options.atlas = false;
     assert_eq!(list_outputs(&fx.project, 0, "sphere", &options).unwrap().len(), 3);
 }
@@ -2184,18 +2218,19 @@ fn psd_batch_budget_counts_only_retained_documents() {
     other.name = "Other".into();
     fx.project.texture_sets.push(other);
 
-    let once = list_set_outputs(&fx.project, &[0], "sphere", &options).unwrap();
-    let repeated = list_set_outputs(&fx.project, &[0, 0], "sphere", &options).unwrap();
-    let distinct = list_set_outputs(&fx.project, &[0, 1], "sphere", &options);
+    let once = plan_set_outputs(&fx.project, &[0], "sphere", &options, PsdBudget::WEB).unwrap();
+    let repeated = plan_set_outputs(&fx.project, &[0, 0], "sphere", &options, PsdBudget::WEB).unwrap();
+    let distinct = plan_set_outputs(&fx.project, &[0, 1], "sphere", &options, PsdBudget::WEB);
     let (_, bytes_per_tile) = check_psd_size([(4096, 4096)], 0, 8).unwrap();
 
     assert_eq!(once.len(), repeated.len());
     assert!(once.iter().zip(&repeated).all(|((_, first), (_, kept))| first.name == kept.name && kept.warnings.len() > first.warnings.len()));
     assert!(matches!(distinct, Err(FormatError::TooLarge(message)) if message.contains("total PSD")));
     println!(
-        "PSD preflight: {bytes_per_tile} estimated bytes per tile, {} retained bytes, {} bytes if counted twice, limit {MAX_PSD_BATCH_BYTES}",
+        "PSD preflight: {bytes_per_tile} estimated bytes per tile, {} retained bytes, {} bytes if counted twice, limit {:?}",
         bytes_per_tile * once.len() as u64,
-        bytes_per_tile * (once.len() + repeated.len()) as u64
+        bytes_per_tile * (once.len() + repeated.len()) as u64,
+        PsdBudget::WEB.batch_bytes
     );
 }
 
@@ -2207,29 +2242,35 @@ fn feedback_psd_batch_rejects_large_retained_output_before_rendering() {
     options.size = Some(4096);
     fx.project.texture_sets[0].uv_tiles = (1001..1008).collect();
 
-    let smaller = list_set_outputs(&fx.project, &[0], "sphere", &options).unwrap();
+    let smaller = plan_set_outputs(&fx.project, &[0], "sphere", &options, PsdBudget::WEB).unwrap();
     assert_eq!(smaller.len(), 7, "seven 128 MiB payloads fit with record overhead");
     fx.project.texture_sets[0].uv_tiles.extend(1008..1034);
 
-    let oversized = list_set_outputs(&fx.project, &[0], "sphere", &options);
+    let oversized = plan_set_outputs(&fx.project, &[0], "sphere", &options, PsdBudget::WEB);
     assert!(matches!(&oversized, Err(error) if error.to_string().contains("total PSD")), "the 33 individually valid tiles must be rejected as a batch");
 
     let set = &fx.project.texture_sets[0];
     let (width, height) = set.size();
     fx.comp = Composite::with_size(&default_channels(), width, height);
     fx.coverage.resize((width * height) as usize, true);
-    let error = render_maps(&fx.input(), &options).unwrap_err();
+    let planned = plan_outputs(&fx.project, 0, "sphere", &options, PsdBudget::WEB).unwrap();
+    let error = render_planned_maps_within(&fx.input(), &options, planned, PsdBudget::WEB).unwrap_err();
     assert!(error.to_string().contains("total PSD"), "{error}");
 
     let (_, estimated_bytes) = check_psd_size([(4096, 4096)], 0, 8).unwrap();
-    println!("PSD preflight: {estimated_bytes} estimated bytes per tile; {} across 33 tiles; batch limit {MAX_PSD_BATCH_BYTES}", estimated_bytes * 33);
+    println!(
+        "PSD preflight: {estimated_bytes} estimated bytes per tile; {} across 33 tiles; batch limit {:?}",
+        estimated_bytes * 33,
+        PsdBudget::WEB.batch_bytes
+    );
 
     let mut small = fx.project.texture_sets[0].clone();
     small.uv_tiles = (1001..1006).collect();
     fx.project.texture_sets[0] = small.clone();
     small.name = "Other".into();
     fx.project.texture_sets.push(small);
-    assert!(list_set_outputs(&fx.project, &[0], "sphere", &options).is_ok());
-    assert!(list_set_outputs(&fx.project, &[1], "sphere", &options).is_ok());
-    assert!(list_set_outputs(&fx.project, &[0, 1], "sphere", &options).is_err(), "the budget includes all selected sets");
+    assert!(plan_set_outputs(&fx.project, &[0], "sphere", &options, PsdBudget::WEB).is_ok());
+    assert!(plan_set_outputs(&fx.project, &[1], "sphere", &options, PsdBudget::WEB).is_ok());
+    assert!(plan_set_outputs(&fx.project, &[0, 1], "sphere", &options, PsdBudget::WEB).is_err(), "the budget includes all selected sets");
+    assert!(list_set_outputs(&fx.project, &[0, 1], "sphere", &options).is_ok(), "a desktop batch has no such budget");
 }
