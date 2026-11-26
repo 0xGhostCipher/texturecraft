@@ -747,7 +747,7 @@ mod tests {
         harness.state_mut().ui.windows.export = true;
         harness.run_steps(5);
         let footer = harness.get_by_role_and_label(egui::Role::Button, "Reset all").rect();
-        let first = harness.get_by_label("Export set 1");
+        let first = harness.get_by_role_and_label(egui::Role::Button, "Export set 1");
         first.hover();
         harness.run_steps(2);
 
@@ -759,7 +759,7 @@ mod tests {
             source: egui::MouseWheelSource::Wheel,
         });
         harness.run_steps(15);
-        let last = harness.get_by_label("Export set 39");
+        let last = harness.get_by_role_and_label(egui::Role::Button, "Export set 39");
         last.click();
         harness.run_steps(4);
 

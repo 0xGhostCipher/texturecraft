@@ -78,6 +78,9 @@ pub(crate) fn texture_set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().id_salt("ts_scroll").show(ui, |ui| {
         for (i, (name, size, visible)) in sets.into_iter().enumerate() {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ListItem, ui.is_enabled(), &name));
+            ui.ctx().accesskit_node_builder(resp.id, |node| node.set_selected(i == active));
+
             let p = ui.painter();
             let bg = if i == active {
                 tk.row_selected
@@ -90,9 +93,17 @@ pub(crate) fn texture_set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
             if i == active {
                 p.rect_stroke(rect, 2.0, Stroke::new(1.0, tk.accent), egui::StrokeKind::Inside);
             }
+            if resp.has_focus() {
+                p.rect_stroke(rect.shrink(2.0), 2.0, Stroke::new(1.0, tk.text_strong), egui::StrokeKind::Inside);
+            }
+
             let eye = Rect::from_min_size(rect.min + vec2(4.0, 3.0), vec2(16.0, 16.0));
             let eye_resp = ui.interact(eye, ui.scope_id().with(("ts_eye", i)), Sense::click()).on_hover_text(tr("Show or hide the texture set"));
             p.text(eye.center(), egui::Align2::CENTER_CENTER, if visible { ic::EYE } else { ic::EYE_SLASH }, egui::FontId::proportional(13.0), tk.text);
+
+            if ui.is_enabled() && (resp.contains_pointer() || eye_resp.contains_pointer()) {
+                app.next_hovered_texture_set = Some((app.session.project_id, i));
+            }
 
             // Narrow panels drop the shader label, then the resolution, before cutting the name
             let cy = rect.center().y;
@@ -3316,5 +3327,38 @@ mod layer_layout_tests {
         assert_eq!(indent, 28.0);
         assert_eq!(size, 36.0);
         assert!(show_blend);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod texture_set_list_tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use super::*;
+
+    #[test]
+    fn keyboard_selection_updates_the_texture_set_list_items() {
+        let session = texturecraft_engine::Session::new_project(
+            "Texture set selection",
+            texturecraft_engine::geom::primitives::material_ball(),
+            "builtin:material_ball",
+            None,
+            128,
+        )
+        .unwrap();
+        let first = session.doc.project.texture_sets[0].name.clone();
+        let second = session.doc.project.texture_sets[1].name.clone();
+        let mut harness = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        harness.run_steps(4);
+
+        harness.get_by_role_and_label(egui::Role::ListItem, &second).focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+
+        assert_eq!(harness.state().session.ts(), 1);
+        assert_eq!(harness.get_by_role_and_label(egui::Role::ListItem, &first).accesskit_node().is_selected(), Some(false));
+        assert_eq!(harness.get_by_role_and_label(egui::Role::ListItem, &second).accesskit_node().is_selected(), Some(true));
     }
 }
