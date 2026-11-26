@@ -93,7 +93,7 @@ impl TextureCraftApp {
             self.saving_for_prompt = false;
         }
 
-        let mut quitting = false;
+        let save_succeeded = result.is_ok();
         match result {
             Ok(output) => {
                 output.apply(&mut self.session);
@@ -101,17 +101,11 @@ impl TextureCraftApp {
                     crate::windows::remember(self, &output.path);
                 }
 
-                let clean = !self.session.modified && !self.session.stroke_active();
-                quitting = quit_requested && clean;
                 if continue_prompt {
-                    self.prompt_saved = clean && !quitting;
+                    self.prompt_saved = !self.session.modified && !self.session.stroke_active() && !quit_requested;
                 }
 
                 self.toast(trf("Saved {path}", &[("path", &output.path)]), false);
-                if quitting {
-                    self.ui.windows.unsaved = None;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
             }
             Err(error) => {
                 let message = trf("Could not save project: {error}", &[("error", &error)]);
@@ -120,10 +114,13 @@ impl TextureCraftApp {
             }
         }
 
-        // An open stroke settles before the pending close checks for unsaved edits
-        if quit_requested && !quitting {
+        if quit_requested {
             if self.session.stroke_active() {
                 self.quit_after_stroke = Some(self.session.project_id);
+            } else if !self.session.modified && (save_succeeded || !same_project) {
+                // A replacement project's own close only needs the previous writer to finish
+                self.ui.windows.unsaved = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             } else {
                 crate::windows::ask_to_save(self, Unsaved::Quit);
             }
@@ -412,6 +409,25 @@ mod tests {
         assert!(file.exists());
         assert!(closed, "the replacement's own close resumes once the writer finishes");
         assert!(h.state().session.path.is_none());
+        assert!(h.state().ui.windows.unsaved.is_none());
+    }
+
+    #[test]
+    fn closing_the_replacement_resumes_after_the_original_save_fails() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let file = temp_file("close-replacement-after-failure").with_file_name("missing").join("project.tcraft");
+        let mut h = harness();
+        let (task, sender) = start_held_save(&mut h, &file, true);
+        let replacement = texturecraft_engine::sample_session(256, 64).unwrap();
+        h.state_mut().session.switch_to(replacement);
+
+        request_close(&mut h);
+        assert!(!sends_close(&mut h), "the replacement waits for the original save");
+        let result = task.run(None);
+        assert!(result.is_err(), "the original write fails");
+        sender.send(result).unwrap();
+
+        assert!(sends_close(&mut h), "the replacement's own close resumes after the failed write");
         assert!(h.state().ui.windows.unsaved.is_none());
     }
 
