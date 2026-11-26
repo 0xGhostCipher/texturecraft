@@ -3349,7 +3349,10 @@ mod texture_set_list_tests {
         .unwrap();
         let first = session.doc.project.texture_sets[0].name.clone();
         let second = session.doc.project.texture_sets[1].name.clone();
-        let mut harness = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = Harness::builder()
+            .with_size(vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(4);
 
         harness.get_by_role_and_label(egui::Role::ListItem, &second).focus();

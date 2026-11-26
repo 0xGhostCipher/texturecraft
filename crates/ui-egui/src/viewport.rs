@@ -2577,7 +2577,10 @@ mod tests {
         let selected_set = session.ts();
         assert_ne!(hovered_set, selected_set);
 
-        let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1600.0, 1500.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let preview = |harness: &Harness<'_, TextureCraftApp>| {
             harness.ctx.data(|data| data.get_temp::<Option<usize>>(egui::Id::unique(TEST_SCENE_SET_HOVER))).expect("the 3D view submitted a scene frame")
         };
