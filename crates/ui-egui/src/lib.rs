@@ -400,11 +400,8 @@ pub(crate) fn start_ui(saved: Option<UiState>, session: &mut Session) -> UiState
             ui.tool_settings.apply(&mut session.tool);
             ui
         }
-        None => {
-            let mut ui = UiState::default();
-            ui.prefs.language = i18n::SYSTEM_LANGUAGE.into();
-            ui
-        }
+        // The default language follows the operating system
+        None => UiState::default(),
     }
 }
 
@@ -1120,7 +1117,7 @@ const BAKE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis
 
 /// The share of the running frame rate and frame time averages each frame keeps (an average over about ten frames)
 const FRAME_AVERAGE_KEEP: f32 = 0.9;
-/// The interface scale applied: wider than the Settings slider, so a scale set elsewhere still applies within reason
+/// The interface scale applied (`prefs.ui_scale`, set through `ui.set`; Settings has no control for it), clamped to a usable range
 const UI_SCALE_APPLIED: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 /// Zoom factors closer than this are the same zoom (float noise), so the zoom is not set again each frame
 const SAME_ZOOM_TOLERANCE: f32 = 1e-3;
@@ -1391,7 +1388,23 @@ pub fn data_folder(pref: &str) -> std::path::PathBuf {
     std::path::Path::new(&home).join("Documents").join("TextureCraft")
 }
 
-/// The data folder in use: the Nightly profile when this is one, else Settings › Folders › Data folder.
+/// An absolute preview cache override, or the app's default under the user's cache directory.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn local_cache_folder(pref: &str) -> std::path::PathBuf {
+    let chosen = std::path::Path::new(pref.trim());
+    if chosen.is_absolute() {
+        return chosen.to_path_buf();
+    }
+
+    let cache = if has_data_root() {
+        data_dir().join("cache")
+    } else {
+        craft_update::Paths::per_user(UPDATE_APP.id).map_or_else(|_| data_dir().join("cache"), |paths| paths.cache)
+    };
+    cache.join("previews")
+}
+
+/// The Nightly profile's data folder, or the folder chosen in Settings › Files.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> std::path::PathBuf {
     if let Some(root) = DATA_ROOT.get() {
@@ -1400,7 +1413,7 @@ pub fn data_dir() -> std::path::PathBuf {
     DATA_FOLDER.get().cloned().unwrap_or_else(|| data_folder(""))
 }
 
-/// `<sub>` in the data folder in use (Settings › Folders › Data folder).
+/// `<sub>` in the data folder in use (Settings › Files › Data folder).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn user_dir(sub: &str) -> std::path::PathBuf {
     data_dir().join(sub)

@@ -41,7 +41,7 @@ pub(crate) fn reset_ui_keys(app: &mut TextureCraftApp, input: &mut egui::InputSt
     if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
         app.ui.windows.confirm_reset_ui = false;
     } else if nothing_focused && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
-        app.ui.adopt_layout(crate::UiState::default());
+        app.ui.reset_ui();
         app.ui.windows.confirm_reset_ui = false;
     }
 }
@@ -54,7 +54,7 @@ fn reset_ui(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let (mut reset, mut cancel) = (false, false);
     dialog(ctx, "reset_ui", tr("Reset UI"), &mut open).show(ctx, |ui| {
-        ui.label(tr("Reset the panels, view layout, zoom and every other view setting to their defaults? Settings and shortcuts stay."));
+        ui.label(tr("Reset the panels, view settings and interface language to their defaults? Other preferences and shortcuts stay."));
         ui.add_space(8.0);
 
         // One row keeps the window to its contents; a bare right-to-left layout fills the screen height
@@ -67,7 +67,7 @@ fn reset_ui(app: &mut TextureCraftApp, ctx: &egui::Context) {
     });
 
     if reset {
-        app.ui.adopt_layout(crate::UiState::default());
+        app.ui.reset_ui();
     }
     if reset || cancel || !open {
         app.ui.windows.confirm_reset_ui = false;
