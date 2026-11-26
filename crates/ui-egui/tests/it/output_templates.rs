@@ -23,7 +23,10 @@ fn harness(library: &TemplateLibrary) -> Harness<'static, TextureCraftApp> {
 
 fn harness_at(library: &TemplateLibrary, size: egui::Vec2) -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut h = Harness::builder().with_size(size).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder()
+        .with_size(size)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
     h.state_mut().session.load_export_presets(library.0.clone());
@@ -632,7 +635,10 @@ fn a_click_on_a_channel_offers_clear_and_split_or_collapse_and_a_right_click_inv
 fn on_a_small_screen_an_rgba_row_keeps_its_controls_in_the_window() {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
     let library = TemplateLibrary::new("small-screen");
-    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
     h.state_mut().session.load_export_presets(library.0.clone());

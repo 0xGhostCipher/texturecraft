@@ -287,7 +287,11 @@ mod tests {
 
     fn display_harness() -> Harness<'static, TextureCraftApp> {
         let session = texturecraft_engine::sample_session(128, 32).unwrap();
-        let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).with_step_dt(0.01).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1600.0, 1200.0))
+            .with_step_dt(0.01)
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|cc| TextureCraftApp::new(cc, session));
         harness.state_mut().ui.prefs.language = "en".into();
         harness.state_mut().ui.dock.focus(crate::docking::Panel::Display);
         harness.run_steps(4);

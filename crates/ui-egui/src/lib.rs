@@ -44,6 +44,7 @@ mod filter_transform_rows;
 mod folder_properties;
 pub mod fonts;
 mod frame_gizmo;
+pub mod framework;
 mod generator_input_card;
 mod generator_input_slot;
 mod generator_kind_rows;
@@ -102,6 +103,7 @@ pub mod orb_previews;
 mod orb_shape;
 /// The channel's OS identity (app id, window and app names) — see its module docs.
 pub mod os_window;
+mod pane_split;
 pub mod parity;
 mod past_end;
 mod path_hit;
@@ -139,6 +141,8 @@ mod resource_picker;
 mod resource_picker_item;
 mod round_gizmo;
 mod running_bake;
+#[cfg(not(target_arch = "wasm32"))]
+mod sample_project;
 pub mod saved_search;
 mod screen_color_pick;
 pub mod screen_pick;
@@ -155,6 +159,7 @@ pub mod shelf_preview;
 mod shelf_tabs;
 mod shelf_toolbar;
 pub mod shelf_view;
+mod shortcut_dispatch;
 mod slot_thumbnail;
 #[cfg(not(target_arch = "wasm32"))]
 mod smart_mask_menu;
@@ -256,6 +261,9 @@ pub struct TextureCraftApp {
     pub session: Session,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) session_log_file: Option<session_log_file::SessionLogFile>,
+    /// The folder File > Open Sample Project starts in, under the data folder
+    #[cfg(not(target_arch = "wasm32"))]
+    pub samples_folder: std::path::PathBuf,
     viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
@@ -294,6 +302,10 @@ pub struct TextureCraftApp {
     pub(crate) live_preview: bake_mode::LivePreview,
     /// Last frame's viewport rect (logical points), for scripted input.
     pub viewport_rect: egui::Rect,
+    /// Project and texture-set index from the last completed UI pass.
+    hovered_texture_set: Option<(u64, usize)>,
+    /// The set under the pointer in this pass, independent of dock drawing order.
+    next_hovered_texture_set: Option<(u64, usize)>,
     pub fps: f32,
     /// User smart materials found in the library folder (refreshed on demand).
     pub library: Option<Vec<std::path::PathBuf>>,
@@ -331,6 +343,16 @@ pub struct TextureCraftApp {
     pub banner: Option<&'static str>,
     /// Who draws the window's title bar (decided at startup, before the window opens).
     pub title_bar: titlebar::TitleBar,
+    /// The dock area's workspace and panel specs between passes.
+    pub(crate) docks: docking::LiveDock,
+    /// The framework dialogs (the update dialogs), run once per pass after TextureCraft's own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
+    /// Who TextureCraft is to the framework's dialogs.
+    pub(crate) framework_host: std::sync::Arc<craft_host::Host>,
+    /// The Copy, Cut and Paste the runtime took from a floating panel's window (`framework::clipboard_events`), for the
+    /// shortcuts of the next `logic`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fired_clipboard: Vec<egui::Event>,
     last_time: f64,
     /// When the next autosave is due (seconds of app time; desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -416,6 +438,8 @@ impl TextureCraftApp {
             session,
             #[cfg(not(target_arch = "wasm32"))]
             session_log_file: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            samples_folder: std::path::PathBuf::new(),
             viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds::default(),
             ui,
             ui_store,
@@ -437,6 +461,8 @@ impl TextureCraftApp {
             bake_map_thumbnails: bake_mode::MapThumbnails::default(),
             live_preview: bake_mode::LivePreview::default(),
             viewport_rect: egui::Rect::NOTHING,
+            hovered_texture_set: None,
+            next_hovered_texture_set: None,
             fps: 0.0,
             ui_ms: 0.0,
             profiler: profile::Profiler::default(),
@@ -460,6 +486,11 @@ impl TextureCraftApp {
             fonts: fonts::UiFonts::default(),
             banner: None,
             title_bar: titlebar::TitleBar::default(),
+            docks: docking::LiveDock::default(),
+            framework_dialogs: craft_ui::dialog::DialogHost::new(),
+            framework_host: framework::host(),
+            #[cfg(not(target_arch = "wasm32"))]
+            fired_clipboard: Vec::new(),
             last_time: 0.0,
             next_autosave,
             styled: None,
@@ -491,6 +522,7 @@ impl TextureCraftApp {
         {
             // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
+            app.samples_folder = user_dir(sample_project::SAMPLES_FOLDER);
 
             if cc.winit_window().is_some() {
                 match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
@@ -1099,6 +1131,7 @@ impl TextureCraftApp {
 impl eframe::App for TextureCraftApp {
     /// A drag that holds the pointer reads the pointer's moves as moves of a pointer no screen edge stops
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.before_input(ctx);
         pointer_lock::rewrite(ctx, raw_input);
     }
 
@@ -1193,6 +1226,11 @@ impl eframe::App for TextureCraftApp {
 
         self.bindings.sync(&self.ui.keymap, craft_keymap::egui::platform(ctx));
         menus::shortcuts(self, ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let events = std::mem::take(&mut self.fired_clipboard);
+            menus::forwarded_shortcuts(self, ctx, events, egui::Modifiers::NONE);
+        }
         screen_pick::sync(self, ctx);
         move_on_model::end_when_gone(self, ctx);
 
@@ -1213,7 +1251,7 @@ impl eframe::App for TextureCraftApp {
         self.profiler.logic_ms = (now_ms() - logic_start_ms) as f32;
 
         // Last, so it sees every close request this frame's work made
-        windows::close_request(self, ctx);
+        self.close_path(ctx);
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
@@ -1242,7 +1280,20 @@ impl eframe::App for TextureCraftApp {
 
         // The dock keeps the cards' gutter from the bars and rails around it
         let panel_frame = if hide_ui { egui::Frame::NONE.fill(tokens.viewport) } else { egui::Frame::NONE.fill(tokens.chrome).inner_margin(theme::GUTTER) };
-        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| if hide_ui { viewport::central(self, ui) } else { docking::show(self, ui) });
+        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| {
+            if hide_ui {
+                viewport::central(self, ui);
+            } else {
+                docking::show(self, ui);
+            }
+        });
+
+        let hovered_texture_set = self.next_hovered_texture_set.take();
+        if self.hovered_texture_set != hovered_texture_set {
+            self.hovered_texture_set = hovered_texture_set;
+            ctx.request_repaint();
+        }
+
         windows::show(self, &ctx);
 
         // Finish after the dock and windows have requested their thumbnails
@@ -1250,6 +1301,7 @@ impl eframe::App for TextureCraftApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
+        self.framework_dialogs.run(ui);
         toasts(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.file_dialogs.show_pending(frame);
