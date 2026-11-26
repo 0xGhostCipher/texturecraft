@@ -86,7 +86,9 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
                 && let Some(result) = app.run(command, json!({"name": name, "to": renamed}))
                 && let Some(new_name) = result["name"].as_str()
             {
+                // The rows below would act on the old name: the menu draws again under the new one next frame
                 keep_star_and_preview(app, entry, new_name);
+                return;
             }
         }
         info_block(ui, width, column, shown_info, &tokens);

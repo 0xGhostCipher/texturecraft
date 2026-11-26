@@ -946,7 +946,8 @@ mod tests {
 
     #[test]
     fn adopting_a_layout_keeps_the_shelf_query_saved_searches_favorites_and_custom_previews() {
-        let saved = crate::saved_search::SavedSearch { name: "rust".into(), filter: "rust".into(), tab: 2, path: vec!["starter".into()] };
+        let saved =
+            crate::saved_search::SavedSearch { name: "rust".into(), filter: "rust".into(), tab: 2, path: vec!["starter".into()], favorites_only: false };
         let favorite = crate::shelf_favorite::ShelfFavorite { kind: "material".into(), id: "gold".into() };
         let mut ui =
             UiState { shelf_filter: "rust".into(), shelf_tab: 2, shelf_path: vec!["starter".into()], shelf_favorites_only: true, ..UiState::default() };

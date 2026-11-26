@@ -77,6 +77,7 @@ fn an_automatic_update_waits_for_the_stroke_under_way_to_end() {
     harness.run_steps(2);
     std::fs::write(&path, grey_png(0.8)).unwrap();
 
+    let steps_before_stroke = harness.state().session.history_labels().len();
     harness.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();
     pass_a_minute(&mut harness);
     let during_stroke = harness.state().session.images[&name].rgba.clone();
@@ -88,4 +89,36 @@ fn an_automatic_update_waits_for_the_stroke_under_way_to_end() {
     assert_eq!(during_stroke, before, "nothing is read again while a stroke is under way");
     assert_ne!(after_stroke, before, "the update runs once the stroke ended");
     assert_eq!(harness.state().session.doc.resources[&name].as_slice(), grey_png(0.8).as_slice(), "the stroke's undo state didn't swallow the update");
+
+    harness.state_mut().session.undo().unwrap();
+
+    assert_eq!(harness.state().session.doc.resources[&name].as_slice(), grey_png(0.2).as_slice(), "one undo takes back the update");
+    assert_eq!(harness.state().session.history_labels().len(), steps_before_stroke + 1, "the stroke is still its own step");
+}
+
+#[test]
+fn a_file_that_fails_to_read_is_reported_again_in_the_next_project() {
+    let mut harness = refresh_popup();
+    harness.get_by_label("Resources used in project").click();
+    harness.run_steps(2);
+
+    let mut reported = Vec::new();
+    for project in ["first", "second"] {
+        if project == "second" {
+            harness.state_mut().session = texturecraft_engine::sample_session(256, 64).unwrap();
+        }
+        let folder = std::env::temp_dir().join(format!("texturecraft-failed-read-{project}-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("photo.png");
+        std::fs::write(&path, grey_png(0.2)).unwrap();
+        let name = harness.state_mut().run("resource.import", json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+        std::fs::remove_dir_all(&folder).unwrap();
+        harness.state_mut().toasts.clear();
+
+        pass_a_minute(&mut harness);
+
+        reported.push(harness.state().toasts.iter().any(|toast| toast.error && toast.text.starts_with(&format!("{name}:"))));
+    }
+
+    assert_eq!(reported, [true, true], "each project says once that its file can't be read");
 }

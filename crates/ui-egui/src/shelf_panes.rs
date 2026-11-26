@@ -272,11 +272,14 @@ fn saved_searches(app: &mut TextureCraftApp, ui: &mut Ui) {
                 let saved_index = row - first_saved_row;
                 let Some(saved) = app.ui.shelf_saved_searches.get(saved_index) else { continue };
 
-                let selected = !favorites_only && saved.filter == app.ui.shelf_filter && saved.tab == app.ui.shelf_tab && saved.path == app.ui.shelf_path;
+                let selected = saved.favorites_only == favorites_only
+                    && saved.filter == app.ui.shelf_filter
+                    && saved.tab == app.ui.shelf_tab
+                    && saved.path == app.ui.shelf_path;
                 let response = ui.selectable_label(selected, &saved.name);
                 if response.clicked() {
                     (app.ui.shelf_filter, app.ui.shelf_tab, app.ui.shelf_path) = (saved.filter.clone(), saved.tab, saved.path.clone());
-                    app.ui.shelf_favorites_only = false;
+                    app.ui.shelf_favorites_only = saved.favorites_only;
                 }
 
                 response.context_menu(|ui| {
@@ -294,18 +297,21 @@ fn saved_searches(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 }
 
-/// The shelf's query, named after its search text, else its folder, else its tab
+/// The shelf's query, named after its search text, else its folder, else Favorites, else its tab
 fn current_query(app: &TextureCraftApp) -> SavedSearch {
     let filter = &app.ui.shelf_filter;
     let tab = app.ui.shelf_tab;
     let path = &app.ui.shelf_path;
+    let favorites_only = app.ui.shelf_favorites_only;
     let name = if !filter.is_empty() {
         filter.as_str()
     } else if let Some(folder) = path.last() {
         crate::shelf_folders::name(path.len() - 1, folder)
+    } else if favorites_only {
+        tr(FAVORITES)
     } else {
         TABS.get(tab).map_or_else(|| tr("All"), |(_, _, label)| tr(label))
     };
 
-    SavedSearch { name: name.to_owned(), filter: filter.clone(), tab, path: path.clone() }
+    SavedSearch { name: name.to_owned(), filter: filter.clone(), tab, path: path.clone(), favorites_only }
 }

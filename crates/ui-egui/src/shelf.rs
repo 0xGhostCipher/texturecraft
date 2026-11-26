@@ -271,16 +271,16 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
     let folder = app.ui.shelf_path.clone();
     let picked_tab = app.ui.shelf_tab;
     let mut matching: Vec<ShelfEntry> = all_entries.into_iter().filter(|entry| entry.matches(&filter)).collect();
+    if app.ui.shelf_favorites_only {
+        matching.retain(|entry| crate::shelf_favorite::rank(&app.ui.shelf_favorites, entry).is_some());
+    }
+
     let path_pane_open = app.ui.shelf_panes.filter_by_path;
     let mut applicable = if path_pane_open {
         crate::shelf_folders::paths(matching.iter().filter(|entry| crate::shelf_tabs::shows(picked_tab, entry.tab())))
     } else {
         Vec::new()
     };
-
-    if app.ui.shelf_favorites_only {
-        matching.retain(|entry| crate::shelf_favorite::rank(&app.ui.shelf_favorites, entry).is_some());
-    }
 
     // All libraries includes every result without constructing an asset path
     if !folder.is_empty() {
@@ -298,7 +298,7 @@ pub fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         if in_user_library && let Some(count) = TABS.iter().position(|(shown, _, _)| *shown == tab).and_then(|position| counts.get_mut(position)) {
             *count += saved;
         }
-        if path_pane_open && saved > 0 && crate::shelf_tabs::shows(picked_tab, tab) {
+        if path_pane_open && !favorites_only && saved > 0 && crate::shelf_tabs::shows(picked_tab, tab) {
             applicable.push(vec![crate::shelf_entry::USER.to_string()]);
         }
     }
@@ -523,15 +523,15 @@ fn entry_tile(app: &mut TextureCraftApp, ui: &mut Ui, ctx: &egui::Context, entry
         return;
     }
 
-    // A picture the user picked replaces the thumbnail, unless its file is gone
-    let custom = crate::shelf_custom_preview::file_for(&app.ui.shelf_custom_previews, entry).and_then(|file| app.thumbs.custom_preview(ctx, file));
-    let texture = custom.or_else(|| entry.thumbnail(app, ctx));
+    // A picture the user picked replaces the thumbnail, unless its file is gone; it is read only once its tile shows
+    let thumbnail = entry.thumbnail(app, ctx);
+    let custom_file = crate::shelf_custom_preview::file_for(&app.ui.shelf_custom_previews, entry);
     let asset = entry.asset();
     let session = &app.session;
     let response = tile_in_view(
         ui,
         &mut app.thumbs,
-        |_, _| texture,
+        |ui, thumbs| custom_file.and_then(|file| thumbs.custom_preview(ui.ctx(), file)).or(thumbnail),
         |thumbs| match entry {
             ShelfEntry::SavedBrush { path: Some(path), .. } => Some(thumbs.saved_brush_preview(path, &session.images)),
             _ => entry.preview(session),

@@ -110,7 +110,8 @@ fn update_resources(app: &mut TextureCraftApp, ctx: &Context) {
         .flatten()
         .map(|failure| (failure["name"].as_str().unwrap_or_default().to_owned(), failure["error"].as_str().unwrap_or_default().to_owned()))
         .collect();
-    let mut reported: Vec<String> = ctx.data(|data| data.get_temp(reported_failures_id())).unwrap_or_default();
+    let reported_id = reported_failures_id(app.session.project_id);
+    let mut reported: Vec<String> = ctx.data(|data| data.get_temp(reported_id)).unwrap_or_default();
     reported.retain(|name| failures.iter().any(|(failed, _)| failed == name));
     for (name, error) in failures {
         if !reported.contains(&name) {
@@ -118,12 +119,12 @@ fn update_resources(app: &mut TextureCraftApp, ctx: &Context) {
             reported.push(name);
         }
     }
-    ctx.data_mut(|data| data.insert_temp(reported_failures_id(), reported));
+    ctx.data_mut(|data| data.insert_temp(reported_id, reported));
 }
 
-/// The files whose failure to read was already shown (ctx temp data)
-fn reported_failures_id() -> Id {
-    Id::unique("shelf_updates_reported_failures")
+/// The files of project `project_id` whose failure to read was already shown (ctx temp data)
+fn reported_failures_id(project_id: u64) -> Id {
+    Id::unique(("shelf_updates_reported_failures", project_id))
 }
 
 /// The refresh button with its popup of update settings, opening upward from the toolbar `panel` with its left edge on the panel's

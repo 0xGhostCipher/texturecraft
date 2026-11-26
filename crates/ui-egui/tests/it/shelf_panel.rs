@@ -19,6 +19,8 @@ const MATERIALS_TYPE: usize = 0;
 const SMART_MASKS_TYPE: usize = 2;
 const BRUSHES_TYPE: usize = 4;
 const ENVIRONMENTS_TYPE: usize = 7;
+/// The type row with no type picked: every type shows
+const EVERY_TYPE: usize = 8;
 /// How far the saved brush's spacing differs from the current brush's, so loading it shows
 const SAVED_SPACING_CHANGE: f32 = 0.25;
 /// Tile columns the reference shows at its panel width
@@ -203,7 +205,13 @@ fn many_saved_searches_keep_the_path_filter_reachable() {
     harness.state_mut().ui.shelf_panes.saved_searches = true;
     harness.state_mut().ui.shelf_panes.filter_by_path = true;
     harness.state_mut().ui.shelf_saved_searches = (0..100)
-        .map(|index| SavedSearch { name: format!("search {index}"), filter: format!("filter {index}"), tab: MATERIALS_TYPE, path: Vec::new() })
+        .map(|index| SavedSearch {
+            name: format!("search {index}"),
+            filter: format!("filter {index}"),
+            tab: MATERIALS_TYPE,
+            path: Vec::new(),
+            favorites_only: false,
+        })
         .collect();
     harness.run_steps(3);
 
@@ -217,7 +225,13 @@ fn a_long_saved_search_list_can_select_the_last_query() {
     let mut harness = shelf(NARROW_WINDOW);
     harness.state_mut().ui.shelf_panes.saved_searches = true;
     harness.state_mut().ui.shelf_saved_searches = (0..1000)
-        .map(|index| SavedSearch { name: format!("search {index}"), filter: format!("filter {index}"), tab: MATERIALS_TYPE, path: Vec::new() })
+        .map(|index| SavedSearch {
+            name: format!("search {index}"),
+            filter: format!("filter {index}"),
+            tab: MATERIALS_TYPE,
+            path: Vec::new(),
+            favorites_only: false,
+        })
         .collect();
     harness.run_steps(3);
     assert!(harness.query_by_label("search 500").is_none(), "offscreen searches do not build rows");
@@ -457,7 +471,7 @@ fn the_smallest_saved_search_pane_can_scroll_to_and_select_the_last_query() {
     harness.state_mut().ui.shelf_panes.filter_by_path = true;
     harness.state_mut().ui.shelf_panes_split = 0.0;
     harness.state_mut().ui.shelf_saved_searches =
-        vec![SavedSearch { name: "Rust search".into(), filter: "rust".into(), tab: MATERIALS_TYPE, path: Vec::new() }];
+        vec![SavedSearch { name: "Rust search".into(), filter: "rust".into(), tab: MATERIALS_TYPE, path: Vec::new(), favorites_only: false }];
     harness.run_steps(3);
 
     scroll_pane_to_end(&mut harness, "SAVED SEARCHES");
@@ -543,6 +557,55 @@ fn the_favorites_search_shows_only_favorites_until_all_is_picked() {
 
     assert!(harness.query_by_label(other).is_some(), "All shows every asset again");
     assert!(harness.query_by_label("My brushes").is_some(), "All shows the saved brushes list again");
+}
+
+/// The shelf on the Materials type with the first plain material made a favorite through its menu
+fn shelf_with_a_favorite(session: texturecraft_engine::Session) -> Harness<'static, TextureCraftApp> {
+    let favorite = plain_materials()[0].label;
+    let mut harness = Harness::builder().with_size(REFERENCE_WINDOW).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    harness.state_mut().ui.shelf_tab = MATERIALS_TYPE;
+    harness.run_steps(4);
+    button(&harness, favorite).click_secondary();
+    harness.run_steps(3);
+    button(&harness, "Add to favorites").click();
+    harness.run_steps(3);
+    harness
+}
+
+#[test]
+fn a_search_saved_under_favorites_shows_only_favorites_again() {
+    let mut harness = shelf_with_a_favorite(texturecraft_engine::sample_session(256, 64).unwrap());
+    harness.state_mut().ui.shelf_panes.saved_searches = true;
+    harness.run_steps(3);
+    button(&harness, "Favorites").click();
+    harness.run_steps(3);
+    button(&harness, "Save the current search").click();
+    harness.run_steps(2);
+    button(&harness, "All").click();
+    harness.run_steps(3);
+
+    // The saved search lists below the fixed Favorites row, under the same name
+    harness.get_all_by_label("Favorites").last().unwrap().click();
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().ui.shelf_saved_searches.len(), 1);
+    assert!(harness.state().ui.shelf_favorites_only, "the saved search shows only favorites, as when it was saved");
+}
+
+#[test]
+fn hiding_non_applicable_folders_under_favorites_hides_the_folders_of_other_assets() {
+    let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
+    let png = texturecraft_engine::formats::gray16_png(1, 1, [0.5].into_iter()).unwrap();
+    session.import_resource_bytes("photo.png", png).unwrap();
+    let mut harness = shelf_with_a_favorite(session);
+    harness.state_mut().ui.shelf_tab = EVERY_TYPE;
+    harness.state_mut().ui.shelf_favorites_only = true;
+    harness.state_mut().ui.shelf_panes.filter_by_path = true;
+    harness.state_mut().ui.shelf_panes.hide_non_applicable = true;
+    harness.run_steps(4);
+
+    assert!(harness.query_by_label("Starter assets").is_some(), "the favorite's library shows");
+    assert!(harness.query_by_label("Project").is_none(), "the project image is no favorite, so its library hides");
 }
 
 #[test]
