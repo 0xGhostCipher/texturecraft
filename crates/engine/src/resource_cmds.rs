@@ -123,16 +123,22 @@ impl Session {
 
         self.doc.resources.insert(name.clone(), Arc::new(bytes));
         self.images.insert(name.clone(), decoded(image));
-
-        // A new resource under a removed one's name has no file of its own until an import says so
-        self.resource_sources.remove(&name);
-
         Ok(name)
     }
 
     /// The file image resource `name` was imported from in this session (what `resource.reload` reads again)
     pub fn resource_source(&self, name: &str) -> Option<&std::path::Path> {
-        self.resource_sources.get(name).map(std::path::PathBuf::as_path)
+        let bytes = self.doc.resources.get(name)?;
+        self.resource_sources.iter().rev().find(|(source, _)| std::ptr::eq(source.as_ptr(), Arc::as_ptr(bytes))).map(|(_, path)| path.as_path())
+    }
+
+    /// Remembers that image resource `name`, with the bytes it holds now, came from the file at `path`
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remember_resource_source(&mut self, name: &str, path: &std::path::Path) {
+        self.resource_sources.retain(|(source, _)| source.strong_count() > 0);
+        if let Some(bytes) = self.doc.resources.get(name) {
+            self.resource_sources.push((Arc::downgrade(bytes), path.to_path_buf()));
+        }
     }
 
     /// Decode resources that are not decoded yet and forget removed ones (after undo, redo, load).
@@ -210,7 +216,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = strp(p, "path").ok_or_else(|| bad("resource.import", "`path` is required"))?;
     let bytes = read_image_file("resource.import", path, MAX_BYTES as u64)?;
     let name = s.import_resource_bytes_prefixed(strp(p, "prefix").unwrap_or(""), path, bytes)?;
-    s.resource_sources.insert(name.clone(), path.into());
+    s.remember_resource_source(&name, std::path::Path::new(path));
     Ok(json!({ "name": name }))
 }
 
@@ -365,9 +371,6 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     if s.library_alphas.remove(&name) {
         s.library_alphas.insert(to.clone());
     }
-    if let Some(source) = s.resource_sources.remove(&name) {
-        s.resource_sources.insert(to.clone(), source);
-    }
     s.path_cache = None;
     s.sync_images();
     Ok(json!({ "name": to }))
@@ -406,14 +409,17 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(command, format!("no resource `{name}`")));
     }
 
-    let path =
-        s.resource_sources.get(&name).cloned().ok_or_else(|| bad(command, format!("`{name}` was imported before this session: no file to reload from")))?;
+    let path = s
+        .resource_source(&name)
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| bad(command, format!("`{name}` was imported before this session: no file to reload from")))?;
     let (bytes, image) = read_source(command, &path)?;
     s.edit("Reload resource", |s| {
         s.doc.resources.insert(name.clone(), Arc::new(bytes));
         Ok(())
     })?;
 
+    s.remember_resource_source(&name, &path);
     s.show_reloaded(name.clone(), image);
     Ok(json!({ "name": name }))
 }
@@ -424,29 +430,30 @@ fn update(s: &mut Session, _: &Value) -> Result<Value> {
     let command = "resource.update";
     let mut changed = Vec::new();
     let mut failed = Vec::new();
-    for (name, path) in &s.resource_sources {
-        let Some(held) = s.doc.resources.get(name) else { continue };
+    for (name, held) in &s.doc.resources {
+        let Some(path) = s.resource_source(name) else { continue };
         // Only a file whose bytes changed is decoded
         let read = read_resource_file(command, path, MAX_BYTES as u64)
             .and_then(|bytes| if bytes == **held { Ok(None) } else { decode_source(command, path, &bytes).map(|image| Some((bytes, image))) });
         match read {
             Ok(None) => {}
-            Ok(Some((bytes, image))) => changed.push((name.clone(), bytes, image)),
+            Ok(Some((bytes, image))) => changed.push((name.clone(), path.to_path_buf(), bytes, image)),
             Err(error) => failed.push(json!({ "name": name, "error": error.to_string() })),
         }
     }
 
     if !changed.is_empty() {
         s.edit("Update resources", |s| {
-            for (name, bytes, _) in &mut changed {
+            for (name, _, bytes, _) in &mut changed {
                 s.doc.resources.insert(name.clone(), Arc::new(std::mem::take(bytes)));
             }
             Ok(())
         })?;
     }
 
-    let updated: Vec<String> = changed.iter().map(|(name, _, _)| name.clone()).collect();
-    for (name, _, image) in changed {
+    let updated: Vec<String> = changed.iter().map(|(name, _, _, _)| name.clone()).collect();
+    for (name, path, _, image) in changed {
+        s.remember_resource_source(&name, &path);
         s.show_reloaded(name, image);
     }
     Ok(json!({ "updated": updated, "failed": failed }))
@@ -612,6 +619,42 @@ mod tests {
     }
 
     #[test]
+    fn renaming_a_linked_materials_package_moves_a_material_effects_link_with_it() {
+        use std::collections::BTreeMap;
+        use texturecraft_core::{Effect, EffectKind, MaterialLink};
+
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let png = texturecraft_formats::gray16_png(1, 1, [0.5].into_iter()).unwrap();
+        let package = session.import_resource_bytes("package.png", png).unwrap();
+        crate::execute(&mut session, "layer.add.image", &json!({"name": package})).unwrap();
+        let layer_id = session.selected_layer().unwrap();
+        let link = MaterialLink {
+            name: "linked".into(),
+            package: package.clone(),
+            graph: String::new(),
+            params: Vec::new(),
+            presets: Vec::new(),
+            inputs: Vec::new(),
+            size: 1,
+            resolution: None,
+            mapping: BTreeMap::new(),
+            outputs: BTreeMap::from([("basecolor".to_string(), package.clone())]),
+        };
+        let effect_id = session.doc.project.alloc_id();
+        let material = Effect::new(effect_id, EffectKind::Material(Fill { link: Some(Box::new(link)), ..Fill::default() }));
+        session.doc.project.layers.get_mut(&layer_id).unwrap().content_effects.push(material);
+
+        let renamed = crate::execute(&mut session, "resource.rename", &json!({"name": package, "to": "stone"})).unwrap()["name"].as_str().unwrap().to_string();
+
+        let effect = &session.doc.project.layers[&layer_id].content_effects[0];
+        let EffectKind::Material(fill) = &effect.kind else { panic!("the effect stays a material") };
+        let link = fill.link.as_ref().unwrap();
+        assert_ne!(renamed, package);
+        assert_eq!(link.package, renamed, "the link's package follows the rename");
+        assert_eq!(link.outputs.values().collect::<Vec<_>>(), [&renamed], "the link's cooked outputs follow the rename");
+    }
+
+    #[test]
     fn reloading_reads_the_file_again_and_undo_restores_the_pixels() {
         let mut session = crate::sample_session(128, 32).unwrap();
         let path = std::env::temp_dir().join(format!("texturecraft-reload-resource-{}.png", std::process::id()));
@@ -642,6 +685,34 @@ mod tests {
 
         assert_eq!(reused, name, "the name is free again");
         assert!(session.resource_source(&reused).is_none(), "the new image has no file to reload from");
+    }
+
+    #[test]
+    fn undo_gives_an_image_back_its_own_file_after_another_file_took_its_name() {
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let folder = |side: &str| std::env::temp_dir().join(format!("texturecraft-own-file-{side}-{}", std::process::id()));
+        let import = |session: &mut Session, side: &str, value: f32| {
+            std::fs::create_dir_all(folder(side)).unwrap();
+            let path = folder(side).join("photo.png");
+            std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [value].into_iter()).unwrap()).unwrap();
+            let name = crate::execute(session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+            (path, name)
+        };
+        let (first_path, first) = import(&mut session, "first", 0.2);
+        crate::execute(&mut session, "resource.remove", &json!({"name": first})).unwrap();
+        let (second_path, second) = import(&mut session, "second", 0.6);
+
+        // One undo takes back the second import, the next the removal
+        session.undo().unwrap();
+        session.undo().unwrap();
+        let source = session.resource_source(&first).map(std::path::Path::to_path_buf);
+        for side in ["first", "second"] {
+            std::fs::remove_dir_all(folder(side)).unwrap();
+        }
+
+        assert_eq!(second, first, "the second file takes the removed image's name");
+        assert_ne!(first_path, second_path);
+        assert_eq!(source, Some(first_path), "the image the undo brings back reloads from its own file");
     }
 
     #[test]

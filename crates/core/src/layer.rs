@@ -2072,7 +2072,7 @@ impl EffectKind {
     pub fn images_mut(&mut self) -> Vec<&mut String> {
         match self {
             EffectKind::Fill { source, .. } => source.images_mut(),
-            EffectKind::Material(fill) => fill.sources.values_mut().flat_map(Source::images_mut).collect(),
+            EffectKind::Material(fill) => fill.images_mut().collect(),
             EffectKind::Generator(generator) => generator.inputs.values_mut().flat_map(Source::images_mut).collect(),
             EffectKind::ColorSelection(selection) => selection.id_map.iter_mut().collect(),
             _ => Vec::new(),

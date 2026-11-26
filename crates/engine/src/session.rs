@@ -462,8 +462,8 @@ pub struct Session {
     pub images: texturecraft_compose::ImageStore,
     /// Resource names whose decoded pixels match a library alpha.
     pub(crate) library_alphas: BTreeSet<String>,
-    /// The file each image resource imported in this session came from, for Reload (not saved)
-    pub(crate) resource_sources: BTreeMap<String, std::path::PathBuf>,
+    /// The file each image resource imported in this session came from, for Reload (not saved). Kept by the resource's bytes, so undo, redo and renames keep each file with its own image
+    pub(crate) resource_sources: Vec<(std::sync::Weak<Vec<u8>>, std::path::PathBuf)>,
     /// Temporary texel mask limiting paint strokes (not saved, not in the history).
     pub quick_mask: crate::quick_mask::QuickMask,
     /// A path sublayer is being repainted from its paths (the only way to paint into one).
@@ -549,7 +549,7 @@ impl Session {
             blending_clipboard: None,
             images: Default::default(),
             library_alphas: BTreeSet::new(),
-            resource_sources: BTreeMap::new(),
+            resource_sources: Vec::new(),
             quick_mask: Default::default(),
             painting_paths: false,
             path_cache: None,
@@ -1028,10 +1028,9 @@ impl Session {
         .flatten()
     }
 
-    /// Points tool images and reload sources at a resource's name on this side of an undone or redone rename
+    /// Points tool images at a resource's name on this side of an undone or redone rename
     fn follow_renamed_resources(&mut self, other: &Document) {
-        let mut names: Vec<String> = self.tool_images_mut().map(|name| name.clone()).collect();
-        names.extend(self.resource_sources.keys().cloned());
+        let names: Vec<String> = self.tool_images_mut().map(|name| name.clone()).collect();
         let renames: Vec<(String, String)> = names
             .into_iter()
             .filter(|name| !self.doc.resources.contains_key(name))
@@ -1045,9 +1044,6 @@ impl Session {
         for (name, to) in renames {
             for tool_image in self.tool_images_mut().filter(|tool_image| **tool_image == name) {
                 tool_image.clone_from(&to);
-            }
-            if let Some(source) = self.resource_sources.remove(&name) {
-                self.resource_sources.insert(to, source);
             }
         }
     }
