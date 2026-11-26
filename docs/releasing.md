@@ -180,7 +180,7 @@ artwork and keep `ATTRIBUTION.md` in step. See `assets/app-icon/README.md`.
 
 ## Local checks
 
-- `cargo xtask ci`: fmt, clippy, tests, `cargo xtask layers`, `cargo xtask wasm`.
+- `cargo xtask ci`: fmt, clippy, tests, `cargo xtask layers`, `cargo xtask wasm` (not run by `ci` on Windows; the other hosts cover it).
 - `bash packaging/linux/apprun-test.sh` and `bash packaging/freebsd/package.sh --dry-run` run
   anywhere with bash.
 - `packaging/macos/package.sh --arch aarch64` on a Mac builds an ad-hoc signed DMG.

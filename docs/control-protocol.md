@@ -677,9 +677,11 @@ with `material.apply` instead. The command rejects linked MaterialCraft fills. T
 - `effect.filter.restoreDefaults {effect?}` puts a filter's parameters back to its defaults (name,
   channels and blending stay) and returns `{changed}`.
 - `layer.fill.resetProjection {layer? | effect?}` puts the Fill section back to a new fill's (same
-  projection kind; a placed frame, the symmetry and the sources stay); `layer.fill.resetFrame` puts a
-  warp's frame back around the mesh with its corners unpulled. Each is one undo step, or none when
-  nothing changes.
+  projection kind; a placed frame, the symmetry and the sources stay). `layer.fill.resetFrame
+  {layer? | effect?, keepCorners?: bool}` puts a warp's frame back around the mesh. By default it
+  resets the corners. With `keepCorners: true` it preserves the corners and also resets projector
+  rotation and scale. Projection Depth, crop and culling stay. Each reset is one undo step, or none
+  when nothing changes.
 
 ## MaterialCraft materials
 

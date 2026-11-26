@@ -203,8 +203,8 @@ fn saved_prefs(ui_file: Option<&std::path::Path>, persistence_path: Option<&std:
     entries.and_then(|entries| ron::from_str::<UiState>(entries.get("ui")?).ok()).map(|ui| ui.prefs).unwrap_or_default()
 }
 
-/// The app with the window chrome that needs the native window: the Windows borderless guard, and
-/// on macOS the traffic lights and AppKit's `movable` flag.
+/// The app with the window chrome that needs the native window: the Windows borderless guard, and the native window
+/// the framework runtime answers the hit test of.
 struct Shell {
     app: TextureCraftApp,
     window_frame: Option<window_frame::WindowFrameFn>,
@@ -212,8 +212,6 @@ struct Shell {
     /// Cmd+Q ends the process inside AppKit's terminate, after eframe's `on_exit` and before
     /// `eframe::run_native` returns, so the Nightly session record is finished here, not there.
     exit_hook: Option<Box<dyn FnOnce()>>,
-    #[cfg(target_os = "macos")]
-    movable: Option<bool>,
 }
 
 impl eframe::App for Shell {
@@ -240,9 +238,8 @@ impl eframe::App for Shell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        texturecraft_ui_egui::framework::before_ui(ui.ctx(), &*frame);
         self.app.ui(ui, frame);
-        #[cfg(target_os = "macos")]
-        texturecraft_ui_egui::titlebar::sync_native(&self.app.title_bar, ui, frame, &mut self.movable);
     }
 
     fn on_exit(&mut self) {
@@ -387,7 +384,8 @@ fn main() {
     prefs.apply_work_threads();
     prefs.apply_resource_limits();
     let session = initial_session(&args);
-    let title_bar = TitleBar::decide(prefs.system_title_bar);
+    let frame_decision = TitleBar::decide(prefs.system_title_bar);
+    let title_bar = TitleBar::of(&frame_decision.frame);
     let mut viewport = egui::ViewportBuilder::default()
         .with_app_id(os_window::app_id())
         .with_title(os_window::name())
@@ -396,7 +394,7 @@ fn main() {
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
     }
-    let viewport = title_bar.viewport(viewport);
+    let viewport = texturecraft_ui_egui::titlebar::viewport(&frame_decision, viewport);
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persistence_path, ..Default::default() };
     if let Err(e) = gpu::configure(&mut options, args.gpu, args.power_pref) {
         fatal(&e.to_string(), true);
@@ -443,7 +441,8 @@ fn main() {
             if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, window_name) {
                 log::warn!("the app menu could not be installed: {e}");
             }
-            let window_frame = window_frame::service(cc, matches!(title_bar, TitleBar::App(_)));
+            texturecraft_ui_egui::framework::install(&cc.egui_ctx, frame_decision)?;
+            let frame_guard = window_frame::service(cc, matches!(title_bar, TitleBar::App(_)));
             let mut app = TextureCraftApp::new(cc, session);
             app.title_bar = title_bar;
             app.set_startup_update_check(checks_for_updates_at_start(control));
@@ -459,13 +458,7 @@ fn main() {
                 });
                 notice_shown_in_window.store(previous_nightly_unclean, std::sync::atomic::Ordering::Relaxed);
             }
-            Ok(Box::new(Shell {
-                app,
-                window_frame,
-                exit_hook: Some(Box::new(finish_at_exit)),
-                #[cfg(target_os = "macos")]
-                movable: None,
-            }))
+            Ok(Box::new(Shell { app, window_frame: frame_guard, exit_hook: Some(Box::new(finish_at_exit)) }))
         }),
     );
     // A controlled return, including a handled startup error. On macOS a window already finished in
@@ -635,13 +628,10 @@ mod tests {
     /// Points within which a put-back lands on the press point (the system rounds it to whole pixels)
     const PUT_BACK_REACH: f32 = 1.0;
 
-    /// One frame of the window: the system's events go through the window's raw input hook, as eframe sends them; returns what the app asked of the window
+    /// One frame of the window: the system's events go through the window's raw input hook (the harness runs it before
+    /// every pass, as eframe does); returns what the app asked of the window
     fn window_frame(harness: &mut egui_kittest::Harness<'static, Shell>, events: Vec<egui::Event>) -> Vec<egui::ViewportCommand> {
-        let ctx = harness.ctx.clone();
-        let mut raw = harness.input_mut().clone();
-        raw.events.extend(events);
-        eframe::App::raw_input_hook(harness.state_mut(), &ctx, &mut raw);
-        *harness.input_mut() = raw;
+        harness.input_mut().events.extend(events);
         harness.step();
         harness.output().viewport_output.get(&egui::ViewportId::ROOT).map(|viewport| viewport.commands.clone()).unwrap_or_default()
     }
@@ -650,14 +640,10 @@ mod tests {
     #[test]
     fn the_window_holds_the_pointer_while_the_preview_square_is_held() {
         let session = Session::new_project("Hold", texturecraft_engine::geom::primitives::sphere(1.0, 48, 24), "builtin:sphere", None, 128).unwrap();
-        let builder = egui_kittest::Harness::builder().with_size(egui::vec2(DEFAULT_SIZE[0], DEFAULT_SIZE[1]));
-        let mut harness = builder.build_eframe(|cc| Shell {
-            app: TextureCraftApp::new(cc, session),
-            window_frame: None,
-            exit_hook: None,
-            #[cfg(target_os = "macos")]
-            movable: None,
-        });
+        let builder = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(DEFAULT_SIZE[0], DEFAULT_SIZE[1]))
+            .with_context_setup(texturecraft_ui_egui::framework::install_headless);
+        let mut harness = builder.build_eframe(|cc| Shell { app: TextureCraftApp::new(cc, session), window_frame: None, exit_hook: None });
         harness.run_steps(4);
         let layer = harness.state_mut().app.run("layer.add.fill", serde_json::json!({})).unwrap()["layer"].clone();
         harness.state_mut().app.run("layer.fill.projection", serde_json::json!({"layer": layer, "projection": "triplanar"})).unwrap();
