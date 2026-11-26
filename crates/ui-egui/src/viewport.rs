@@ -60,6 +60,24 @@ fn aux_view(app: &TextureCraftApp) -> Option<crate::gpu::AuxView> {
     }
 }
 
+/// The 3D view's widget: the same in the dock and with the UI hidden, so it keeps the focus when Tab hides the UI
+pub fn view_3d_id() -> egui::Id {
+    egui::Id::unique("texturecraft-view3d")
+}
+
+/// The 2D view's widget, as [`view_3d_id`]
+pub fn view_2d_id() -> egui::Id {
+    egui::Id::unique("texturecraft-view2d")
+}
+
+/// Draw the widget of a view and declare it as a document canvas of the window. In a split view both are, so the keys
+/// are the same in either.
+fn view_widget(ui: &Ui, rect: Rect, id: egui::Id, sense: Sense) -> egui::Response {
+    let response = ui.interact(rect, id, sense);
+    crate::framework::host_canvas(ui.ctx(), id);
+    response
+}
+
 /// The viewport dock tab: the paint bar, then the 3D and 2D views in the chosen layout with the mode's overlays
 pub fn central(app: &mut TextureCraftApp, ui: &mut Ui) {
     let mode = app.ui.mode;
@@ -183,6 +201,8 @@ fn empty_views(app: &mut TextureCraftApp, ui: &mut Ui) {
     };
 
     for (rect, id) in regions {
+        // Nothing to click or drag, but still the window's canvas: Tab hides and shows the UI
+        view_widget(ui, rect, if id == "v2d" { view_2d_id() } else { view_3d_id() }, Sense::focusable_noninteractive());
         ui.painter().rect_filled(rect, 0.0, tokens.viewport);
         view_header(app, ui, rect, id);
     }
@@ -745,7 +765,7 @@ pub(crate) fn orbit(app: &mut TextureCraftApp, delta: egui::Vec2) {
 }
 
 fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut PendingSync) {
-    let response = ui.interact(rect, ui.scope_id().with("view3d"), Sense::click_and_drag());
+    let response = view_widget(ui, rect, view_3d_id(), Sense::click_and_drag());
     app.viewport_rect = rect;
     let size = rect.size();
     app.session.viewport = Vec2::new(size.x.max(MIN_CAMERA_VIEWPORT), size.y.max(MIN_CAMERA_VIEWPORT));
@@ -760,7 +780,8 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
 
     // Navigation; S + drag moves the projection stencil instead, below
     let delta = ui.input(|input| input.pointer.delta());
-    let s_held = app.ui.mode == crate::state::Mode::Painting && ui.input(|input| input.key_down(STENCIL_KEY)) && !ui.ctx().egui_wants_keyboard_input();
+    let s_held =
+        app.ui.mode == crate::state::Mode::Painting && ui.input(|input| input.key_down(STENCIL_KEY)) && !crate::framework::widget_has_keyboard(ui.ctx());
 
     // Only an equipped Projection tool that can act moves its stencil: it isn't drawn otherwise
     let stencil_moves = tool_acts(app) && app.session.tool.tool == Tool::Projection;
@@ -1246,7 +1267,7 @@ fn path_keys(app: &mut TextureCraftApp, ui: &Ui) {
         return;
     }
 
-    if !tool_acts(app) || app.session.tool.tool != Tool::Path || app.session.tool.path.points.is_empty() || ui.ctx().egui_wants_keyboard_input() {
+    if !tool_acts(app) || app.session.tool.tool != Tool::Path || app.session.tool.path.points.is_empty() || crate::framework::widget_has_keyboard(ui.ctx()) {
         return;
     }
 
@@ -1723,7 +1744,10 @@ fn uv_fill_box_corners(view: crate::uv_view_map::UvViewMap, [origin, opposite]: 
 
 /// V held with the Clone tool in painting mode: clicks set the clone source
 fn clone_source_key(app: &TextureCraftApp, ui: &Ui) -> bool {
-    tool_acts(app) && app.session.tool.tool == Tool::Clone && ui.input(|input| input.key_down(CLONE_SOURCE_KEY)) && !ui.ctx().egui_wants_keyboard_input()
+    tool_acts(app)
+        && app.session.tool.tool == Tool::Clone
+        && ui.input(|input| input.key_down(CLONE_SOURCE_KEY))
+        && !crate::framework::widget_has_keyboard(ui.ctx())
 }
 
 /// Crosshair where the Clone tool reads from.
@@ -2106,7 +2130,7 @@ fn framed_tile_view(set: &texturecraft_engine::core::TextureSet, size: egui::Vec
 /// The 2D (UV) view: navigation, painting in texture coordinates and the overlays drawn over the texture.
 fn view_2d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut PendingSync) {
     let tokens = Tokens::get(ui.ctx());
-    let response = ui.interact(rect, ui.scope_id().with("view2d"), Sense::click_and_drag());
+    let response = view_widget(ui, rect, view_2d_id(), Sense::click_and_drag());
     let size = rect.size();
     let (alt, shift, snap) = ui.input(|input| (input.modifiers.alt, input.modifiers.shift, input.modifiers.shift && input.modifiers.command));
     let ctrl = ui.input(|input| input.modifiers.ctrl);
@@ -2553,7 +2577,10 @@ mod tests {
         let selected_set = session.ts();
         assert_ne!(hovered_set, selected_set);
 
-        let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1500.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1600.0, 1500.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let preview = |harness: &Harness<'_, TextureCraftApp>| {
             harness.ctx.data(|data| data.get_temp::<Option<usize>>(egui::Id::unique(TEST_SCENE_SET_HOVER))).expect("the 3D view submitted a scene frame")
         };
@@ -2689,7 +2716,9 @@ mod tests {
 
         for tool in [Tool::Paint, Tool::PolygonFill] {
             let session = Session::new_project("t", primitives::plane(2.0, 4), "test", None, 128).unwrap();
-            let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+            let mut harness = egui_kittest::Harness::builder()
+                .with_context_setup(crate::framework::install_headless)
+                .build_eframe(|context| TextureCraftApp::new(context, session));
             let app = harness.state_mut();
             app.session.tool.tool = tool;
             let history = app.session.history_labels().len();
@@ -2718,7 +2747,9 @@ mod tests {
         // The harness draws the UI, so another test's interface language must not be active
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = Session::new_project("t", primitives::plane(2.0, 4), "test", None, 128).unwrap();
-        let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let app = harness.state_mut();
         app.ui.mode = crate::state::Mode::Painting;
         app.session.view = ViewMode::Mask(LayerId(7));
@@ -2744,7 +2775,9 @@ mod tests {
         execute(&mut session, "layer.add.fill", &json!(null)).unwrap();
         let effect = texturecraft_engine::core::LayerId(execute(&mut session, "mask.add.colorSelection", &json!(null)).unwrap()["effect"].as_u64().unwrap());
         session.target = StackTarget::Effect(effect);
-        let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(2);
 
         crate::id_color_pick::IdColorPick::start(harness.state_mut(), effect, None);
@@ -2761,7 +2794,10 @@ mod tests {
     fn a_waiting_eyedropper_keeps_a_2d_view_click_from_painting() {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         harness.state_mut().ui.layout = ViewLayout::Only2D;
         harness.state_mut().session.tool.tool = Tool::PolygonFill;
         harness.run_steps(4);
@@ -2807,7 +2843,9 @@ mod tests {
         let effect = texturecraft_engine::core::LayerId(result["committed"]["effect"].as_u64().unwrap());
         let EffectKind::Path(paths) = &mut session.doc.project.effect_mut(effect).unwrap().kind else { panic!("path effect") };
         paths.resize(8, paths[0].clone());
-        let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let context = egui::Context::default();
         let mut previous = Vec::<std::sync::Weak<Vec<Vec<Option<Vec3>>>>>::new();
 
@@ -2856,7 +2894,7 @@ mod tests {
             Session::new_project("Decal selection", texturecraft_engine::geom::primitives::material_ball(), "builtin:material_ball", None, 256).unwrap();
         let builder = egui_kittest::Harness::builder().with_size(vec2(1600.0, 960.0));
         let builder = if render { builder.wgpu() } else { builder };
-        let mut harness = builder.build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = builder.with_context_setup(crate::framework::install_headless).build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(4);
         let mut png = Vec::new();
         image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 255, 255, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
@@ -2928,8 +2966,9 @@ mod tests {
         let session = &mut harness.state_mut().session;
         let instance = execute(session, "layer.instance", &json!({"layer": original.layer.0, "ts": 1})).unwrap()["layer"].clone();
 
-        // The source effect remains a valid inherited target when selection changes to its instance
-        assert!(execute(session, "layer.select", &json!({"layer": instance, "target": effect.0})).is_err());
+        // The source effect is a valid inherited target when selection changes to its instance
+        execute(session, "layer.select", &json!({"layer": instance, "target": effect.0})).unwrap();
+        assert_eq!(session.target, texturecraft_engine::StackTarget::Effect(effect));
 
         assert_eq!(session.ts(), 1);
         assert_eq!(session.selected_layer().unwrap().0, instance.as_u64().unwrap());
@@ -3006,7 +3045,9 @@ mod tests {
         // Hold the language lock while drawing the harness
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let app = harness.state_mut();
         app.ui.mode = crate::state::Mode::Baking;
         let before = bake_visualization(app).unwrap();
@@ -3029,7 +3070,9 @@ mod tests {
     #[test]
     fn the_automatic_cage_shows_no_matching_error() {
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let app = harness.state_mut();
         app.ui.mode = crate::state::Mode::Baking;
         assert!(bake_visualization(app).unwrap().matching_error.shown);

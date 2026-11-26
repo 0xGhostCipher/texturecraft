@@ -46,6 +46,7 @@ mod filter_transform_rows;
 mod folder_properties;
 pub mod fonts;
 mod frame_gizmo;
+pub mod framework;
 mod generator_input_card;
 mod generator_input_slot;
 mod generator_kind_rows;
@@ -104,6 +105,7 @@ pub mod orb_previews;
 mod orb_shape;
 /// The channel's OS identity (app id, window and app names) — see its module docs.
 pub mod os_window;
+mod pane_split;
 pub mod parity;
 mod past_end;
 mod path_hit;
@@ -159,6 +161,7 @@ pub mod shelf_preview;
 mod shelf_tabs;
 mod shelf_toolbar;
 pub mod shelf_view;
+mod shortcut_dispatch;
 mod slot_thumbnail;
 #[cfg(not(target_arch = "wasm32"))]
 mod smart_mask_menu;
@@ -305,6 +308,8 @@ pub struct TextureCraftApp {
     hovered_texture_set: Option<(u64, usize)>,
     /// The set under the pointer in this pass, independent of dock drawing order.
     next_hovered_texture_set: Option<(u64, usize)>,
+    /// Project identity of the current inline rename buffer.
+    rename_project_id: u64,
     pub fps: f32,
     /// User smart materials found in the library folder (refreshed on demand).
     pub library: Option<Vec<std::path::PathBuf>>,
@@ -342,6 +347,16 @@ pub struct TextureCraftApp {
     pub banner: Option<&'static str>,
     /// Who draws the window's title bar (decided at startup, before the window opens).
     pub title_bar: titlebar::TitleBar,
+    /// The dock area's workspace and panel specs between passes.
+    pub(crate) docks: docking::LiveDock,
+    /// The framework dialogs (the update dialogs), run once per pass after TextureCraft's own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
+    /// Who TextureCraft is to the framework's dialogs.
+    pub(crate) framework_host: std::sync::Arc<craft_host::Host>,
+    /// The Copy, Cut and Paste the runtime took from a floating panel's window (`framework::clipboard_events`), for the
+    /// shortcuts of the next `logic`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fired_clipboard: Vec<egui::Event>,
     last_time: f64,
     /// When the next autosave is due (seconds of app time; desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -455,6 +470,7 @@ impl TextureCraftApp {
             viewport_rect: egui::Rect::NOTHING,
             hovered_texture_set: None,
             next_hovered_texture_set: None,
+            rename_project_id: project_id,
             fps: 0.0,
             ui_ms: 0.0,
             profiler: profile::Profiler::default(),
@@ -478,6 +494,11 @@ impl TextureCraftApp {
             fonts: fonts::UiFonts::default(),
             banner: None,
             title_bar: titlebar::TitleBar::default(),
+            docks: docking::LiveDock::default(),
+            framework_dialogs: craft_ui::dialog::DialogHost::new(),
+            framework_host: framework::host(),
+            #[cfg(not(target_arch = "wasm32"))]
+            fired_clipboard: Vec::new(),
             last_time: 0.0,
             next_autosave,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1116,6 +1137,7 @@ impl TextureCraftApp {
 impl eframe::App for TextureCraftApp {
     /// A drag that holds the pointer reads the pointer's moves as moves of a pointer no screen edge stops
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.before_input(ctx);
         pointer_lock::rewrite(ctx, raw_input);
     }
 
@@ -1210,6 +1232,11 @@ impl eframe::App for TextureCraftApp {
 
         self.bindings.sync(&self.ui.keymap, craft_keymap::egui::platform(ctx));
         menus::shortcuts(self, ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let events = std::mem::take(&mut self.fired_clipboard);
+            menus::forwarded_shortcuts(self, ctx, events, egui::Modifiers::NONE);
+        }
         screen_pick::sync(self, ctx);
         move_on_model::end_when_gone(self, ctx);
 
@@ -1230,7 +1257,7 @@ impl eframe::App for TextureCraftApp {
         self.profiler.logic_ms = (now_ms() - logic_start_ms) as f32;
 
         // Last, so it sees every close request this frame's work made
-        windows::close_request(self, ctx);
+        self.close_path(ctx);
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
@@ -1257,9 +1284,22 @@ impl eframe::App for TextureCraftApp {
         let hide_ui = self.ui.hide_ui;
         let tokens = theme::Tokens::get(&ctx);
 
+        // Layer and effect IDs can repeat in a replacement project
+        if self.rename_project_id != self.session.project_id {
+            self.ui.rename = None;
+            self.rename_project_id = self.session.project_id;
+        }
+
         // The dock keeps the cards' gutter from the bars and rails around it
         let panel_frame = if hide_ui { egui::Frame::NONE.fill(tokens.viewport) } else { egui::Frame::NONE.fill(tokens.chrome).inner_margin(theme::GUTTER) };
-        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| if hide_ui { viewport::central(self, ui) } else { docking::show(self, ui) });
+        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| {
+            if hide_ui {
+                viewport::central(self, ui);
+            } else {
+                docking::show(self, ui);
+            }
+        });
+        dock::finish_hidden_effect_rename(self);
 
         let hovered_texture_set = self.next_hovered_texture_set.take();
         if self.hovered_texture_set != hovered_texture_set {
@@ -1274,6 +1314,7 @@ impl eframe::App for TextureCraftApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
+        self.framework_dialogs.run(ui);
         toasts(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.file_dialogs.show_pending(frame);
