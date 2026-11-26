@@ -93,8 +93,13 @@ channel defaults.
 `padding: "diffusion"` dilates by
 `dilation` texels and fills the remaining space with a smooth blend of the island colours.
 
-Layered PSD maps are written as requested. MaterialX uses compatible companion maps for this
-format. USD omits their texture bindings and returns a warning.
+Layered PSD: the maps written as `psd` are the layers of one `<mesh>_<texture set>.psd` per
+texture set and UV tile (`<mesh>_<texture set>.<UDIM>.psd` for a tiled set), so the template's file
+names don't name the file: they become the layer names, a `/` in one making layer groups. A PSD
+that would pass 30000 pixels a side or 2 GiB is left out with a warning on the set's first other
+file (an error when it is the set's only file); in the browser a PSD's working memory and a batch's
+PSD output are also bounded. MaterialX uses compatible companion maps for this format. USD omits
+their texture bindings and returns a warning.
 
 `effect.set {effect, filter: "blur", radius: 5}` replaces a filter in place, preserving its
 stack position, blend, opacity and visibility. Replacement filters start from defaults plus
