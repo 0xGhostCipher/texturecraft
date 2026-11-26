@@ -278,6 +278,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   New project, Open, Recent projects, Open sample project); File › Close returns to that state.
 - A **data folder** of your choice for autosaves, smart materials, presets, templates and UI
   layouts, on any drive (Settings › General › Folders; `Documents/TextureCraft` by default).
+- **Autosave**: each project keeps its own copy in the data folder's `autosave`, named
+  `<name>-<suffix>.tcraft` after its saved file (or, until it is saved, the project), so projects made from
+  one mesh never overwrite each other's copy.
 - A **Settings window** (Edit › Settings) with General, Shortcuts and Libraries pages; changes
   apply on OK and Cancel drops them. General holds the language (or the system's), the 3D view's
   rotation, zoom and wheel speeds with inverse directions, GPU or CPU bake rays, resource limits

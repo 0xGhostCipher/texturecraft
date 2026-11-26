@@ -10,6 +10,8 @@
 mod anchor_properties;
 mod angle_dial;
 mod ask;
+#[cfg(not(target_arch = "wasm32"))]
+mod autosave_name;
 mod bake_job;
 pub mod bake_mode;
 mod bake_preset;
@@ -344,6 +346,9 @@ pub struct TextureCraftApp {
     /// When the next autosave is due (seconds of app time; desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     next_autosave: f64,
+    /// The unsaved project (its id) and the suffix of its autosave copy.
+    #[cfg(not(target_arch = "wasm32"))]
+    unsaved_autosave_suffix: Option<(u64, u32)>,
     /// The brightness and accent the style was last built for.
     styled: Option<(theme::Brightness, theme::Accent)>,
     /// Whether the window had focus last frame.
@@ -475,6 +480,8 @@ impl TextureCraftApp {
             title_bar: titlebar::TitleBar::default(),
             last_time: 0.0,
             next_autosave,
+            #[cfg(not(target_arch = "wasm32"))]
+            unsaved_autosave_suffix: None,
             styled: None,
             focused: true,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1034,11 +1041,7 @@ impl TextureCraftApp {
 
         self.next_autosave = now + period;
         let dir = user_dir("autosave");
-        let path = dir.join(format!(
-            "{}.{}",
-            texturecraft_engine::formats::export::sanitize_file_stem(&self.session.doc.project.name),
-            texturecraft_engine::core::PROJECT_EXT
-        ));
+        let path = self.autosave_path(&dir);
         let snapshot = self.session.project_snapshot();
         let spawned = std::thread::Builder::new().name("texturecraft-autosave".into()).spawn(move || {
             let result =
