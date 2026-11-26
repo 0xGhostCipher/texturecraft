@@ -784,8 +784,11 @@ fn plan_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOpti
             sanitize_file_path(&expanded)
         };
 
+        // A tiled raster's name with a placeholder for its tile, the same for every tile
+        let udim_template = (format != FileFormat::Psd && tiles[0].is_some()).then(|| expand_stem("UDIMTOKEN"));
         for (tile_index, &tile) in tiles.iter().enumerate() {
-            let stem = expand_stem(&tile.unwrap_or(1001).to_string());
+            let tile_number = tile.unwrap_or(1001).to_string();
+            let stem = expand_stem(&tile_number);
             let ext = format.extension();
             let mut warnings = Vec::new();
             if color_map
@@ -832,9 +835,9 @@ fn plan_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOpti
 
             // Use a UDIM name only when substituting its tile recovers the output name
             // Truncation or literal placeholder text can make that substitution ambiguous
-            let udim_name = tile
-                .map(|_| expand_stem("UDIMTOKEN"))
-                .filter(|t| tile.is_some_and(|n| t.contains("UDIMTOKEN") && t.replace("UDIMTOKEN", &n.to_string()) == stem))
+            let udim_name = udim_template
+                .as_deref()
+                .filter(|t| t.contains("UDIMTOKEN") && t.replace("UDIMTOKEN", &tile_number) == stem)
                 .map(|t| format!("{t}{renamed}.{ext}").replace("UDIMTOKEN", "<UDIM>"));
             out.push(PlannedFile { name, map: map_index, format, bit_depth, dither, tile, udim_name, warnings, layers: Vec::new() });
         }

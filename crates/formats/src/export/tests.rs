@@ -759,6 +759,9 @@ fn the_udim_name_is_the_file_name_with_its_tile_number_as_placeholder() {
 
     // A folder stays in the placeholder name
     assert_eq!(udim_names("Base/$textureSet_$udim".into()), [Some("Base/Body_<UDIM>.png".to_string()), Some("Base/Body_<UDIM>.png".to_string())]);
+
+    // A name without the token gets the tile as a suffix, and so does its placeholder
+    assert_eq!(udim_names("$textureSet".into()), [Some("Body.<UDIM>.png".to_string()), Some("Body.<UDIM>.png".to_string())]);
 }
 
 #[test]
