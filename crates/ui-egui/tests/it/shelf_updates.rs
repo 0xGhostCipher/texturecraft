@@ -12,7 +12,10 @@ const PAST_A_MINUTE: f64 = 61.0;
 /// The sample project with the Assets panel open and its refresh popup shown
 fn refresh_popup() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut harness = Harness::builder().with_size(egui::vec2(1920.0, 1032.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1920.0, 1032.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.run_steps(2);
     harness.get_all_by_label("Refresh").next().unwrap().click();
     harness.run_steps(2);

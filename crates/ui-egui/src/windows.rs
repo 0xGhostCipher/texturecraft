@@ -33,6 +33,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     unsaved(app, ctx);
     reset_ui(app, ctx);
     crate::named_layouts::show(app, ctx);
+    crate::generator_preview_window::show(app, ctx);
 }
 
 /// Window ▸ Reset UI asks first: Escape closes the question, Enter answers Reset.
@@ -82,26 +83,18 @@ pub(crate) fn ask_to_save(app: &mut TextureCraftApp, then: crate::state::Unsaved
     app.session.modified
 }
 
-/// The close decision, once per frame in `logic` (which also runs while the window is minimized):
-/// a close with unsaved changes waits on the dialog, in a window brought back so it can be
-/// answered. A close nothing holds open quits through the platform's own path (craft-quit).
-pub(crate) fn close_request(app: &mut TextureCraftApp, ctx: &egui::Context) {
-    let closing = ctx.input(|i| i.viewport().close_requested());
+/// The close decision, which the runtime asks for when the root window was asked to close (it runs in `logic`,
+/// also while the window is minimized): a close with unsaved changes waits on the dialog (`true`), and the runtime
+/// brings the window back so it can be answered. A close nothing holds open goes ahead through the platform's own
+/// quit.
+pub(crate) fn close_requested(app: &mut TextureCraftApp) -> bool {
     // A stroke still open at the close, or released in this frame, is a change to ask about.
-    if closing
-        && app.session.stroke_active()
+    if app.session.stroke_active()
         && let Err(error) = app.session.end_stroke()
     {
         app.toast(error.to_string(), true);
     }
-    if closing && ask_to_save(app, crate::state::Unsaved::Quit) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        if ctx.input(|i| i.viewport().minimized == Some(true)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-    }
-    craft_quit::on_close_request(ctx);
+    ask_to_save(app, crate::state::Unsaved::Quit)
 }
 
 /// Quitting, opening or closing a project with unsaved changes asks whether to save them first
@@ -541,17 +534,21 @@ pub(crate) fn import_materialx(app: &mut TextureCraftApp, path: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) -> bool {
     match id {
-        "file.open" | "project.sample" => {
-            let dialog = if id == "project.sample" {
-                FileDialog::open().title(tr("Open Sample Project")).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT])
-            } else {
-                FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS)
-            };
-            app.ask_file(dialog, Bound::App, |app, paths| {
-                if let Some(path) = paths.first() {
-                    open_path(app, &path.display().to_string());
+        "file.open" => {
+            let dialog = FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS);
+            app.ask_file(dialog, Bound::App, open_picked);
+            true
+        }
+        "project.sample" => {
+            let dialog = FileDialog::open().title(tr("Open Sample Project")).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT]);
+            let dialog = match crate::sample_project::install(&app.samples_folder) {
+                Ok(()) => dialog.directory(app.samples_folder.clone()),
+                Err(error) => {
+                    app.toast(trf("Could not prepare the sample project: {error}", &[("error", &error)]), true);
+                    dialog
                 }
-            });
+            };
+            app.ask_file(dialog, Bound::App, open_picked);
             true
         }
         "file.save" if app.session.path.is_some() => {
@@ -628,6 +625,14 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             true
         }
         _ => false,
+    }
+}
+
+/// Opens the project or mesh a file dialog picked
+#[cfg(not(target_arch = "wasm32"))]
+fn open_picked(app: &mut TextureCraftApp, paths: Vec<std::path::PathBuf>) {
+    if let Some(path) = paths.first() {
+        open_path(app, &path.display().to_string());
     }
 }
 
@@ -714,7 +719,10 @@ mod tests {
 
     fn harness() -> Harness<'static, TextureCraftApp> {
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut h = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut h = Harness::builder()
+            .with_size(vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|cc| TextureCraftApp::new(cc, session));
 
         // Match English labels independently of the system locale
         h.state_mut().ui.prefs.language = "en".into();
@@ -734,7 +742,7 @@ mod tests {
         harness.state_mut().ui.windows.export = true;
         harness.run_steps(5);
         let footer = harness.get_by_role_and_label(egui::Role::Button, "Reset all").rect();
-        let first = harness.get_by_label("Export set 1");
+        let first = harness.get_by_role_and_label(egui::Role::Button, "Export set 1");
         first.hover();
         harness.run_steps(2);
 
@@ -746,7 +754,7 @@ mod tests {
             source: egui::MouseWheelSource::Wheel,
         });
         harness.run_steps(15);
-        let last = harness.get_by_label("Export set 39");
+        let last = harness.get_by_role_and_label(egui::Role::Button, "Export set 39");
         last.click();
         harness.run_steps(4);
 

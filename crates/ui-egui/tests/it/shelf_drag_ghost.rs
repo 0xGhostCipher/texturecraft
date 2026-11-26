@@ -17,7 +17,10 @@ const DRAG_START: f32 = 12.0;
 /// The sample project at 1600 x 960, the shelf on Materials
 fn sample_app() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.run_steps(4);
     harness
 }
@@ -70,7 +73,10 @@ fn a_layer_dragged_in_the_layer_stack_gets_the_same_ghost_and_badge() {
     for name in ["Ghost low", "Ghost high"] {
         texturecraft_engine::execute(&mut session, "layer.add.paint", &serde_json::json!({ "name": name })).unwrap();
     }
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 1200.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.run_steps(4);
     let background = point_over(&harness, None);
     let (high, low) = (harness.get_by_label("Ghost high").rect().center(), harness.get_by_label("Ghost low").rect().center());
