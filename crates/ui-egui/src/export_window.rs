@@ -1505,7 +1505,8 @@ fn tree_files(set: &ExportSetPlan, directory: &str) -> Vec<TreeFile> {
 fn tree_header(ui: &mut Ui, rect: egui::Rect, name: &str, open: bool, id: egui::Id) -> bool {
     let look = ExportLook::get(ui.ctx());
     let response = ui.interact(rect, id, egui::Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+    // A folding header, as egui's CollapsingHeader reports one
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::DisclosureTriangle, true, name));
     let y = rect.center().y;
     let chevron = if open {
         ic::CARET_DOWN
