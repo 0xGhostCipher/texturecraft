@@ -4,8 +4,9 @@
 //!
 //! Methods: the app's `ping`, `command.run {id, params?}`, `command.list {filter?}`,
 //! `session.inspect`, plus `command.batch {steps}`, `project.open {path}`,
-//! `project.save {path?}`, `mesh.import {path, resolution?, name?}`, `mesh.reimport {path?,
-//! `preserveStrokes?}`, `mesh.export {path, format?, recomputeNormals?}`, `bake.mesh.add {path, cage?}`,
+//! `project.save {path?}`, `mesh.import {path, resolution?, name?}`,
+//! `mesh.reimport {path?, preserveStrokes?}`, `mesh.export {path, format?, recomputeNormals?}`,
+//! `bake.mesh.add {path, cage?}`,
 //! `resource.import {path}`, `material.save {path, layer?, name?}`, `material.load {path}`
 //! (workspace-scoped versions of the engine commands),
 //! `textures.export {dir, …}`, `render {view?, width?, height?, yaw?, pitch?}` (PNG base64, the

@@ -47,8 +47,6 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 tr("TextureCraft keeps meshes as triangles, so the exported mesh is always triangulated."),
             ],
         );
-        ui.add_space(GROUP_GAP);
-        unavailable::greyed(ui, |ui| ui.add(egui::RadioButton::new(false, tr("With displacement/tessellation"))));
         option(
             ui,
             &mut app.ui.mesh_recompute_normals,
@@ -59,6 +57,8 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 tr("On: smooth area-weighted normals from the exported geometry. Off: the project's stored normals. The project itself is not changed."),
             ],
         );
+        ui.add_space(GROUP_GAP);
+        unavailable::greyed(ui, |ui| ui.add(egui::RadioButton::new(false, tr("With displacement/tessellation"))));
         ui.add_space(8.0);
 
         // One row keeps the window to its contents; a bare right-to-left layout fills the screen height

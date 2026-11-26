@@ -567,7 +567,8 @@ pub struct UiState {
     pub hide_ui: bool,
     pub windows: Windows,
     /// Mesh Export Options: compute smooth normals on the exported copy, not the project.
-    #[serde(default = "default_true")]
+    /// Off by default so an export keeps the project's authored normals unless the user opts in.
+    #[serde(default)]
     pub mesh_recompute_normals: bool,
     pub uv_zoom: f32,
     pub uv_pan: [f32; 2],
@@ -778,7 +779,7 @@ impl Default for UiState {
             selected_baked_map: None,
             hide_ui: false,
             windows: Windows::default(),
-            mesh_recompute_normals: true,
+            mesh_recompute_normals: false,
             uv_zoom: 1.0,
             uv_pan: [0.0, 0.0],
             uv_rotation: 0.0,
@@ -862,12 +863,12 @@ mod tests {
     }
 
     #[test]
-    fn mesh_export_normal_choice_defaults_on_for_older_saved_states() {
-        assert!(UiState::default().mesh_recompute_normals);
+    fn mesh_export_normal_choice_defaults_off_for_older_saved_states() {
+        assert!(!UiState::default().mesh_recompute_normals);
         let mut saved = serde_json::to_value(UiState::default()).unwrap();
         saved.as_object_mut().unwrap().remove("mesh_recompute_normals");
         let loaded: UiState = serde_json::from_value(saved).unwrap();
-        assert!(loaded.mesh_recompute_normals, "older states keep the dialog's checked default");
+        assert!(!loaded.mesh_recompute_normals, "older states keep the project's stored normals unless the user opts in");
     }
 
     #[test]
@@ -881,7 +882,7 @@ mod tests {
         ui.keymap.insert("file.save".into(), "F5".into());
         ui.mesh_recompute_normals = false;
         let mut layout = UiState::default();
-        assert!(layout.mesh_recompute_normals);
+        layout.mesh_recompute_normals = true;
         layout.dock.close(crate::docking::Panel::Assets);
 
         ui.adopt_layout(layout);

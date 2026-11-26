@@ -185,21 +185,21 @@ fn recompute_normals_is_an_enabled_keyboard_operable_checkbox() {
     harness.run_steps(SETTLE_FRAMES);
     let checkbox = harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals");
     assert!(!checkbox.accesskit_node().is_disabled(), "the option is really available");
-    assert!(is_on(&checkbox), "it starts checked, as the dialog always showed it");
-    assert!(harness.state().ui.mesh_recompute_normals);
+    assert!(!is_on(&checkbox), "stored normals are kept until the user opts in");
+    assert!(!harness.state().ui.mesh_recompute_normals);
 
     checkbox.focus();
     harness.key_press(egui::Key::Space);
     harness.run_steps(SETTLE_FRAMES);
-    assert!(!harness.state().ui.mesh_recompute_normals, "Space changes the setting used by export");
+    assert!(harness.state().ui.mesh_recompute_normals, "Space changes the setting used by export");
     let checkbox = harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals");
-    assert!(!is_on(&checkbox), "the accessibility tree reports the unchecked state");
+    assert!(is_on(&checkbox), "the accessibility tree reports the checked state");
     assert_eq!(checkbox.accesskit_node().label().as_deref(), Some("Recompute vertex normals"));
 
     checkbox.click();
     harness.run_steps(SETTLE_FRAMES);
-    assert!(harness.state().ui.mesh_recompute_normals, "a pointer click turns it back on");
-    assert!(is_on(&harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals")));
+    assert!(!harness.state().ui.mesh_recompute_normals, "a pointer click turns it back off");
+    assert!(!is_on(&harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals")));
 }
 
 /// Whether the Log lists `line` (the status bar under it repeats the last message)

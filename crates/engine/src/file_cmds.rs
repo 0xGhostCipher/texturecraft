@@ -122,7 +122,7 @@ impl Session {
     pub fn mesh_obj_bytes_with_normals(&self, recompute_normals: bool) -> Result<Vec<u8>> {
         let mut mesh = self.source_mesh();
         if recompute_normals {
-            mesh.compute_normals();
+            mesh.compute_smooth_normals();
         }
         texturecraft_formats::obj_bytes(&mesh, &self.doc.project.name).map_err(fe)
     }
@@ -139,7 +139,7 @@ impl Session {
         // one image); their tiles export through Export textures with `$udim` names.
         let mut mesh = self.source_mesh();
         if recompute_normals {
-            mesh.compute_normals();
+            mesh.compute_smooth_normals();
         }
         // A mesh without materials has one implicit material (and texture set).
         if mesh.materials.is_empty() {
@@ -162,7 +162,7 @@ impl Session {
         let textures: Vec<_> = files.into_iter().map(texturecraft_formats::GlbTextures::from_files).collect();
         let mut mesh = self.mesh.as_ref().clone();
         if recompute_normals {
-            mesh.compute_normals();
+            mesh.compute_smooth_normals();
         }
         texturecraft_formats::glb_bytes(&mesh, &self.doc.project.name, &textures).map_err(fe)
     }
@@ -178,7 +178,7 @@ impl Session {
         let files = self.material_files(texturecraft_formats::usd_export_options(), true, self.mesh.materials.len())?;
         let mut mesh = self.mesh.as_ref().clone();
         if recompute_normals {
-            mesh.compute_normals();
+            mesh.compute_smooth_normals();
         }
         texturecraft_formats::usd_bytes(&mesh, &self.doc.project.name, &files, format).map_err(fe)
     }
@@ -1449,7 +1449,7 @@ f 1/1 2/2 3/3
         std::sync::Arc::make_mut(&mut s.source).normals.fill(texturecraft_geom::glam::Vec3::Y);
         std::sync::Arc::make_mut(&mut s.mesh).normals.fill(texturecraft_geom::glam::Vec3::Y);
         let mut expected = s.source_mesh();
-        expected.compute_normals();
+        expected.compute_smooth_normals();
         let dir = std::env::temp_dir().join(format!("tc_export_recompute_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1459,8 +1459,14 @@ f 1/1 2/2 3/3
             let bytes = std::fs::read(reply["path"].as_str().unwrap()).unwrap();
             let back = texturecraft_formats::import_mesh_bytes(&format!("cube.{suffix}"), &bytes).unwrap().mesh;
             assert_eq!(back.normals.len(), expected.normals.len(), "{format}: one normal per exported vertex");
-            for (actual, wanted) in back.normals.iter().zip(&expected.normals) {
-                assert!((*actual - *wanted).length() < 1e-4, "{format}: stored normals were exported instead of recomputed ones");
+            for (position, actual) in back.positions.iter().zip(&back.normals) {
+                let wanted = expected
+                    .positions
+                    .iter()
+                    .zip(&expected.normals)
+                    .find_map(|(expected_position, normal)| ((*expected_position - *position).length() < 1e-4).then_some(*normal))
+                    .unwrap_or_else(|| panic!("{format}: exported position {position:?} is missing from the source"));
+                assert!((*actual - wanted).length() < 1e-4, "{format}: actual {actual:?}, wanted {wanted:?}");
             }
         }
         assert!(s.source.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the source project is unchanged");
@@ -1471,6 +1477,30 @@ f 1/1 2/2 3/3
         let stored = texturecraft_formats::import_mesh_bytes("stored.obj", &stored).unwrap().mesh;
         assert!(stored.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the default keeps stored normals for compatibility");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recomputed_normals_weld_uv_seams_in_exported_mesh() {
+        use texturecraft_geom::glam::Vec3;
+
+        // Two triangles meet along 0--2, but their UV island split duplicates that edge as 3--4.
+        let positions = vec![Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::ZERO, Vec3::Y, Vec3::new(-1.0, 0.0, 1.0)];
+        let mesh = Mesh::from_parts(
+            positions,
+            Some(vec![Vec3::Y; 6]),
+            vec![Vec2::new(0.0, 0.0), Vec2::new(0.5, 0.5), Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.5, 1.0)],
+            vec![0, 1, 2, 3, 4, 5],
+            "Default",
+        )
+        .unwrap();
+        let mut s = Session::new_project("seam", mesh, "builtin:seam", None, 128).unwrap();
+        let bytes = s.mesh_glb_bytes_with_normals(true).unwrap();
+        let back = texturecraft_formats::import_mesh_bytes("seam.glb", &bytes).unwrap().mesh;
+        for point in [Vec3::ZERO, Vec3::Y] {
+            let normals: Vec<_> = back.positions.iter().zip(&back.normals).filter_map(|(position, normal)| (*position == point).then_some(*normal)).collect();
+            assert!(normals.len() >= 2, "{point:?}: the UV seam must still have two exported vertices");
+            assert!(normals.windows(2).all(|pair| (pair[0] - pair[1]).length() < 1e-5), "{point:?}: UV split normals disagree: {normals:?}");
+        }
     }
 
     #[test]
