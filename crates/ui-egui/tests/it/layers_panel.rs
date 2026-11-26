@@ -2,12 +2,14 @@
 //! fold without touching the document, and the thumbnails arrive from the worker.
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::{Value, json};
 use texturecraft_engine::compose::ThumbTarget;
 use texturecraft_engine::core::{Channel, LayerId};
 use texturecraft_engine::{StackTarget, execute};
 use texturecraft_ui_egui::TextureCraftApp;
+
+use crate::SETTLE_FRAMES;
 
 fn id(v: Value, key: &str) -> u64 {
     v[key].as_u64().unwrap()
@@ -266,13 +268,7 @@ fn layer_toolbar_stays_on_one_row_in_a_1280_by_800_window() {
     let h = narrow_harness();
     let buttons = ["Add paint layer", "Add fill layer", "Add folder"].map(|label| h.get_by_label(label).rect());
 
-    // The effect menu button is the wand left of the paint button (effect rows draw wands too)
-    let wand = h
-        .query_all_by_label(egui_phosphor::regular::MAGIC_WAND)
-        .map(|n| n.rect())
-        .filter(|r| r.right() < buttons[0].left())
-        .max_by(|a, b| a.right().total_cmp(&b.right()))
-        .expect("the effect menu button");
+    let wand = h.get_by_label("Add effect").rect();
     let remove = h.query_all_by_label_contains("Remove layer").next().expect("the remove button").rect();
     for rect in buttons.into_iter().chain([remove]) {
         assert!((rect.center().y - wand.center().y).abs() < 1.0, "the toolbar wrapped: {rect:?} against {wand:?}");
@@ -316,6 +312,61 @@ fn right_click(h: &mut Harness<'_, TextureCraftApp>, at: egui::Pos2) {
         h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
     }
     h.run_steps(3);
+}
+
+#[test]
+fn thumbnail_menus_apply_actions_to_the_clicked_layer_and_stack() {
+    let (mut h, clicked) = harness();
+    let selected = {
+        let session = &mut h.state_mut().session;
+        let layer = LayerId(id(execute(session, "layer.add.fill", &json!({"name": "Another fill"})).unwrap(), "layer"));
+        execute(session, "mask.add.white", &Value::Null).unwrap();
+        layer
+    };
+    h.run_steps(3);
+    assert_eq!(h.state().session.selected_layer(), Some(selected));
+
+    let at = thumb(&h, "Masked fill", true);
+    right_click(&mut h, at);
+    assert!(h.query_by_label("Flatten layer").is_none());
+    h.get_by_label("Toggle mask").click();
+    h.run_steps(3);
+    let project = &h.state().session.doc.project;
+    assert!(!project.layers[&clicked].mask.as_ref().unwrap().enabled);
+    assert!(project.layers[&selected].mask.as_ref().unwrap().enabled);
+    assert_eq!(h.state().session.target, StackTarget::Mask);
+
+    // The same layer's mask is still selected when its material menu opens.
+    let at = thumb(&h, "Masked fill", false);
+    right_click(&mut h, at);
+    assert!(h.query_by_label("Toggle mask").is_none());
+    // The same items as the toolbar's Add effect on the content: a generator can't go there, so it is greyed
+    assert!(h.get_by_label_contains("Add generator").accesskit_node().is_disabled());
+    h.get_by_label_contains("Add levels").click();
+    h.run_steps(3);
+    let layer = &h.state().session.doc.project.layers[&clicked];
+    assert_eq!(layer.content_effects.len(), 2);
+    assert_eq!(layer.mask.as_ref().unwrap().effects.len(), 1);
+}
+
+#[test]
+fn focused_mask_thumbnail_opens_and_dismisses_its_menu_from_the_keyboard() {
+    let (mut h, _) = harness();
+    let thumbnail = "Select the mask (Alt+click: show it in the viewport) (Masked fill)";
+    h.get_by_label(thumbnail).focus();
+    h.run_steps(3);
+    assert!(h.get_by_label(thumbnail).is_focused());
+
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F10);
+    h.run_steps(3);
+    assert!(h.query_by_label("Toggle mask").is_some());
+    h.key_press(egui::Key::ArrowDown);
+    h.run_steps(3);
+    assert!(h.get_by_label("Toggle mask").is_focused());
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    assert!(h.query_by_label("Toggle mask").is_none());
+    assert!(h.get_by_label(thumbnail).is_focused());
 }
 
 /// Click the eye of the top-level row `name` with `modifiers` held (the eye sits in the first 20 points after the 7-point edge).
@@ -412,5 +463,44 @@ fn alt_click_on_the_content_thumbnail_leaves_the_view_alone() {
     let (mut h, _) = harness();
     let at = thumb(&h, "Masked fill", false);
     alt_click(&mut h, at);
+
     assert_eq!(h.state().session.view, texturecraft_engine::ViewMode::Material);
+}
+
+/// Pointer moves of the opacity cell drag, one per frame
+const OPACITY_DRAG_MOVES: usize = 4;
+
+/// How far left each move of the opacity cell drag goes, in points
+const OPACITY_DRAG_STEP: f32 = 10.0;
+
+/// A drag on a row's opacity cell is one undo step, however many frames it spans
+#[test]
+fn dragging_a_row_opacity_adds_one_undo_step() {
+    let (mut h, layer) = harness();
+    let row = h.get_by_label("Masked fill").rect();
+    let cell = h.get_all_by_role(egui::accesskit::Role::SpinButton).map(|node| node.rect()).find(|cell| row.contains(cell.center())).unwrap();
+    let opacity = |h: &Harness<'_, TextureCraftApp>| h.state().session.doc.project.layers[&layer].blend(Channel::BaseColor).unwrap().opacity;
+    let (before, steps) = (opacity(&h), h.state().session.history_labels().len());
+
+    // A leftward drag lowers it from 100 %, a frame per move as a real drag arrives
+    let from = cell.center();
+    h.hover_at(from);
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.run_steps(1);
+    let step_left = |step: usize| from - egui::vec2(OPACITY_DRAG_STEP * step as f32, 0.0);
+    for step in 1..=OPACITY_DRAG_MOVES {
+        h.hover_at(step_left(step));
+        h.run_steps(1);
+    }
+    h.event(egui::Event::PointerButton {
+        pos: step_left(OPACITY_DRAG_MOVES),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(SETTLE_FRAMES);
+
+    assert!(opacity(&h) < before, "the drag lowers the opacity: {}", opacity(&h));
+    assert_eq!(h.state().session.history_labels().len(), steps + 1, "every frame of the drag merges into one step");
 }

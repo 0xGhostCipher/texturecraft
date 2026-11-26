@@ -1326,7 +1326,7 @@ impl Renderer {
         let img = match imported {
             Some(img) => img,
             None if !self.env_is_imported && self.env_name == name => return,
-            None => ibl::environment(name, 512),
+            None => ibl::environment(name, texturecraft_compose::environment_sky::VIEWPORT_WIDTH),
         };
 
         let levels = ibl::prefilter(&img, ENV_LEVELS);
@@ -1949,7 +1949,7 @@ impl Renderer {
         visible: &'a [bool],
         only: Option<usize>,
     ) -> impl Iterator<Item = (std::ops::Range<u32>, usize, &'a SetGpu)> + 'a {
-        drawable_ranges(ranges, &self.material_sets, visible, only).filter_map(|(range, ts)| Some((range, ts, self.sets.get(ts)?)))
+        drawable_ranges(ranges, &self.material_sets, visible, only).filter_map(|(range, texture_set)| Some((range, texture_set, self.sets.get(texture_set)?)))
     }
 
     /// Keep the key-light shadow map current; returns its view-projection. `light` points to
@@ -2148,6 +2148,7 @@ impl Renderer {
             back_bottom: [s.background[1][0], s.background[1][1], s.background[1][2], 0.0],
         };
         let Some(v) = self.targets(device, frame.view_id, frame.size, bloom, fx_on, refraction) else { return };
+
         queue.write_buffer(&v.globals, 0, bytemuck::bytes_of(&raw));
         queue.write_buffer(&v.post_buf, 0, bytemuck::bytes_of(&post));
         upload_overlay(device, queue, v, &frame.overlay, (!data).then_some(s.exposure_ev));
@@ -2222,7 +2223,8 @@ impl Renderer {
         let geo = self.geometry(m, frame);
         pass.set_vertex_buffer(0, geo.vb.slice(..));
         pass.set_index_buffer(geo.ib.slice(..), wgpu::IndexFormat::Uint32);
-        // As in the main pass, instance index 1 marks the hovered set (fs_gbuf negates its depths for the blur pass)
+
+        // Instance index 1 lets the G-buffer mark the hovered set for the scattering composite
         let hover_set = frame.shade.set_hover.filter(|_| frame.kind == ViewKind::Scene).map(|hover| hover.set);
         for (range, texture_set, set) in self.drawable(&geo.draws, &frame.visible, None) {
             pass.set_bind_group(1, &set.bind_group, &[]);
@@ -2367,9 +2369,9 @@ impl Renderer {
             pass.set_vertex_buffer(0, vertices.slice(..));
             pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
             for (range, texture_set, set) in self.drawable(ranges, &frame.visible, only_set) {
-                pass.set_bind_group(1, &set.bind_group, &[]);
-                // The main mesh shader uses instance index 1 to tint the hovered draw in place.
+                // Instance index 1 lets the mesh shader tint the hovered draw
                 let first_instance = u32::from(hover_set == Some(texture_set));
+                pass.set_bind_group(1, &set.bind_group, &[]);
                 pass.draw_indexed(range, 0, first_instance..first_instance + instances);
             }
         }

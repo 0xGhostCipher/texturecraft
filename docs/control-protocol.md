@@ -47,6 +47,32 @@ template. `enabled: false` suppresses that file while reserving its name. When s
 sets produce the same name (ignoring case), programmatic and browser exports keep the first file
 and warn about later duplicates. The desktop export window reports the collision before writing.
 
+`file.exportTextures` with `usdAsset` also writes `<mesh>.usd` (binary USD, Crate) next to the textures: the whole mesh
+(every texture set, whatever `ts` selects) with one UsdPreviewSurface material per texture set. A
+material's inputs read the texture files the export planned for that set with its output template
+(`usdAsset: true`: the sets, options and `reservedNames` of this command; a list of export params such as
+`[{"ts": 0, "preset": "..."}, {"ts": 1}]`, not empty, every entry an object: each entry's sets, options and `reservedNames`, the way the export window,
+which runs one command per texture set, passes the params of all its commands with the last one).
+Bound inputs: `diffuseColor`, `roughness`, `metallic`, `normal`, `emissiveColor`, `opacity`,
+`clearcoat` and `clearcoatRoughness`, each reading the `rgb`, `r`, `g`, `b` or `a` output of the
+file that holds it; other maps (ambient occlusion, height, specular...) are not bound, a UDIM map that lost a tile to an earlier
+set's file name or to an entry's `reservedNames` is not bound, a mesh with no materials gets one implicit `default` material bound to the Default set, and a texture set outside the export has
+no textures. A file name is relative to the file (`./<file>`, with `<UDIM>` for UV tiles). A failure
+to build or write it is named in `warnings` and the command still succeeds. The file is in `files`.
+
+`file.exportTextures` with `materialX: true` also writes an OpenPBR `.mtlx` beside each texture
+set's maps. It reuses compatible maps with OpenPBR names and writes dedicated maps for remaining
+inputs with data. A named OpenPBR map explicitly disabled in `maps` stays disabled. Dedicated maps
+use the effective size, padding and color space. A dedicated replacement for a named map keeps
+its file settings where supported. PSD, JNG, PGM and WebP fall back to the OpenPBR template's PNG
+format and bit depth. MaterialX uses OpenGL normals.
+
+`reservedNames: [file names]` takes the basenames and `materialUdimPatterns` returned by earlier
+`file.exportTextures` calls in the same export. The desktop window passes both when exporting
+one set at a time. Comparisons ignore case. If a name is reserved, the command skips the file
+and names it in `warnings`. Materials omit any map with incomplete tiles or a UDIM pattern
+shared by different sets.
+
 `format` accepts the export window's names (`bmp`, `jpeg`, `jng`, `pgm`, `png`, `targa`, `tiff`,
 `hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and
@@ -61,6 +87,28 @@ parameters. Default effect names follow the new filter, custom names remain, and
 content-only filters. `filter.list` lists the available IDs; levels and material finishes
 must be added separately with `effect.add.filter`. A successful replacement is one undo step;
 a rejected replacement changes nothing.
+
+Warp (`warp`) and Blur Slope (`blurSlope`) work on layer content or masks. Use these IDs with
+`effect.add.filter` and `effect.set`, including when replacing a saved filter. They share
+normalized `intensity` (0..1), `divider` (1, 10, 100, 1000), and `seed`.
+
+- Warp accepts `warpMode: "warp" | "directional" | "multiDirectional"`. The directional
+  modes take `angle` in degrees. Multidirectional Warp also takes `directions` (1, 2, 4)
+  and `blendingMode: "average" | "min" | "max" | "chain"`.
+- Blur Slope accepts `blendingMode: "blur" | "min" | "max"` and normalized `quality` (0..1).
+- Both take `sourceMode: "defaultNoise" | "previousInput" | "customNoise"`, normalized
+  `sourceBlur`, `sourceBalance` and `sourceContrast`, and `sourceTiling` (0.01..16).
+  Source Tiling sets the noise frequency or repeats a sampled source within each UV tile.
+  In Custom Noise mode, set the grayscale source through `layer.fill.set
+  {effect, input: "customNoise", ...}`. Blur Slope can read an anchor through that slot.
+
+For directional Warp, use `effect.add.filter {target: "content", filter: "warp",
+warpMode: "directional", angle: 45, intensity: 0.05, divider: 1}`. To replace that effect,
+use `effect.set {effect, filter: "blurSlope", quality: 0.5}`.
+
+This changes the automation contract. `warp` uses normalized intensity, and the
+`warpDirectional` and `slopeBlur` selectors return an unknown-filter error. Saved filter
+settings still load as stored. Restore Defaults applies to the current catalog entries.
 
 `edit.undo {steps?}` and `edit.redo {steps?}` go back or forward several steps at once (as far
 as the history reaches); `edit.history` lists the steps done and the undone ones, next first. Step names are English; a stroke is named by tool and layer (`Paint on Rust`,
@@ -87,9 +135,20 @@ alone) and `alphaInvert` (swaps paint and no paint inside the stamp square). The
 procedural, library and imported alphas alike and are returned by `tool.brush` with the other
 values. The alpha's rotation is the brush `angle`.
 
-Bake mode applies edits in Common Settings and Mesh Map Settings to every texture set. Each
-set keeps its own enabled mesh-map checkboxes and Include in Bake flag. Edits update only the
-changed fields; Restore Defaults resets the whole parameter section across all sets.
+Bake mode applies an edit in Common Settings or Mesh Map Settings to the texture sets sharing that
+group's settings: Common Settings, and each map's settings, are shared by any set of texture sets
+(at first every set shares them). Each set keeps its own enabled mesh-map checkboxes and Include in
+Bake flag. An edit reaches the sets sharing its group with only the fields it changed, so values
+that differ elsewhere stay; Restore Defaults resets the whole parameter section across those sets.
+
+`bake.sync {group: "common" | <map id>, ts: [indices] | "all"}` makes exactly these sets share the
+group from now on; sets joining take the settings the group shares. `bake.copy {what: "settings" |
+"checked" | "check", map?, from?, ts}` copies once: every setting with which maps are checked (or
+one map's settings), which maps are checked, or checks one map; settings also reach the sets sharing a group with a target, while
+checkboxes stay per set. Each is one undo step. `bake.settings` with `model` keeps each set's sync
+membership. A `patch` containing `sync` is rejected. Use `bake.sync` to change membership.
+For `bake.copy`, `from` takes a texture set index and `map` takes a mesh map ID. Omit either field
+or pass `null` to use its default.
 
 `bake.settings {ts: "all", patch: {maps: {ao: {parameters: {rays: {rays: 128}}}}}}` changes
 only AO secondary rays. A `patch` uses the nested `BakeSettings` field names and named enum
@@ -97,7 +156,8 @@ values returned in the command's `model` result; omitted fields retain each set'
 `null` clears optional fields such as `common.resolution_height`. All targeted sets are validated
 before the edit is applied as one undo step. `model` still replaces the complete settings;
 when combined, `patch` follows `model`, then the flat command parameters apply. Omitting `ts`
-still targets the active set for scripts that need individual control.
+still targets the active set. Settings passed to `bake.run` follow the same sync rules, while only
+the requested texture sets bake. The settings and baked maps share one undo step.
 
 Bake presets are saved settings in the UI state (Mesh Map Bakers > Presets). Loading one is
 `bake.settings {ts: <index>, model: <the preset's settings>, preserveEnabled: true, preset: true}`; Apply to All
@@ -173,20 +233,31 @@ keeps its state in a throwaway file.
 | `command.list` | `{filter?}` | `[{id, label, menu, shortcut, params, enabled}]` |
 | `session.inspect` | | project, mesh, texture sets, layer stack, tool, camera, display, history |
 | `ui.inspect` | | UI state, viewport rect, fps, bake progress (`baking`, 0..1), the running bake's stage (`bakeStatus`, e.g. "Baking Ambient Occlusion (2/4)") and live preview (`bakePreview`, see *Live bake preview*), toasts, `titleBar` (who draws the title bar this run: `app`, `integrated` on macOS, or `system`) |
-| `ui.menu.list` | | the menu catalog: `{menu, submenu, label, id, shortcut, implemented, enabled}` |
-| `ui.menu.invoke` | `{id}` | behaves like a menu click (may open a window; `ui.resetUi` opens its question; `file.exportMesh` opens the Mesh Export Options prompt, whose Export asks for the file; `ui.view.export` opens the right bar's Export panel). `{"id": "ui.layout.apply", "name": "<layout>"}` switches to a panel layout saved under Window > Layouts (panels only; mode, zoom and wireframes stay) and errors when no layout has that name. `ui.layout.save` still saves the active mode; `ui.layout.save.painting`, `ui.layout.save.rendering` and `ui.layout.save.baking` ask where to save that mode's layout as a JSON file, `ui.layout.load` asks for one to load ("Select a UI layout file."); `ui.toolbar.docks` and `ui.toolbar.tools` show or hide the right bar and the tool shelf (`ui.toolbar.plugins`, `ui.view.pythonConsole` and `ui.view.onlineAssets` are listed as not implemented and not enabled); `ui.view.renderer` toggles the Renderer Settings panel (Rendering mode only). `{"id": "ui.layout.swap"}` swaps the 3D and 2D views of the split layout (F4) |
-| `ui.menu.invoke` id `ui.saveAsTemplate` | `{id}` | File > More save options > Save as template... opens a save dialog in the user templates folder. The choice supplies the file path and template name to `project.template.save`. `ui.saveReduced` (Save and reduce file size) is listed as not implemented and not enabled |
-| `ui.menu.invoke` ids `ui.help.releaseNotes`, `ui.help.exportLog` | `{id}` | Help > Release notes... opens the releases page in the browser; Help > Export log... exports the session log with each entry’s recorded UTC time, severity and source (a save dialog on desktop, a download on the web) |
-| `ui.menu.invoke` id `ui.wireframe` | `{id}` | Show mesh wireframe: shows or hides the mesh wireframe in the 3D and 2D views (the Display Settings check box). It has no menu entry and no default key; bind it in Settings > Shortcuts. The key bindings `camera.next` and `camera.previous` (Select next camera `>`, Select previous camera `<`) and `ui.mode.bake` (Ctrl+Shift+B) run the same commands as before |
+| `ui.menu.list` | | the menu catalog: `{menu, submenu, label, id, shortcut, implemented, enabled, checked}` |
+| `ui.menu.invoke` | `{id}` | behaves like a menu click (may open a window; `ui.resetUi` opens its question; `file.exportMesh` opens the Mesh Export Options prompt, whose Export asks for the file; `ui.view.export` opens the right bar's Export panel). `{"id": "ui.layout.apply", "name": "<layout>"}` switches to a legacy named panel layout (still accessible through assigned shortcuts) (panels only; mode, zoom and wireframes stay) and errors when no layout has that name. `ui.layout.save` still saves the active mode; `ui.layout.save.painting`, `ui.layout.save.rendering` and `ui.layout.save.baking` ask where to save only that mode's panels and view arrangement as a JSON file (without preferences or recent projects); loading preserves the other modes, `ui.layout.load` asks for one to load ("Load UI Layout"); `ui.toolbar.docks` and `ui.toolbar.tools` show or hide the right bar and the painting tools; the disabled Snooze Autosave and Resources Updater buttons stay visible when Tools is off; `ui.view.renderer` toggles the Renderer Settings panel (Rendering Mode only). `{"id": "ui.layout.swap"}` swaps the 3D and 2D views of the split layout (F4) |
+| `ui.menu.invoke` id `project.sample` | `{id}` | File > Open Sample Project opens a picker for a `.tcraft` file. On desktop, it copies any missing bundled samples (currently `Material Ball.tcraft`) into `Samples` under the data folder and opens the picker there. If preparation fails, it shows an error and opens the picker without a start folder. In the browser, the picker uses local files. The direct `project.sample` engine command generates a sample for automation. |
+| `ui.menu.invoke` id `ui.saveAsTemplate` | `{id}` | File > More Save Options > Save As Template opens a save dialog in the user templates folder. The choice supplies the file path and template name to `project.template.save`. `ui.saveReduced` (Save and Reduce File Size) is listed as not implemented and not enabled |
+| `ui.menu.invoke` ids `ui.help.releaseNotes`, `ui.help.showLog`, `ui.help.exportLog` | `{id}` | Help > Release Notes opens the releases page in the browser; Help > Show Log opens the current desktop run's rolling `log.txt` in the system text-file handler; Help > Export Log exports the session log with each entry’s recorded UTC time, severity and source (a save dialog on desktop with a `Log_TextureCraft_<version>_<date>_<os>_<gpuMode>.txt` name, a download on the web) |
+| `ui.menu.invoke` id `ui.wireframe` | `{id}` | Show mesh wireframe: shows or hides the mesh wireframe in the 3D and 2D views (the Display Settings check box). It has no menu entry and no default key; bind it in Settings > Shortcuts. The key bindings `camera.next` and `camera.previous` (Select next camera `>`, Select previous camera `<`) and `ui.mode.bake` (F8) run the same commands as before |
 | `ui.reset` | | resets the panels, view layout, zoom and every other view setting at once, without the question the Reset UI menu item asks; settings and shortcuts stay |
 | `ui.bake.start` | `{ts?: index \| [indices]}` (default: the sets ticked in Bake mode) | Opens Bake mode and bakes in the background like the Bake button: the 3D view shows the maps landing on the model as they finish (see *Live bake preview*). → the `bake.preview` state. Errors when a bake is already running |
 | `ui.bake.cancel` | | Stops the running bake; the set being baked keeps the maps it had, sets already finished stay applied, and the previous view mode comes back |
-| `ui.set` | fields of the UI state, e.g. `{"layout": "Only3D"}`; `dock` is the panel layout, a craft-ui docking `Workspace` (`{version, layout: {root, floating}, hidden}`; `root` is a tree of `Split`, `Tabs` and `Stack` nodes over the panels `Viewport`, `Assets`, `TextureSetList`, `Layers`, `TextureSetSettings`, `Properties`, `Display`, `Shader`, `History`, `Log`, `Export` and `Renderer` (a floating window holding one right-bar panel is that panel undocked); `hidden` lists where each closed panel was, so reopening it puts it back; a layout that does not read or has no docked `Viewport` becomes the default), `prefs` the settings (`{"language": "ja", "viewport_texture": 1, "brightness": "light", "accent": "blue"}`; missing fields take their defaults; `brightness` is `dark`, `mediumDark` (default), `mediumLight` or `light`, `accent` `copper` (default), `coral`, `blue`, `violet`, `green`, `amber` or `pink`, applied on the next frame; `system_title_bar` `true` has the system draw the title bar from the next start), `keymap` the custom shortcuts (`{"file.save": "F5"}`, `""` unbinds), `log_channel` the Log panel's tab (`General` or `Assets`) | `null` |
+| `ui.set` | fields of the UI state, e.g. `{"layout": "Only3D"}`; `dock` is the panel layout, a craft-ui docking `Workspace` (`{version, layout: {root, floating}, hidden}`; `root` is a tree of `Split`, `Tabs` and `Stack` nodes over the panels `Viewport`, `Assets`, `TextureSetList`, `Layers`, `TextureSetSettings`, `Properties`, `Display`, `Shader`, `History`, `Log`, `BakingLog`, `MeshMapBakers`, `BakeMaps`, `BakeSettings`, `Export` and `Renderer` (a floating window holding one right-bar panel is that panel undocked); `hidden` lists where each closed panel was, so reopening it puts it back; a layout that does not read or has no docked `Viewport` becomes the default), `prefs` the settings (`{"language": "ja", "viewport_texture": 1, "brightness": "light", "accent": "blue"}`; missing fields take their defaults; `brightness` is `dark`, `mediumDark` (default), `mediumLight` or `light`, `accent` `copper` (default), `coral`, `blue`, `violet`, `green`, `amber` or `pink`, applied on the next frame; `system_title_bar` `true` has the system draw the title bar from the next start), `keymap` the custom shortcuts (`{"file.save": "F5"}`, `""` unbinds), `log_channel` the Log panel's tab (`General` or `Assets`) | `null` |
 | `viewport.screenshot` | `{view?: "3d" \| "2d"}` | `{width, height, png}` (PNG, base64) |
 | `ui.screenshot` | | `{width, height, png}` of the whole window, after the next frame |
 | `ui.resize` | `{width, height}` | Sets the window's inner size in points (640–7680), leaving maximized state; for recordings and screenshots at a fixed size |
 | `debug.paintTest` | `{from: [x, y], to: [x, y], frames?: 120}` | Paints a straight stroke through the real frame loop (viewport pixels, one point per frame) for performance work |
 | `debug.frames` | | Frame timing since the last call (then cleared): `{frames, intervalMs, uiMs, syncMs, logicMs}` each `{avg, p95, max}`; `syncMs` is compositing plus display tile conversion, `logicMs` input, control requests and scripted strokes before the UI is built; `worst` breaks down the slowest frame; `strokeEnd` lists the frame that committed a `debug.paintTest` stroke and the one after it (null without one) |
+
+The empty-project menus keep Recent Projects openable with Clear disabled when the list is empty.
+`ui.recent.clear` clears that list. More Save Options is disabled until a project is open.
+Help > Shortcuts list opens Settings on its Shortcuts page. Window > Reset UI restores the
+Assets, Layers, Properties, Texture Set List and Texture Set Settings panels and both toolbars.
+Baking Log and the bake/render settings views are disabled without a project. Import resources
+can open its dialog on desktop without a project; importing still requires an open project,
+and the dialog explains that asset-library import is not available yet.
+
+Settings > General > Recent Projects limit controls the retained history (default 10, range 0–100; 0 disables history). Automation uses `ui.set {"prefs":{"recent_projects_limit":10}}`. A lower limit trims the oldest paths immediately.
 
 Example session:
 
@@ -461,9 +532,10 @@ Maps are found by file name, case-insensitively, from the last known word in the
   import is an error that changes nothing. `maps` describes detection; `channels` and `resources`
   describe the successful import. Scan validates import options without decoding pixels.
 
-In the app: File › Import PBR texture folder... or drop a folder, a `.zip` or several map files on the
-window. The dialog shows the maps found, lets you pick between candidates, set the normal convention and
-projection, and keep the material in the library (shelf › Materials).
+In the app: drop a folder, a `.zip` or several map files on the window. The dialog shows the maps found,
+lets you pick between candidates, set the normal convention and projection, and keep the material in the
+library (shelf › Materials). A `.mtlx` added in File › Import Resources is imported as `file.importMaterialX`
+does it.
 
 ## Smart masks
 
@@ -527,13 +599,13 @@ In the app, `viewport.frame` also resets the 2D view (pan, zoom and rotation), a
 
 `camera.view {view}` looks at the mesh from one side (`front` from +Z, `back`, `left` from -X,
 `right`, `top` and `bottom` at the orbit's ±89° pitch limit) and frames it; the projection stays.
-`camera.view.front` … `camera.view.bottom` do the same without params (Viewport menu, no default
+`camera.view.front` … `camera.view.bottom` do the same without params (no default
 shortcut, bindable in Settings ▸ Shortcuts). `camera.perspective` (F5) and `camera.orthographic` (F6)
 change only the projection; position and rotation stay. None of them is an undo step. In the 3D
 view, Alt+Shift+left drag orbits in 90° steps.
 
 `camera.rotation {mode: constrained|free}` (or `camera.rotation.constrained` / `camera.rotation.free`,
-Viewport menu and the rotation dropdown of the top bar) picks the orbit: constrained (the default) keeps
+the rotation dropdown of the top bar) picks the orbit: constrained (the default) keeps
 the horizon level and stops at the poles; free is a trackball that turns the camera about its own axes,
 so the model can be turned over and rolled. `camera.get` shows it as `rotation`; `camera.set` takes
 `rotation` too. Switching keeps the direction of view; going back to constrained drops the roll.
@@ -560,6 +632,50 @@ and Height are shaded on a lit neutral material in the 3D view. `viewport.nextCh
 the shading uses (mesh normal, Height channel slope and Normal channel), unlit; the 2D view shows its
 tangent-space form.
 
+## Colour swatches
+
+The project's swatches (`Project.swatches`, linear RGB, stored in the `.tcraft` file; projects without any
+save none) are the Swatches row under the colour picker. `swatch.list` lists them, `swatch.add {color}`
+(`[r, g, b]` linear or `"#rrggbb"`, clamped to 0..1, at most 64) adds one at the end and
+`swatch.remove {index}` removes one; `project.inspect` shows them as `swatches`. Applying a swatch is an
+ordinary colour edit (`layer.fill.set {color}`).
+
+## A fill's whole material
+
+A fill layer or content fill effect can hold one built-in plain material whole (the Material side of
+its Material section). `layer.fill.material {layer? | effect?, material}` sets every channel the
+material writes from it, turns those channels on and the others off, and keeps the fill's projection;
+`material: null` returns the channels to their defaults (a content fill effect keeps the channels it
+changes, at their defaults); setting what the fill already holds adds no undo step. Smart materials (folders of layers) are added
+with `material.apply` instead. The command rejects linked MaterialCraft fills. The fill remembers the material (`Fill.material`, saved only when set;
+`project.inspect` shows it as `material`) until a channel's source is set on its own with
+`layer.fill.set`. A plain material added from the shelf names its fill the same way.
+
+## Folders, effect blending and masks
+
+- `folder.contents.set {layer?, scale?, rotation?}` lays a Scale (multiplying every fill's tiling inside)
+  and a Rotation (degrees added to every fill's angle) on a folder's contents, never written into the fills;
+  `folder.contents.reset {layer?}` drops them and puts back the seeds `folder.randomizeSeeds {layer?}` changed.
+  `folder.randomizeSeeds` gives every pattern, generator and noise filter inside a new seed (seeds that were
+  equal stay equal) and returns `{seeds}`, how many changed.
+- `effect.blending.modeToEveryChannel`, `opacityToEveryChannel` and `bothToEveryChannel {effect?, channel?}`
+  give every channel of a content effect one channel's blend mode, opacity or both; `effect.blending.copy`
+  and `effect.blending.paste {effect?}` carry every channel's blending between effects (a mask effect takes
+  the shared one). `effect.set {effect, channel, blend?, opacity?}` sets one channel's blending and
+  `effect.set {effect, channels: {roughness: false}}` switches a content effect's channels on or off.
+- `mask.add.bitmap {layer?, image | alpha, projection?}` adds a mask fill reading an image's gray;
+  `effect.set {effect, idMap: image resource | null}` gives a colour selection its own ID map in place of
+  the baked one; `tool.material {maskImage: image resource | null}` paints an image's gray into masks.
+- `effect.add.colorSelection {layer?, color?, tolerance?}` and `mask.add.heightCombination {layer?}` add a
+  colour selection or a compare mask (this layer's height against the layers below) to a layer's mask,
+  making the mask first when it has none; both return `{effect}`.
+- `effect.filter.restoreDefaults {effect?}` puts a filter's parameters back to its defaults (name,
+  channels and blending stay) and returns `{changed}`.
+- `layer.fill.resetProjection {layer? | effect?}` puts the Fill section back to a new fill's (same
+  projection kind; a placed frame, the symmetry and the sources stay); `layer.fill.resetFrame` puts a
+  warp's frame back around the mesh with its corners unpulled. Each is one undo step, or none when
+  nothing changes.
+
 ## MaterialCraft materials
 
 A v3 `.mcmat` holds a published SBS graph and its source assets. TextureCraft uses the shared `craft-mcmat` reader and cooks the archive through `materialcraft-cli`. The resulting fill stores its channel textures and the original archive in the project. Linked cooks use the Settings percentage of available RAM. A cook that exceeds the estimated budget reports the required and configured byte counts without replacing the current fill. Its exposed values, presets and mesh-map inputs appear in `project.inspect`. Republish older MCMAT files from their original authoring project. Procedural imports and re-cooks require the desktop CLI. Saved projects retain their baked maps for use in the browser.
@@ -573,7 +689,9 @@ operation returns a busy error and can be retried.
 | `material.load` | `{path, above?, inside?, index?}`: `.tcmat`, `.mcmat` or `.mcraft` (cooked first) |
 | `material.link.set` | `{layer?, id, value, cook?: true}`: a number, `[..]`, a bool, `"#rrggbb"` or a typed `{"t", "v"}`; re-cooks unless `cook: false` |
 | `material.link.preset` | `{layer?, name, cook?: true}` |
-| `material.link.cook` | `{layer?}`: re-cook at the texture set's resolution with its baked mesh maps (after a bake or a resize) |
+| `material.link.map` | `{layer?, channel, output}`: the channel reads another output of the material |
+| `material.link.resolution` | `{layer?, relative: -3..3 \| fixed: 128..8192, cook?: true}`: the size the material cooks at |
+| `material.link.cook` | `{layer?}`: re-cook at its picked resolution (default: the texture set's) with its baked mesh maps (after a bake or a resize) |
 | `material.link.saveSource` | `{layer?, path}`: the original linked source with its `.mcmat`, `.mcraft` or `.sbs` extension |
 
 For a 1024-pixel texture set, TextureCraft requests `materialcraft-cli export source.mcmat maps --profile maps --size 1024x1024` with repeated `--set` and `--input` arguments. It discovers the published image inputs through `info` when the texture set supplies mesh maps. The desktop worker decodes the returned maps before installing the fill at its original drop target. The executable is resolved from

@@ -762,16 +762,20 @@ fn warmth(img: &Img) -> f32 {
 fn imported_hdr_environment_lights_the_ball() {
     let Some((mut h, frame)) = setup() else { return };
     let base = render(&mut h, &frame, "env_default");
-    // A procedural HDR: a hot orange sky over a dim blue ground (values far above 1).
+
+    // A procedural HDR: a hot orange sky over a dim blue ground (values far above 1)
     let (w, hh) = (256u32, 128u32);
     let rgba = (0..w * hh).map(|i| if i / w < hh / 2 { [12.0, 4.0, 1.0, 1.0] } else { [0.02, 0.05, 0.2, 1.0] }).collect();
-    let sky = ImageRes { width: w, height: hh, rgba, srgb: false };
+    let sky = ImageRes::new(w, hh, rgba, false);
     h.renderer.set_environment(&h.device, &h.queue, "resource:sky.hdr", Some(&sky));
     let lit = render(&mut h, &frame, "env_hdr_resource");
+
     assert_ne!(lit.px, base.px, "the imported environment changes the lighting");
     assert!(warmth(&lit) > warmth(&base) + 10.0, "the orange sky tints the ball");
     assert!(lit.mean(200, 100, 280, 180) > 20.0, "lit, finite shading (NaNs would render black)");
+
     h.renderer.set_environment(&h.device, &h.queue, "Studio Soft", None);
+
     assert_eq!(render(&mut h, &frame, "env_default_again").px, base.px, "built-ins come back");
 }
 
@@ -1075,47 +1079,53 @@ fn subsurface_blur_spreads_only_scattering_light() {
 #[test]
 fn the_hover_tint_covers_the_blurred_scattering_light_too() {
     let Some((mut h, frame)) = setup() else { return };
+
+    // Read coverage in the flat base-color view so lighting cannot hide a set at its edge
+    let base_color_view = shaded(&frame, |shade| shade.view_mode = 1);
+    let hovered_set_mask = mesh_mask(&mut h, &base_color_view, &[0]);
+    let neighbour_mask = mesh_mask(&mut h, &base_color_view, &[1]);
     let lit = shaded(&frame, |s| s.light = LIGHT);
-    let mask = mesh_mask(&mut h, &lit, &[0]);
-    let neighbour = mesh_mask(&mut h, &lit, &[1]);
     fill(&mut h, &[0, 1], DisplayKind::BaseColor, &[150, 150, 150, 255]);
     fill(&mut h, &[0, 1], DisplayKind::Emissive, &[0, 0, 0, 255]);
+
     let blur = shaded(&lit, |s| s.sss_blur = Some([0.06, 0.024, 0.015]));
-    let hover = |f: &Frame| shaded(f, |s| s.set_hover = Some(texturecraft_render::SetHighlight { set: 0, color: [1.0, 0.5, 0.0] }));
-    let mean = |img: &Img| region_mean(&mask, |x, y| img.luma(x, y));
+    let hover = |frame: &Frame| shaded(frame, |s| s.set_hover = Some(texturecraft_render::SetHighlight { set: 0, color: [1.0, 0.5, 0.0] }));
+    let mean = |img: &Img| region_mean(&hovered_set_mask, |x, y| img.luma(x, y));
     let plain = mean(&render(&mut h, &lit, "hover_sss_plain"));
     let blurred = mean(&render(&mut h, &blur, "hover_sss_blur"));
     let hovered_blur = mean(&render(&mut h, &hover(&blur), "hover_sss_blur_hovered"));
     let hovered_plain = mean(&render(&mut h, &hover(&lit), "hover_sss_plain_hovered"));
+
     assert!(hovered_plain != plain, "the hover tint changes the set");
-    // The blur only moves light around, so it must change a hovered set as little as a plain one
-    // (the scattering light restored by the blur pass is blended with the tint as well)
+
+    // Hover must dim the light restored by the blur along with the rest of the material
     assert!(
         ((hovered_blur - hovered_plain) - (blurred - plain)).abs() < 1.0,
         "the blur changes the plain set by {} and the hovered set by {}",
         blurred - plain,
         hovered_blur - hovered_plain
     );
-    // The set next to the hovered one keeps its light: the blur takes light across the boundary, and
-    // the hover must not dim what the neighbour receives from the hovered set. Only the pixels of
-    // set 1 within the blur's reach of set 0 can differ.
+
+    // Use a wide blur so scattering light crosses the boundary between the two sets
     let wide = shaded(&lit, |s| s.sss_blur = Some([0.2, 0.08, 0.05]));
     let blurred_img = render(&mut h, &wide, "hover_sss_wide");
     let hovered_blur_img = render(&mut h, &hover(&wide), "hover_sss_wide_hovered");
-    const REACH: i32 = 25;
-    let (w, ht) = (480i32, 360i32);
-    let near = |i: usize| {
-        let (x, y) = (i as i32 % w, i as i32 / w);
-        (-REACH..=REACH)
-            .any(|dy| (-REACH..=REACH).any(|dx| (0..w).contains(&(x + dx)) && (0..ht).contains(&(y + dy)) && mask[((y + dy) * w + x + dx) as usize]))
-    };
-    let diffs: Vec<f32> = (0..neighbour.len())
-        .filter(|&i| neighbour[i] && !mask[i] && near(i))
-        .map(|i| (hovered_blur_img.luma(i as u32 % 480, i as u32 / 480) - blurred_img.luma(i as u32 % 480, i as u32 / 480)).abs())
-        .collect();
-    let (count, max) = (diffs.iter().filter(|d| **d > 1.0).count(), diffs.iter().copied().fold(0.0, f32::max));
-    assert!(!diffs.is_empty(), "set 1 touches set 0");
-    assert!(max <= 1.0, "hovering set 0 changes {count} of {} pixels of set 1 next to it (max {max})", diffs.len());
+
+    // Skip pixels that legitimately include samples of the hovered set after MSAA resolve
+    let width = blurred_img.w;
+    let mut checked = 0;
+    let mut worst_delta = 0.0f32;
+    for (index, &neighbour) in neighbour_mask.iter().enumerate() {
+        if neighbour && !hovered_set_mask[index] {
+            let (x, y) = (index as u32 % width, index as u32 / width);
+            let delta = (hovered_blur_img.luma(x, y) - blurred_img.luma(x, y)).abs();
+            checked += 1;
+            worst_delta = worst_delta.max(delta);
+        }
+    }
+
+    assert!(checked > 0, "the neighbour has pixels with no coverage from the hovered set");
+    assert!(worst_delta <= 1.0, "hovering set 0 changes the neighbouring set by up to {worst_delta} luma across {checked} pixels");
 }
 
 /// An environment that is bright only around `dir` (world space, rotation 0).
@@ -1127,7 +1137,7 @@ fn spot_environment(dir: texturecraft_geom::glam::Vec3) -> ImageRes {
             if d.dot(dir) > 0.5 { [6.0, 6.0, 6.0, 1.0] } else { [0.02, 0.02, 0.02, 1.0] }
         })
         .collect();
-    ImageRes { width: w, height: hh, rgba, srgb: false }
+    ImageRes::new(w, hh, rgba, false)
 }
 
 #[test]
