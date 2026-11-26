@@ -386,7 +386,7 @@ mod tests {
         let path = dir.path().join("notice.png");
         write_png(&path, 4);
         let session = Session::new_project("Test", texturecraft_engine::geom::primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
-        let mut harness = Harness::builder().build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut harness = Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
         let app = harness.state_mut();
         let name = app.run("resource.import", json!({ "path": path.to_str().unwrap() })).unwrap()["name"].as_str().unwrap().to_string();
 
