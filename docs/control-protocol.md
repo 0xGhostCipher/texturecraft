@@ -382,7 +382,7 @@ With `rebuildUvs: true`, the project file saves the generated layout. Reopening 
 | `project_save` | `{path?}` | `.tcraft` (appended if missing), relative to the write root |
 | `mesh_import` | `{path, resolution?}` | New project from .glb/.gltf/.fbx/.dae/.usd/.usda/.usdc/.usdz/.abc/.obj/.ply/.stl; a .gltf's buffers and images and a loose USD layer's textures are read from its folder |
 | `mesh_reimport` | `{path?, preserveStrokes?}` | Reimport the mesh from a file, or (no path) from the project's own copy; bridge mode supports only the latter |
-| `mesh_export` | `{path, format?}` | The mesh as obj, glb, usda, usdc or usdz below the write root (obj: its .mtl and textures, usda / usdc: textures next to it) → `{path, textures?}` |
+| `mesh_export` | `{path, format?, recomputeNormals?}` | The mesh as obj, glb, usda, usdc or usdz below the write root; `recomputeNormals: true` writes smooth area-weighted normals on the exported copy (default false) (obj: its .mtl and textures, usda / usdc: textures next to it) → `{path, textures?}` |
 | `bake_mesh_add` | `{path, cage?}` | Add a high-definition mesh for baking, or set the cage → `{name, meshes}` |
 | `resource_import` | `{path}` | Image resource (png, jpg, tga, tif, bmp, webp, exr, hdr) → its name, for `layer.add.image` / `tool.stencil`, or as a mesh map instead of baking it: `textureSet.meshMap.set {ts?, map, image}` (`textureSet.meshMap.clear {ts?, map}` empties the slot); call it once per baked map file (the desktop app's `textureSet.meshMap.import`, which takes host paths, is refused through `command_run`) |
 | `material_save` | `{path, layer?, name?}` | A layer or folder as a `.tcmat` smart material below the write root |
@@ -457,7 +457,7 @@ File access follows `--read-root` / `--write-root` as for MCP.
 | `project.save` | `{path?}` |
 | `mesh.import` | `{path, resolution?, name?}` |
 | `mesh.reimport` | `{path?, preserveStrokes?}` |
-| `mesh.export` | `{path, format?}` |
+| `mesh.export` | `{path, format?, recomputeNormals?}` |
 | `bake.mesh.add` | `{path, cage?}` |
 | `resource.import` | `{path}` |
 | `material.save` | `{path, layer?, name?}` |

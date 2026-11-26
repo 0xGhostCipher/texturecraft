@@ -609,7 +609,8 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
                 .file_name(name);
             app.ask_file(dialog, Bound::Project, |app, paths| {
                 if let Some(path) = paths.first()
-                    && let Some(result) = app.run("file.exportMesh", json!({"path": path.display().to_string()}))
+                    && let Some(result) =
+                        app.run("file.exportMesh", json!({"path": path.display().to_string(), "recomputeNormals": app.ui.mesh_recompute_normals}))
                 {
                     let saved_path = result["path"].as_str().unwrap_or_default();
                     app.toast(trf("Exported mesh to {path}", &[("path", &saved_path)]), false);

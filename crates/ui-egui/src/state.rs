@@ -566,6 +566,9 @@ pub struct UiState {
     /// Window ▸ Hide UI (Tab): only the viewport.
     pub hide_ui: bool,
     pub windows: Windows,
+    /// Mesh Export Options: compute smooth normals on the exported copy, not the project.
+    #[serde(default = "default_true")]
+    pub mesh_recompute_normals: bool,
     pub uv_zoom: f32,
     pub uv_pan: [f32; 2],
     /// The 2D view's turn, counter-clockwise on screen in radians (Alt+left drag)
@@ -770,6 +773,7 @@ impl Default for UiState {
             selected_baked_map: None,
             hide_ui: false,
             windows: Windows::default(),
+            mesh_recompute_normals: true,
             uv_zoom: 1.0,
             uv_pan: [0.0, 0.0],
             uv_rotation: 0.0,
@@ -849,6 +853,15 @@ mod tests {
     fn the_first_run_follows_the_system_language() {
         let mut session = texturecraft_engine::Session::closed().unwrap();
         assert_eq!(crate::start_ui(None, &mut session).prefs.language, crate::i18n::SYSTEM_LANGUAGE);
+    }
+
+    #[test]
+    fn mesh_export_normal_choice_defaults_on_for_older_saved_states() {
+        assert!(UiState::default().mesh_recompute_normals);
+        let mut saved = serde_json::to_value(UiState::default()).unwrap();
+        saved.as_object_mut().unwrap().remove("mesh_recompute_normals");
+        let loaded: UiState = serde_json::from_value(saved).unwrap();
+        assert!(loaded.mesh_recompute_normals, "older states keep the dialog's checked default");
     }
 
     #[test]

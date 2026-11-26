@@ -69,7 +69,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export Mesh...",
             ["File"],
             None,
-            "{path: .obj, .glb, .usda, .usdc or .usdz file, format?: obj|glb|usda|usdc|usdz (default: from the extension, else obj); obj writes its .mtl and textures, usda/usdc their textures, next to the file} → {path, textures?}",
+            "{path: .obj, .glb, .usda, .usdc or .usdz file, format?: obj|glb|usda|usdc|usdz (default: from the extension, else obj), recomputeNormals?: bool (default false: smooth area-weighted normals replace the stored normals on the exported copy only); obj writes its .mtl and textures, usda/usdc their textures, next to the file} → {path, textures?}",
             always,
             export_mesh
         ),
@@ -115,15 +115,32 @@ fn read_stored_mesh(project: &Project, ext: &str, bytes: &[u8], saved_layout: Op
 impl Session {
     /// The working mesh as Wavefront OBJ (with its own UVs, UDIM tiles included).
     pub fn mesh_obj_bytes(&self) -> Result<Vec<u8>> {
-        texturecraft_formats::obj_bytes(&self.source_mesh(), &self.doc.project.name).map_err(fe)
+        self.mesh_obj_bytes_with_normals(false)
+    }
+
+    /// [`Session::mesh_obj_bytes`], optionally replacing normals on the exported copy only.
+    pub fn mesh_obj_bytes_with_normals(&self, recompute_normals: bool) -> Result<Vec<u8>> {
+        let mut mesh = self.source_mesh();
+        if recompute_normals {
+            mesh.compute_normals();
+        }
+        texturecraft_formats::obj_bytes(&mesh, &self.doc.project.name).map_err(fe)
     }
 
     /// [`Session::mesh_obj_bytes`] with an MTL material library and each material's maps (like
     /// [`Session::mesh_usd`]'s), to write next to it, named after `stem` (the OBJ file's).
     pub fn mesh_obj_with_mtl(&mut self, stem: &str) -> Result<(Vec<u8>, texturecraft_formats::NamedFiles)> {
+        self.mesh_obj_with_mtl_and_normals(stem, false)
+    }
+
+    /// [`Session::mesh_obj_with_mtl`], optionally replacing normals on the exported copy only.
+    pub fn mesh_obj_with_mtl_and_normals(&mut self, stem: &str, recompute_normals: bool) -> Result<(Vec<u8>, texturecraft_formats::NamedFiles)> {
         // shortcut: UV-tiled sets get no maps (the OBJ keeps the mesh's UDIM UVs and an MTL map is
         // one image); their tiles export through Export textures with `$udim` names.
         let mut mesh = self.source_mesh();
+        if recompute_normals {
+            mesh.compute_normals();
+        }
         // A mesh without materials has one implicit material (and texture set).
         if mesh.materials.is_empty() {
             mesh.materials.push("default".into());
@@ -136,16 +153,34 @@ impl Session {
     /// composite, through the texture export pipeline) embedded. glTF has no UV tiles: a
     /// UV-tiled set embeds its tile atlas, with the mesh's UVs in atlas space.
     pub fn mesh_glb_bytes(&mut self) -> Result<Vec<u8>> {
+        self.mesh_glb_bytes_with_normals(false)
+    }
+
+    /// [`Session::mesh_glb_bytes`], optionally replacing normals on the exported copy only.
+    pub fn mesh_glb_bytes_with_normals(&mut self, recompute_normals: bool) -> Result<Vec<u8>> {
         let files = self.material_files(texturecraft_formats::glb_export_options(), true, self.mesh.materials.len())?;
         let textures: Vec<_> = files.into_iter().map(texturecraft_formats::GlbTextures::from_files).collect();
-        texturecraft_formats::glb_bytes(&self.mesh, &self.doc.project.name, &textures).map_err(fe)
+        let mut mesh = self.mesh.as_ref().clone();
+        if recompute_normals {
+            mesh.compute_normals();
+        }
+        texturecraft_formats::glb_bytes(&mesh, &self.doc.project.name, &textures).map_err(fe)
     }
 
     /// The working mesh as USD with a UsdPreviewSurface per material (textures like
     /// [`Session::mesh_glb_bytes`]): usdz packages them, usda / usdc list them to write alongside.
     pub fn mesh_usd(&mut self, format: texturecraft_formats::UsdFormat) -> Result<texturecraft_formats::UsdExport> {
+        self.mesh_usd_with_normals(format, false)
+    }
+
+    /// [`Session::mesh_usd`], optionally replacing normals on the exported copy only.
+    pub fn mesh_usd_with_normals(&mut self, format: texturecraft_formats::UsdFormat, recompute_normals: bool) -> Result<texturecraft_formats::UsdExport> {
         let files = self.material_files(texturecraft_formats::usd_export_options(), true, self.mesh.materials.len())?;
-        texturecraft_formats::usd_bytes(&self.mesh, &self.doc.project.name, &files, format).map_err(fe)
+        let mut mesh = self.mesh.as_ref().clone();
+        if recompute_normals {
+            mesh.compute_normals();
+        }
+        texturecraft_formats::usd_bytes(&mesh, &self.doc.project.name, &files, format).map_err(fe)
     }
 
     /// The texture sets of the first `materials` materials rendered with `opts` (as a tile atlas
@@ -1159,7 +1194,7 @@ fn write_materialx(
 #[cfg(not(target_arch = "wasm32"))]
 fn export_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let path = native::path_param(p, "path", "file.exportMesh")?;
-    let out = s.mesh_export(path, strp(p, "format"))?;
+    let out = s.mesh_export_with_normals(path, strp(p, "format"), crate::commands::boolp(p, "recomputeNormals").unwrap_or(false))?;
     let dir = std::path::Path::new(&out.path).parent().unwrap_or(std::path::Path::new(""));
     let texture_paths: Vec<std::path::PathBuf> = out.textures.iter().map(|(name, _)| dir.join(name)).collect();
     let main_path = std::path::PathBuf::from(&out.path);
@@ -1196,6 +1231,12 @@ impl Session {
     /// The working mesh as a file for `path`, in `format` (obj, glb, usda, usdc, usdz; default:
     /// from the extension, else OBJ). The extension is appended when it doesn't match.
     pub fn mesh_export(&mut self, path: &str, format: Option<&str>) -> Result<MeshExport> {
+        self.mesh_export_with_normals(path, format, false)
+    }
+
+    /// [`Session::mesh_export`], optionally computing smooth area-weighted normals on the
+    /// exported copy. The project's source and render meshes are never changed.
+    pub fn mesh_export_with_normals(&mut self, path: &str, format: Option<&str>, recompute_normals: bool) -> Result<MeshExport> {
         let ext = match format {
             Some(f) if MESH_EXPORT_FORMATS.contains(&f) => f.to_string(),
             Some(other) => return Err(bad("file.exportMesh", format!("unknown mesh format `{other}` ({})", MESH_EXPORT_FORMATS.join(", ")))),
@@ -1204,12 +1245,12 @@ impl Session {
         };
         let path = if ext_of(path) == ext { path.to_string() } else { format!("{path}.{ext}") };
         let (bytes, textures) = match (ext.as_str(), texturecraft_formats::UsdFormat::from_ext(&ext)) {
-            ("glb", _) => (self.mesh_glb_bytes()?, Vec::new()),
+            ("glb", _) => (self.mesh_glb_bytes_with_normals(recompute_normals)?, Vec::new()),
             (_, Some(format)) => {
-                let usd = self.mesh_usd(format)?;
+                let usd = self.mesh_usd_with_normals(format, recompute_normals)?;
                 (usd.bytes, usd.textures)
             }
-            _ => self.mesh_obj_with_mtl(std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("mesh"))?,
+            _ => self.mesh_obj_with_mtl_and_normals(std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("mesh"), recompute_normals)?,
         };
         Ok(MeshExport { path, bytes, textures })
     }
@@ -1399,6 +1440,36 @@ f 1/1 2/2 3/3
         assert_eq!(reopened.mesh.triangle_count(), s.mesh.triangle_count());
         assert_eq!(reopened.mesh.materials, s.mesh.materials);
         assert!(crate::execute(&mut s, "file.exportMesh", &json!({ "path": base, "format": "fbx" })).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mesh_export_can_recompute_normals_without_changing_the_project() {
+        let mut s = Session::new_project("t", primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
+        std::sync::Arc::make_mut(&mut s.source).normals.fill(texturecraft_geom::glam::Vec3::Y);
+        std::sync::Arc::make_mut(&mut s.mesh).normals.fill(texturecraft_geom::glam::Vec3::Y);
+        let mut expected = s.source_mesh();
+        expected.compute_normals();
+        let dir = std::env::temp_dir().join(format!("tc_export_recompute_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (format, suffix) in [("obj", "obj"), ("glb", "glb"), ("usda", "usda")] {
+            let path = dir.join(format!("cube-{format}.{suffix}"));
+            let reply = crate::execute(&mut s, "file.exportMesh", &json!({"path": path, "recomputeNormals": true})).unwrap();
+            let bytes = std::fs::read(reply["path"].as_str().unwrap()).unwrap();
+            let back = texturecraft_formats::import_mesh_bytes(&format!("cube.{suffix}"), &bytes).unwrap().mesh;
+            assert_eq!(back.normals.len(), expected.normals.len(), "{format}: one normal per exported vertex");
+            for (actual, wanted) in back.normals.iter().zip(&expected.normals) {
+                assert!((*actual - *wanted).length() < 1e-4, "{format}: stored normals were exported instead of recomputed ones");
+            }
+        }
+        assert!(s.source.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the source project is unchanged");
+        assert!(s.mesh.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the render project is unchanged");
+        let stored_path = dir.join("stored.obj");
+        let stored = crate::execute(&mut s, "file.exportMesh", &json!({"path": stored_path})).unwrap();
+        let stored = std::fs::read(stored["path"].as_str().unwrap()).unwrap();
+        let stored = texturecraft_formats::import_mesh_bytes("stored.obj", &stored).unwrap().mesh;
+        assert!(stored.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the default keeps stored normals for compatibility");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
