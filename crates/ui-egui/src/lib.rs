@@ -78,6 +78,8 @@ mod levels_properties;
 mod line_snap;
 mod list_action;
 pub mod log_panel;
+#[cfg(not(target_arch = "wasm32"))]
+mod manual_save;
 mod mask_fill_panel;
 mod mask_paint_panel;
 mod mask_preview_image;
@@ -255,6 +257,7 @@ pub struct Toast {
     pub error: bool,
     pub until: f64,
     pub show_log: bool,
+    announce: bool,
 }
 
 pub struct TextureCraftApp {
@@ -369,10 +372,19 @@ pub struct TextureCraftApp {
     /// Native file dialogs and their continuations (desktop only).
     #[cfg(not(target_arch = "wasm32"))]
     pub file_dialogs: file_dialogs::FileDialogs,
-    /// The unsaved-changes dialog's Save is waiting on the Save dialog's answer.
+    /// Project whose unsaved-changes dialog can still answer.
+    prompt_project_id: u64,
+    /// A manual save running on the desktop archive writer.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) save_job: Option<manual_save::SaveJob>,
+    /// The unsaved-changes dialog's Save is waiting for a path or a save result.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) saving_for_prompt: bool,
-    /// That Save dialog saved the project; the prompt goes on at its next frame.
+    /// A close the finished save left waiting for an open stroke, with the id of the project it
+    /// belongs to; decided once the stroke ends, dropped when another project replaced that one.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) quit_after_stroke: Option<u64>,
+    /// The requested save completed; the prompt goes on at its next frame.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) prompt_saved: bool,
     /// The resolved keymap and its key dispatcher.
@@ -502,8 +514,13 @@ impl TextureCraftApp {
             updates_rt: updates_ui::Runtime::default(),
             #[cfg(not(target_arch = "wasm32"))]
             file_dialogs: file_dialogs::FileDialogs::new(cc.egui_ctx.clone()),
+            prompt_project_id: project_id,
+            #[cfg(not(target_arch = "wasm32"))]
+            save_job: None,
             #[cfg(not(target_arch = "wasm32"))]
             saving_for_prompt: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            quit_after_stroke: None,
             #[cfg(not(target_arch = "wasm32"))]
             prompt_saved: false,
             bindings: keymap::Bindings::default(),
@@ -651,13 +668,13 @@ impl TextureCraftApp {
     }
 
     pub fn toast(&mut self, text: impl Into<String>, error: bool) {
-        self.toasts.push(Toast { text: text.into(), error, until: self.last_time + if error { 6.0 } else { 3.0 }, show_log: false });
+        self.toasts.push(Toast { text: text.into(), error, until: self.last_time + if error { 6.0 } else { 3.0 }, show_log: false, announce: false });
     }
 
     /// An error toast that stays until the user dismisses it (for a problem that persists and
     /// is reported once, like a texture set the GPU could not hold).
     pub fn toast_sticky(&mut self, text: impl Into<String>) {
-        self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false });
+        self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false, announce: false });
     }
 
     /// Bake texture sets in the background, one after another; invalid set indices show an error without starting anything
@@ -1037,6 +1054,10 @@ impl TextureCraftApp {
     /// and written on a worker thread; the project data is shared copy-on-write).
     #[cfg(not(target_arch = "wasm32"))]
     fn autosave(&mut self, now: f64) {
+        if self.save_job.is_some() {
+            return;
+        }
+
         let period = autosave_period_seconds(self.ui.prefs.autosave_minutes);
 
         // The clock starts at the first unsaved change
@@ -1216,7 +1237,10 @@ impl eframe::App for TextureCraftApp {
             ctx.set_zoom_factor(scale);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        self.autosave(now);
+        {
+            self.poll_save(ctx);
+            self.autosave(now);
+        }
         i18n::set_language(&self.ui.prefs.language);
         #[cfg(target_arch = "wasm32")]
         {
@@ -1254,6 +1278,8 @@ impl eframe::App for TextureCraftApp {
         self.profiler.logic_ms = (now_ms() - logic_start_ms) as f32;
 
         // Last, so it sees every close request this frame's work made
+        #[cfg(not(target_arch = "wasm32"))]
+        self.resume_close_after_stroke(ctx);
         self.close_path(ctx);
     }
 
@@ -1454,7 +1480,10 @@ fn toasts(app: &mut TextureCraftApp, ctx: &egui::Context) {
                         ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                             egui::ScrollArea::vertical().id_salt(("toast", i)).max_height(max_text_height).show(ui, |ui| {
                                 ui.set_max_width(width);
-                                ui.add(egui::Label::new(egui::RichText::new(&t.text).color(tk.text_strong)).wrap());
+                                let label = ui.add(egui::Label::new(egui::RichText::new(&t.text).color(tk.text_strong)).wrap());
+                                if t.announce {
+                                    ui.ctx().accesskit_node_builder(label.id, |node| node.set_live(egui::accesskit::Live::Polite));
+                                }
                             });
                             if t.show_log && ui.link(i18n::tr("Open Log")).clicked() {
                                 show_log = true;

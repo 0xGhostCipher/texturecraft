@@ -142,6 +142,12 @@ pub fn handle(app: &mut TextureCraftApp, ctx: &egui::Context, method: &str, para
         },
         "command.run" => {
             let Some(id) = params.get("id").and_then(Value::as_str) else { return err("`id` is required") };
+
+            #[cfg(not(target_arch = "wasm32"))]
+            if app.save_job.is_some() && crate::manual_save::is_save(id) {
+                return err("A manual project save is already running");
+            }
+
             let command_params = params.get("params").cloned().unwrap_or(Value::Null);
             let before = app.session.camera;
             match texturecraft_engine::execute(&mut app.session, id, &command_params) {

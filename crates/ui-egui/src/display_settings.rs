@@ -57,8 +57,7 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         }
 
         app.session.doc.project.display = display;
-        app.session.modified = true;
-        app.session.revision = app.session.revision.wrapping_add(1);
+        app.session.mark_modified();
     }
 
     if import_hdr {
