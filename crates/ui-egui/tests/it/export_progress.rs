@@ -174,9 +174,9 @@ fn long_filenames_leave_the_export_details_reachable_by_scrolling() {
         })
     };
     assert!(!bits_fit(&h), "the bit-depth column starts beyond the viewport");
-    h.get_by_role_and_label(egui::Role::Button, &name).focus();
+    h.get_by_role_and_label(egui::Role::DisclosureTriangle, &name).focus();
     h.run_steps(3);
-    assert!(h.get_by_role_and_label(egui::Role::Button, &name).is_focused());
+    assert!(h.get_by_role_and_label(egui::Role::DisclosureTriangle, &name).is_focused());
 
     for _ in 0..12 {
         h.key_press(egui::Key::ArrowRight);
