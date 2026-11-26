@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-use craft_keymap::egui::Dispatcher;
-use craft_keymap::{Active, Bindable, Chord, CommandRef, ConflictKind, KeyInput, Layout, Lookup, Mods, Overrides, Platform, Scope, Scopes};
+use crate::shortcut_dispatch::Dispatcher;
+use craft_keymap::{Active, Chord, CommandDef, CommandRef, ConflictKind, KeyInput, Layout, Lookup, Mods, Overrides, Platform, Scope, Scopes};
 use egui::{Event, Id, Key, KeyboardShortcut, Modifiers, RichText, vec2};
 use egui_phosphor::regular as ic;
 
@@ -196,11 +196,11 @@ fn active(keymap: &Keymap) -> Vec<KeyboardShortcut> {
 
 /// The catalog as craft-keymap sees it, in `bindings()` order: the first one listed wins a shared
 /// shortcut.
-fn catalog() -> Vec<Bindable> {
+fn catalog() -> Vec<CommandDef> {
     bindings()
         .iter()
         .map(|b| {
-            let item = Bindable::new(b.id, b.label, Scope::app());
+            let item = CommandDef::new(b.id, b.label, Scope::app());
             match b.default.and_then(parse) {
                 Some(chord) => item.with_default(craft_keymap::Binding::new(chord)),
                 None => item,
@@ -231,7 +231,7 @@ fn overrides(keymap: &Keymap) -> Overrides {
 
 /// The keymap with `keymap`'s shortcuts for `platform`.
 fn resolved(keymap: &Keymap, platform: Platform) -> craft_keymap::Keymap {
-    craft_keymap::Keymap::new(catalog(), Scopes::new(), platform).with_overrides(overrides(keymap))
+    craft_keymap::Keymap::new(catalog(), Scopes::new(), platform).with_overrides(overrides(keymap)).with_delete_keys(craft_keymap::DeleteKeys::Apart)
 }
 
 /// The resolved keymap and the dispatcher that runs it against each frame's keys.
@@ -247,8 +247,7 @@ impl Default for Bindings {
         let stored = Keymap::new();
         let map = resolved(&stored, Platform::current());
 
-        // Held keys repeat and clipboard events count as Ctrl+C, X and V
-        Bindings { stored, map, dispatcher: Dispatcher::new().with_repeat(true).with_clipboard_events(true), conflicts: OnceLock::new() }
+        Bindings { stored, map, dispatcher: Dispatcher::default(), conflicts: OnceLock::new() }
     }
 }
 
@@ -265,7 +264,7 @@ impl Bindings {
     /// The ids of the commands this frame's key presses run, in press order. The presses are
     /// removed from the input.
     pub(crate) fn dispatch(&mut self, input: &mut egui::InputState) -> Vec<String> {
-        self.dispatcher.dispatch(input, &self.map, &Active::NONE).into_iter().map(|hit| hit.command.id).collect()
+        self.dispatcher.dispatch_filtered(input, &self.map, |_| true).into_iter().map(|hit| hit.command.id).collect()
     }
 
     /// The id of the command a key press outside the main window runs. The press is matched as
@@ -273,11 +272,7 @@ impl Bindings {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn command_of(&self, press: &Event) -> Option<String> {
         let input = KeyInput::from_egui(press, self.map.platform())?;
-        self.dispatcher.layout().candidates(&input).into_iter().find_map(|chord| match self.map.lookup(&chord, false, &Active::NONE) {
-            Lookup::Run(command) => Some(command.id),
-            Lookup::Cycle(commands) => commands.into_iter().next().map(|command| command.id),
-            _ => None,
-        })
+        craft_keymap::Matcher::single(self.dispatcher.layout(), &self.map, &input, &Active::NONE, &[]).map(|hit| hit.command.id)
     }
 
     /// The shortcut a press records: the chord it runs, keeping the held Ctrl and Cmd as they are.
@@ -419,7 +414,9 @@ pub(crate) fn actions_page(ui: &mut egui::Ui, keymap: &mut Keymap, recorder: &Bi
     let tk = Tokens::get(&ctx);
     let capture_id = Id::unique(SETTINGS_CAPTURE);
     let mut capture: Option<usize> = ctx.data(|d| d.get_temp(capture_id));
-    if let (Some(i), Some(sc)) = (capture, pressed(&ctx, recorder)) {
+    if let Some(i) = capture
+        && let Some(sc) = pressed(&ctx, recorder)
+    {
         if let Some(b) = bindings().get(i) {
             if sc.logical_key == Key::Delete && sc.modifiers.is_none() {
                 rebind(keymap, b, "");
@@ -516,13 +513,22 @@ pub(crate) fn actions_page(ui: &mut egui::Ui, keymap: &mut Keymap, recorder: &Bi
     });
 }
 
-/// The first key press this frame as a shortcut.
+/// The first key press this frame as a shortcut, including Escape routed to the window's cancel.
+/// Keep the press's modifiers so only plain Escape cancels recording.
 fn pressed(ctx: &egui::Context, bindings: &Bindings) -> Option<KeyboardShortcut> {
     let platform = craft_keymap::egui::platform(ctx);
-    ctx.input(|i| {
+    let press = ctx.input(|i| {
         i.events.iter().find_map(|e| match e {
             Event::Key { key, pressed: true, modifiers, .. } => Some(bindings.recorded(e, *key, *modifiers, platform)),
             _ => None,
+        })
+    });
+
+    press.or_else(|| {
+        crate::framework::take_window_cancel(ctx).then(|| {
+            let modifiers = craft_ui::runtime::keys::escape_mods(ctx).unwrap_or(Mods::NONE);
+
+            Chord::new(modifiers, craft_keymap::Key::Escape).to_egui_shortcut()
         })
     })
 }
@@ -538,7 +544,9 @@ pub fn window(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let capture_id = Id::unique(CAPTURE);
     let filter_id = Id::unique("keymap_filter");
     let mut capture: Option<usize> = ctx.data(|d| d.get_temp(capture_id));
-    if let (Some(i), Some(sc)) = (capture, pressed(ctx, &app.bindings)) {
+    if let Some(i) = capture
+        && let Some(sc) = pressed(ctx, &app.bindings)
+    {
         if (sc.logical_key != Key::Escape || !sc.modifiers.is_none())
             && let Some(b) = bindings().get(i)
         {
@@ -839,6 +847,13 @@ mod tests {
         keymap.insert("file.save".into(), "Equals".into());
         let resolved = bindings_for(&keymap);
         assert_eq!(resolved.command_of(&press(Key::Plus, Modifiers::NONE)).as_deref(), Some("file.save"), "+ stands for =");
+
+        // A layout that types = with Shift+0: the press is both chords, and the one with Shift runs.
+        keymap.insert("file.saveAs".into(), "Shift+Equals".into());
+        let mut resolved = bindings_for(&keymap);
+        let equals = press_at(Key::Equals, Key::Num0, Modifiers::SHIFT);
+        assert_eq!(dispatched(&mut resolved, vec![equals.clone()], Modifiers::SHIFT), ["file.saveAs"]);
+        assert_eq!(resolved.command_of(&equals).as_deref(), Some("file.saveAs"));
     }
 
     #[test]

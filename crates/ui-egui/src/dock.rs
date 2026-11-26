@@ -197,7 +197,7 @@ pub(crate) fn layers(app: &mut TextureCraftApp, ui: &mut Ui) {
 /// rename, a number field) keeps the key for itself, and the key is left alone over other panels.
 fn select_all_layers(app: &mut TextureCraftApp, ui: &Ui) {
     let ctx = ui.ctx();
-    if ctx.egui_wants_keyboard_input() || !ui.ui_contains_pointer() {
+    if crate::framework::widget_has_keyboard(ctx) || !ui.ui_contains_pointer() {
         return;
     }
 
@@ -3349,7 +3349,10 @@ mod texture_set_list_tests {
         .unwrap();
         let first = session.doc.project.texture_sets[0].name.clone();
         let second = session.doc.project.texture_sets[1].name.clone();
-        let mut harness = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = Harness::builder()
+            .with_size(vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         harness.run_steps(4);
 
         harness.get_by_role_and_label(egui::Role::ListItem, &second).focus();

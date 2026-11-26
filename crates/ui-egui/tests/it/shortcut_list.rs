@@ -9,7 +9,10 @@ use texturecraft_ui_egui::{TextureCraftApp, menus};
 
 fn harness() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     h.state_mut().ui.prefs.language = "en".into();
     h.run_steps(4);
     h
@@ -82,6 +85,23 @@ fn a_key_listed_for_a_missing_function_is_reported_as_shared() {
     h.state_mut().ui.windows.settings_draft.as_mut().unwrap().keymap.insert("ui.hideUi".into(), "Space".into());
     h.run_steps(4);
     assert!(h.query_by_label_contains("One or several errors").is_some(), "Space is Toggle animation's");
+    assert!(h.get_by_label("OK").accesskit_node().is_disabled());
+}
+
+#[test]
+fn recording_shift_escape_warns_that_the_key_is_reserved() {
+    let mut h = harness();
+    let ctx = h.ctx.clone();
+    menus::invoke(h.state_mut(), &ctx, "ui.settings");
+    h.run_steps(4);
+    h.get_by_role_and_label(Role::Tab, "Shortcuts").click();
+    h.run_steps(4);
+    h.get_by_label("Edit the shortcut of Save project").click();
+    h.run_steps(4);
+
+    press(&mut h, Key::Escape, Modifiers::SHIFT);
+
+    assert!(h.query_by_label_contains("One or several errors").is_some(), "Shift+Escape is reserved for Pause Engine Computation");
     assert!(h.get_by_label("OK").accesskit_node().is_disabled());
 }
 

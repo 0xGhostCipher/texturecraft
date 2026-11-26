@@ -22,7 +22,10 @@ fn harness() -> Harness<'static, TextureCraftApp> {
 
     // No earlier bake to start the preview from: its first picture is a preview bake at the chosen size
     session.doc.baked.clear();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1200.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 1200.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|context| TextureCraftApp::new(context, session));
     harness.state_mut().ui.mode = Mode::Baking;
     harness.state_mut().ui.bake_visualization.map_preview_size = BakeResolution::R256;
     harness.run_steps(4);
