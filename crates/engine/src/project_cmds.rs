@@ -9,6 +9,9 @@ use crate::commands::{CommandSpec, always, bad, boolp, strp, u64p};
 use crate::materials::Place;
 use crate::{Result, Session, cmd};
 
+/// Longest project name, in characters; it goes into export file names.
+pub const MAX_PROJECT_NAME_CHARS: usize = 128;
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -22,6 +25,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("project.sample", "Open sample project", ["File"], None, "{}", always, sample),
         cmd!("project.inspect", "Inspect project", [], None, "{}", always, |s, _| Ok(crate::inspect::session(s))),
+        cmd!(
+            "project.rename",
+            "Rename project",
+            [],
+            None,
+            "{name: 1-128 characters without control characters} — the name `$project` stands for in export file names; the project file keeps its own name",
+            always,
+            rename
+        ),
         cmd!(
             "material.apply",
             "Add smart material",
@@ -49,6 +61,23 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.switch_to(next);
     Ok(crate::inspect::session(s))
+}
+
+fn rename(s: &mut Session, p: &Value) -> Result<Value> {
+    let name = strp(p, "name")
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.chars().count() <= MAX_PROJECT_NAME_CHARS && !name.chars().any(char::is_control))
+        .ok_or_else(|| bad("project.rename", format!("`name` must be 1-{MAX_PROJECT_NAME_CHARS} characters without control characters")))?;
+
+    // The same name is not an undo step and leaves a saved project unmodified
+    if name != s.doc.project.name {
+        s.edit("Rename project", |s| {
+            s.doc.project.name = name.to_string();
+            Ok(())
+        })?;
+    }
+
+    Ok(json!({ "name": name }))
 }
 
 fn material(s: &mut Session, p: &Value) -> Result<Value> {

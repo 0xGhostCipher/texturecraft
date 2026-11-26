@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use egui::{Key, Modifiers};
 use serde_json::{Value, json};
 use texturecraft_engine::core::NormalFormat;
+use texturecraft_engine::project_cmds::MAX_PROJECT_NAME_CHARS;
 
 use crate::TextureCraftApp;
 use crate::dock::info_icon;
@@ -44,6 +45,7 @@ pub(crate) fn open(app: &mut TextureCraftApp) {
         mesh: None,
         reimport: false,
         preserve: true,
+        name: None,
         normal_format: None,
         color_management: crate::project_form::ColorManagement::Legacy,
         confirm: false,
@@ -211,6 +213,18 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                     ui.add_space(12.0);
                     ui.label(caption(tr("PROJECT SETTINGS")));
                     ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(ROW_INDENT_POINTS);
+                        let label = ui.label(tr("Project name")).id;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            info_icon(ui, tr("The name $project stands for in export file names. The project file keeps its own name."));
+                            let mut name = config.name.clone().unwrap_or_else(|| project.name.clone());
+                            let field = egui::TextEdit::singleline(&mut name).char_limit(MAX_PROJECT_NAME_CHARS).desired_width(FIELD_WIDTH_POINTS);
+                            if ui.add(field).labelled_by(label).changed() {
+                                config.name = Some(name);
+                            }
+                        });
+                    });
                     let shown_format = config.normal_format.unwrap_or(current_normal_format);
                     row(
                         ui,
@@ -326,6 +340,11 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 Some(format) => {
                     app.run("textureSet.settings", json!({"normalFormat": if format == NormalFormat::DirectX { "directX" } else { "openGl" }})).is_some()
                 }
+                None => true,
+            }
+            // An untouched name is left alone, even one longer than a typed name may be
+            && match config.name.as_deref() {
+                Some(name) => app.run("project.rename", json!({"name": name})).is_some(),
                 None => true,
             }
     };

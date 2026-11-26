@@ -765,3 +765,24 @@ fn project_config_snapshots() {
     h.run_steps(6);
     h.render().unwrap().save(output_dir.join("project-config-ocio.png")).unwrap();
 }
+
+#[test]
+fn a_typed_project_name_applies_only_with_ok() {
+    let dir = temp_dir("project-name");
+    let mut h = app_on_a_quad(&dir);
+    let before = h.state().session.doc.project.name.clone();
+
+    for button in ["Cancel", "OK"] {
+        open_window(&mut h);
+        in_window(&h, Role::TextInput, "Project name").focus();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        in_window(&h, Role::TextInput, "Project name").type_text("Knight");
+        h.run_steps(2);
+        click_in_window(&mut h, Role::Button, button);
+
+        let expected = if button == "OK" { "Knight" } else { before.as_str() };
+        assert_eq!(h.state().session.doc.project.name, expected, "after {button}");
+        assert!(!window_is_open(&h), "{button} closes the window");
+    }
+}
