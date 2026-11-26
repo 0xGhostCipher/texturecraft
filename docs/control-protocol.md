@@ -366,6 +366,11 @@ takes a font family, not a path: it reads only the system's font folders.
 
 `file.close` leaves no project open: `session.inspect` then reports `projectOpen: false`, `command.list` marks every command but the project-independent ones as not enabled: the ones that open or create a project (`file.open`, `file.new`, `project.new`, `project.sample`), `project.inspect`, `viewport.frame`, `project.templates`, the `export.preset*` commands (`export.presets`, `export.preset.get`, `export.preset.save`, `export.preset.remove`) and the library and preset listings (`brush.preset.list`, `alpha.list`, `filter.list`, `material.list`, `mask.smart.list`, `text.fonts`), each still subject to its own enabled check. The rest are refused with "no project is open" until a project is opened or created. A `texturecraft --control` run starts with the sample project (an empty material ball with `--empty`); the app without `--control` starts with no project.
 
+The desktop control channel accepts `rebuildUvs: true` on `file.new` to generate a new UV layout.
+The default keeps a complete authored layout and unwraps meshes that need UVs, including on reopen.
+With `rebuildUvs: true`, the project file saves the generated layout. Reopening or calling
+`file.reimportMesh` without a path reuses it. Reimporting from a mesh file on disk rebuilds its UVs.
+
 | Tool | Params | Notes |
 |---|---|---|
 | `session_inspect` | | The whole session as JSON |
