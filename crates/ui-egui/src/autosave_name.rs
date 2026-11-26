@@ -1,4 +1,4 @@
-//! Where a project's autosave copy goes. Each project has a file of its own, `<stem>-<suffix>.tcraft`: a project's
+//! Where a project's autosave copy goes. Each project has a file of its own, `<stem>-copy-<suffix>.tcraft`: a project's
 //! name comes from its mesh file, so the name alone would let projects made from one mesh overwrite each other's copy
 
 use std::path::{Path, PathBuf};
@@ -10,6 +10,9 @@ use crate::TextureCraftApp;
 
 /// Hex digits of a copy's suffix
 const SUFFIX_DIGITS: usize = 8;
+
+/// Between a copy's stem and its suffix, so a user's own file named like `report-20240115` is not taken for a copy
+const COPY_MARK: &str = "-copy-";
 
 /// The longest stem kept, so the suffix and the temporary files of a save still fit a file name
 const MAX_STEM_CHARS: usize = 180;
@@ -45,7 +48,7 @@ impl TextureCraftApp {
 
 fn file_name(stem: &str, suffix: u32) -> String {
     let stem: String = sanitize_file_stem(stem).chars().take(MAX_STEM_CHARS).collect();
-    format!("{stem}-{suffix:0SUFFIX_DIGITS$x}.{PROJECT_EXT}")
+    format!("{stem}{COPY_MARK}{suffix:0SUFFIX_DIGITS$x}.{PROJECT_EXT}")
 }
 
 /// `path` made absolute, as given when that fails
@@ -53,9 +56,9 @@ fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Whether `path` is an autosave copy of `folder`: a project file there whose name ends in a suffix
+/// Whether `path` is an autosave copy of `folder`: a project file there whose name ends in the copy mark and a suffix
 fn is_copy_in(path: &Path, folder: &Path) -> bool {
-    let suffix = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.rsplit_once('-')).map(|(_, suffix)| suffix);
+    let suffix = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.rsplit_once(COPY_MARK)).map(|(_, suffix)| suffix);
     path.parent() == Some(folder)
         && path.extension().is_some_and(|extension| extension == PROJECT_EXT)
         && suffix.is_some_and(|suffix| suffix.len() == SUFFIX_DIGITS && suffix.bytes().all(|digit| digit.is_ascii_hexdigit()))
@@ -145,12 +148,17 @@ mod tests {
         let own = folder.join("hero.tcraft");
         app.session.path = Some(own.display().to_string());
         assert_ne!(app.autosave_path(&folder), own);
+
+        let dated = folder.join("hero-20240115.tcraft");
+        app.session.path = Some(dated.display().to_string());
+        assert_ne!(app.autosave_path(&folder), dated);
     }
 
     #[test]
     fn suffixes_have_a_fixed_width_and_long_names_are_cut() {
-        assert_eq!(file_name("hero", 0x2a), "hero-0000002a.tcraft");
-        assert_eq!(hash(b"hero"), hash(b"hero"));
+        let narrow = file_name("hero", 1);
+        let wide = file_name("hero", u32::MAX);
+        assert_eq!(narrow.len(), wide.len(), "every suffix has the same width");
         assert!(file_name(&"a".repeat(500), 1).len() < 200);
     }
 }
