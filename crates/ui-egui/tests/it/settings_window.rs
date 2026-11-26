@@ -87,7 +87,7 @@ fn the_general_page_starts_at_the_reference_defaults() {
     let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
     open_settings(&mut h);
 
-    // The defaults of a first start, in the window; the app itself keeps English for the exact-text checks
+    // Keep the app in English while the draft displays first-run defaults
     h.state_mut().ui.windows.settings_draft.as_mut().unwrap().prefs = Prefs::default();
     h.run_steps(3);
 
@@ -109,11 +109,34 @@ fn the_general_page_starts_at_the_reference_defaults() {
 
     let local_cache = h.get_by_role_and_label(Role::TextInput, "Local cache directory");
     assert!(!local_cache.accesskit_node().is_disabled(), "the local cache directory can be edited");
-    assert_eq!(texturecraft_ui_egui::local_cache_folder(&Prefs::default().local_cache_directory), std::env::temp_dir());
+    assert_ne!(texturecraft_ui_egui::local_cache_folder(&Prefs::default().local_cache_directory), std::env::temp_dir());
 
     let prefs = Prefs::default();
     assert_eq!(prefs.language, texturecraft_ui_egui::i18n::SYSTEM_LANGUAGE, "the default follows the system language");
     assert_eq!((prefs.rotation_speed, prefs.zoom_speed, prefs.wheel_speed), (2.0, 1.0, 1.0));
+}
+
+#[test]
+fn confirming_settings_keeps_a_texture_resolution_chosen_in_display_settings() {
+    let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
+    let old_display = h.state().session.doc.project.display.clone();
+    let ctx = h.ctx.clone();
+    menus::invoke(h.state_mut(), &ctx, "ui.view.display");
+    h.run_steps(4);
+
+    let by_width = |left: &egui_kittest::Node<'_>, right: &egui_kittest::Node<'_>| left.rect().width().total_cmp(&right.rect().width());
+    h.get_all_by_label("Render settings").max_by(by_width).unwrap().scroll_to_me();
+    h.run_steps(3);
+    h.get_all_by_label("Render settings").max_by(by_width).unwrap().click();
+    h.run_steps(10);
+    open_settings(&mut h);
+
+    click(&mut h, "Half");
+    assert_eq!(h.state().ui.prefs.viewport_texture, 1, "Display Settings applies the resolution immediately");
+    click(&mut h, "OK");
+
+    assert_eq!(h.state().ui.prefs.viewport_texture, 1, "Settings leaves the Display Settings choice in place");
+    assert_eq!(h.state().session.doc.project.display, old_display, "viewport resolution is an app preference");
 }
 
 #[test]
@@ -181,6 +204,7 @@ fn show_world_axes_draws_the_3d_view_axes_and_off_hides_them() {
     h.state_mut().ui.prefs.show_world_axes = true;
     h.run_steps(3);
     let shown = painted_z(&h);
+
     h.state_mut().ui.prefs.show_world_axes = false;
     h.run_steps(3);
     let hidden = painted_z(&h);
@@ -257,8 +281,11 @@ fn cancel_drops_the_changes_and_ok_applies_and_keeps_them() {
     h.get_by_role_and_label(Role::SpinButton, "Autosave every").set_value_accesskit(25.0);
     click(&mut h, "Show world axes");
     h.run_steps(2);
+
     assert_eq!(h.state().ui.prefs, before, "edits wait for OK");
+
     click(&mut h, "Cancel");
+
     assert!(!h.state().ui.windows.settings && h.state().ui.windows.settings_draft.is_none(), "Cancel closes the window");
     assert_eq!(h.state().ui.prefs, before, "Cancel drops the edits");
 
@@ -268,6 +295,7 @@ fn cancel_drops_the_changes_and_ok_applies_and_keeps_them() {
         Some(f64::from(before.autosave_minutes)),
         "a new window starts from the settings in use"
     );
+
     h.get_by_role_and_label(Role::SpinButton, "Autosave every").set_value_accesskit(25.0);
     h.get_by_role_and_label(Role::Slider, "Max CPU threads for work").set_value_accesskit(1.0);
     h.get_by_role_and_label(Role::SpinButton, "Max project size on open").set_value_accesskit(12.0);
@@ -544,15 +572,16 @@ fn the_libraries_page_hides_the_add_row_with_a_project_open_and_explains_the_def
 #[test]
 fn gpu_raytracing_is_on_and_checkable_with_a_gpu_and_off_and_disabled_without() {
     let with_gpu = !cfg!(target_arch = "wasm32");
-    assert_eq!(gpu_raytracing_check(Some("Some GPU"), true), (with_gpu, with_gpu), "a GPU keeps it on and checkable");
-    assert_eq!(gpu_raytracing_check(Some("Some GPU"), false), (with_gpu, false), "a GPU shows the stored choice");
-    assert_eq!(gpu_raytracing_check(None, true), (false, false), "without a GPU it is off and disabled");
+    assert_eq!(gpu_raytracing_check(true, true), (with_gpu, with_gpu), "supported hardware keeps it on and checkable");
+    assert_eq!(gpu_raytracing_check(true, false), (with_gpu, false), "supported hardware shows the stored choice");
+    assert_eq!(gpu_raytracing_check(false, true), (false, false), "without support it is off and disabled");
     assert!(texturecraft_ui_egui::settings_window::gpu_note_shown(None));
 
-    // The page follows the harness's own adapter, whichever it has
+    // The baker selects its own adapter independently of the window
     let mut h = harness(texturecraft_engine::sample_session(128, 32).unwrap());
     open_settings(&mut h);
-    let supported = h.state().render_state.is_some() && with_gpu;
+    let supported = texturecraft_render::gpu_bake::raytracing_available();
+
     let check = h.get_by_label("Enable GPU raytracing");
     assert_eq!(!check.accesskit_node().is_disabled(), supported, "it can be changed exactly when there is a GPU");
     assert_eq!(toggled(&h, "Enable GPU raytracing"), supported, "it is on exactly when there is a GPU");

@@ -59,7 +59,6 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     let mut pick = None;
     let project_open = app.session.project_open;
-    let gpu = app.render_state.as_ref().map(|render_state| render_state.adapter.get_info().name);
 
     // A language whose script no font draws is listed by its English name and disabled
     let drawable = LANGUAGES.each_ref().map(|l| crate::fonts::Script::of_language(l.code).is_none_or(|s| app.fonts.covers(s)));
@@ -80,16 +79,14 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             // Measure the footer through layout, then let the pages use only what remains
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                // Recheck after drawing the page as well, before accepting any edits
-                let conflict = crate::keymap::has_conflict(&app.settings_bindings);
                 ui.horizontal(|ui| {
-                    if conflict {
+                    if shortcut_conflict {
                         let danger = Tokens::get(ui.ctx()).danger;
                         ui.label(RichText::new(format!("{} {}", ic::WARNING, tr(SHORTCUT_ERRORS))).color(danger));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         cancel = ui.add(egui::Button::new(tr("Cancel")).min_size(vec2(100.0, 0.0))).clicked();
-                        ok = ui.add_enabled(!conflict, egui::Button::new(tr("OK")).min_size(vec2(100.0, 0.0))).clicked();
+                        ok = ui.add_enabled(!shortcut_conflict, egui::Button::new(tr("OK")).min_size(vec2(100.0, 0.0))).clicked();
                     });
                 });
                 ui.separator();
@@ -125,7 +122,6 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                                                 ui,
                                                 &mut draft.prefs,
                                                 &drawable,
-                                                gpu.as_deref(),
                                                 #[cfg(not(target_arch = "wasm32"))]
                                                 resources,
                                                 #[cfg(not(target_arch = "wasm32"))]
@@ -152,7 +148,8 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
             });
         });
 
-    ok &= !crate::keymap::has_conflict(&app.settings_bindings);
+    // The Shortcuts page can introduce a conflict after the footer was drawn
+    let ok = ok && !crate::keymap::has_conflict(&app.settings_bindings);
     app.ui.windows.settings_page = draft.page;
     if draft.page != SettingsPage::Shortcuts || ok || cancel || !open {
         crate::keymap::stop_settings_capture(ctx);
@@ -175,7 +172,8 @@ fn apply(app: &mut TextureCraftApp, draft: SettingsDraft) {
     let libraries_changed = draft.prefs.libraries != app.ui.prefs.libraries;
     let previous_autosave_minutes = app.ui.prefs.autosave_minutes;
 
-    app.ui.prefs = draft.prefs;
+    // Display Settings can change the texture resolution while this draft is open
+    app.ui.prefs = Prefs { viewport_texture: app.ui.prefs.viewport_texture, ..draft.prefs };
     app.ui.trim_recent();
     app.reschedule_autosave_if_changed(previous_autosave_minutes);
 
@@ -309,7 +307,8 @@ fn speed_slider(ui: &mut Ui, label: &str, value: &mut f32, width: f32) -> Respon
     .inner
 }
 
-/// Whether the Baking options say there is no GPU to trace rays on: no adapter, or the browser.
+/// Whether the platform or a missing adapter name rules out GPU baking.
+/// The Settings control also checks the bake adapter's compute capabilities.
 pub fn gpu_note_shown(adapter: Option<&str>) -> bool {
     adapter.is_none() || cfg!(target_arch = "wasm32")
 }
@@ -317,8 +316,8 @@ pub fn gpu_note_shown(adapter: Option<&str>) -> bool {
 /// The Enable GPU raytracing check box for the hardware and the stored choice: whether it can be
 /// changed and whether it shows ticked. Without a GPU to trace on it is off and disabled; the
 /// stored choice is kept for a machine that has one.
-pub fn gpu_raytracing_check(adapter: Option<&str>, stored: bool) -> (bool, bool) {
-    let supported = !gpu_note_shown(adapter);
+pub fn gpu_raytracing_check(adapter_supports_raytracing: bool, stored: bool) -> (bool, bool) {
+    let supported = adapter_supports_raytracing && !cfg!(target_arch = "wasm32");
     (supported, supported && stored)
 }
 
@@ -346,52 +345,51 @@ fn cores_in_total(ui: &mut Ui, cores: u32) {
 /// The General page.
 fn general(
     ui: &mut Ui,
-    p: &mut Prefs,
+    prefs: &mut Prefs,
     drawable: &[bool],
-    gpu: Option<&str>,
     #[cfg(not(target_arch = "wasm32"))] (available_cores, available_ram_bytes): (u32, u64),
     #[cfg(not(target_arch = "wasm32"))] pick: &mut Option<SettingsFolder>,
 ) {
     let tk = Tokens::get(ui.ctx());
     section(ui, n_("INTERFACE OPTIONS"));
     row(ui, tr("Language"), |ui, label| {
-        let selected = if p.language == SYSTEM_LANGUAGE {
+        let selected = if prefs.language == SYSTEM_LANGUAGE {
             tr("Default (System Language)")
         } else {
-            LANGUAGES.iter().find(|l| l.code == p.language).map_or(tr("Default (System Language)"), |l| l.name)
+            LANGUAGES.iter().find(|l| l.code == prefs.language).map_or(tr("Default (System Language)"), |l| l.name)
         };
         egui::ComboBox::from_id_salt("settings_language")
             .width(CONTROL_WIDTH)
             .height(320.0)
             .selected_text(selected)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut p.language, SYSTEM_LANGUAGE.to_owned(), tr("Default (System Language)"));
+                ui.selectable_value(&mut prefs.language, SYSTEM_LANGUAGE.to_owned(), tr("Default (System Language)"));
                 for (l, ok) in LANGUAGES.iter().zip(drawable).filter(|(l, _)| crate::i18n::available(l.code)) {
-                    let item = egui::Button::selectable(l.code == p.language, if *ok { l.name } else { l.english });
+                    let item = egui::Button::selectable(l.code == prefs.language, if *ok { l.name } else { l.english });
                     if ui.add_enabled(*ok, item).on_disabled_hover_text(tr("No font on this system can show this language")).clicked() {
-                        p.language = l.code.to_owned();
+                        prefs.language = l.code.to_owned();
                     }
                 }
             })
             .response
             .labelled_by(label);
     });
-    row(ui, tr("Show keyboard helper"), |ui, label| check(ui, label, &mut p.show_keyboard_helper));
-    row(ui, tr("Show world axes"), |ui, label| check(ui, label, &mut p.show_world_axes));
+    row(ui, tr("Show keyboard helper"), |ui, label| check(ui, label, &mut prefs.show_keyboard_helper));
+    row(ui, tr("Show world axes"), |ui, label| check(ui, label, &mut prefs.show_world_axes));
     row(ui, tr("Background color"), |ui, _| {
         for (index, side, name) in [(0, "top", "Top background"), (1, "bottom", "Bottom background")] {
             let id = format!("settings_background_{side}");
-            crate::widgets::color_swatch(ui, &id, &mut p.background[index], 38.0);
+            crate::widgets::color_swatch(ui, &id, &mut prefs.background[index], 38.0);
 
-            // The reference shows no tooltip here; the name is only for screen readers
+            // Give the eyedropper an accessible name without adding a tooltip
             let label = trf("Pick the {overlay} Color from the Screen", &[("overlay", &name)]);
-            crate::screen_color_pick::eyedropper_without_tooltip(ui, ui.make_persistent_id(&id), &mut p.background[index], &label, 18.0);
+            crate::screen_color_pick::eyedropper_without_tooltip(ui, ui.make_persistent_id(&id), &mut prefs.background[index], &label, 18.0);
             ui.add_space(10.0);
         }
     });
-    row(ui, tr("Only display the selected material when painting"), |ui, label| check(ui, label, &mut p.only_selected_material_when_painting));
+    row(ui, tr("Only display the selected material when painting"), |ui, label| check(ui, label, &mut prefs.only_selected_material_when_painting));
+    ui.small(tr("The keyboard helper and selected-material view preferences are saved for future use."));
     row(ui, tr("Viewport Scaling"), |ui, label| {
-        // Auto is the one scaling the views have
         egui::ComboBox::from_id_salt("settings_viewport_scaling")
             .width(CONTROL_WIDTH)
             .selected_text(tr("Auto"))
@@ -419,9 +417,11 @@ fn general(
     let speed_width = CONTROL_WIDTH + 12.0;
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        speed_slider(ui, tr("Rotation speed"), &mut p.rotation_speed, speed_width);
+        speed_slider(ui, tr("Rotation speed"), &mut prefs.rotation_speed, speed_width);
     });
-    for (label, speed, inverse) in [(tr("Zoom speed"), &mut p.zoom_speed, &mut p.zoom_inverse), (tr("Wheel speed"), &mut p.wheel_speed, &mut p.wheel_inverse)] {
+    for (label, speed, inverse) in
+        [(tr("Zoom speed"), &mut prefs.zoom_speed, &mut prefs.zoom_inverse), (tr("Wheel speed"), &mut prefs.wheel_speed, &mut prefs.wheel_inverse)]
+    {
         ui.horizontal(|ui| {
             ui.add_space(12.0);
             speed_slider(ui, label, speed, speed_width);
@@ -431,19 +431,25 @@ fn general(
     }
 
     section(ui, n_("BAKING OPTIONS"));
-    text_check(ui, n_("Save preprocessed scene files"), &mut p.save_preprocessed_scene_files);
-    text_check(ui, n_("Enable live preview baking process"), &mut p.live_preview_baking);
-    let (gpu_raytracing_enabled, mut gpu_raytracing_ticked) = gpu_raytracing_check(gpu, p.gpu_raytracing);
+    text_check(ui, n_("Save preprocessed scene files"), &mut prefs.save_preprocessed_scene_files);
+    ui.small(tr("The preprocessed scene file preference is saved for future use."));
+    text_check(ui, n_("Enable live preview baking process"), &mut prefs.live_preview_baking);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let gpu_bake_supported = texturecraft_render::gpu_bake::raytracing_available();
+    #[cfg(target_arch = "wasm32")]
+    let gpu_bake_supported = false;
+    let (gpu_raytracing_enabled, mut gpu_raytracing_ticked) = gpu_raytracing_check(gpu_bake_supported, prefs.gpu_raytracing);
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         let gpu_raytracing = ui
             .add_enabled(gpu_raytracing_enabled, egui::Checkbox::new(&mut gpu_raytracing_ticked, tr("Enable GPU raytracing")))
             .on_hover_text(tr("Bakes cast their rays on the graphics card when one is available. Off, they run on the CPU."));
         if gpu_raytracing.changed() {
-            p.gpu_raytracing = gpu_raytracing_ticked;
+            prefs.gpu_raytracing = gpu_raytracing_ticked;
         }
     });
-    if gpu_note_shown(gpu) {
+    if !gpu_raytracing_enabled {
         ui.horizontal(|ui| {
             ui.add_space(12.0);
             ui.label(RichText::new(tr(GPU_RAYTRACING_UNAVAILABLE)).color(tk.danger));
@@ -455,14 +461,14 @@ fn general(
         #[cfg(not(target_arch = "wasm32"))]
         {
             let default = crate::local_cache_folder("").display().to_string();
-            ui.add(egui::TextEdit::singleline(&mut p.local_cache_directory).hint_text(default).desired_width(CONTROL_WIDTH - 24.0)).labelled_by(label);
+            ui.add(egui::TextEdit::singleline(&mut prefs.local_cache_directory).hint_text(default).desired_width(CONTROL_WIDTH - 24.0)).labelled_by(label);
             let reset = ui.add(egui::Button::new("R").frame(false)).on_hover_text(tr("Reset to the default folder"));
 
             // Screen readers hear what the single letter does
             let name = format!("R, {}", tr("Reset to the default folder"));
             reset.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
             if reset.clicked() {
-                p.local_cache_directory.clear();
+                prefs.local_cache_directory.clear();
             }
         }
 
@@ -474,6 +480,10 @@ fn general(
             not_available(ui.add(egui::Button::new("R").frame(false)));
         });
     });
+
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.small(tr("The local cache directory is saved for future use."));
+
     row(ui, tr("Local cache budget (in MB)"), |ui, label| {
         let mut budget = 4000_u32;
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -499,8 +509,16 @@ fn general(
     });
     #[cfg(not(target_arch = "wasm32"))]
     row(ui, tr("Data folder"), |ui, label| {
+        // The launcher fixes the Nightly data folder before the app starts
+        if crate::has_data_root() {
+            ui.label(RichText::new(crate::data_dir().display().to_string()).small().color(tk.text_dim))
+                .labelled_by(label)
+                .on_hover_text(tr("TextureCraft Nightly keeps its data in its own profile."));
+            return;
+        }
+
         let default = crate::data_folder("").display().to_string();
-        ui.add(egui::TextEdit::singleline(&mut p.data_folder).hint_text(default).desired_width(CONTROL_WIDTH - 30.0))
+        ui.add(egui::TextEdit::singleline(&mut prefs.data_folder).hint_text(default).desired_width(CONTROL_WIDTH - 30.0))
             .labelled_by(label)
             .on_hover_text(tr("Applies on restart."));
         if ui.button("...").on_hover_text(tr("Choose the data folder")).clicked() {
@@ -511,38 +529,39 @@ fn general(
     section(ui, n_("SPARSE VIRTUAL TEXTURE"));
     disabled_text_check(ui, n_("Hardware support acceleration"), true);
 
-    // TextureCraft's own settings, after the reference sections
     section(ui, n_("RESOURCES"));
     #[cfg(not(target_arch = "wasm32"))]
     {
         row(ui, tr("Max CPU threads for work"), |ui, label| {
-            let mut threads = work_threads_shown(p.work_threads, available_cores);
+            let mut threads = work_threads_shown(prefs.work_threads, available_cores);
             let slider = ui
                 .add(egui::Slider::new(&mut threads, 1..=available_cores.max(1)).step_by(1.0))
                 .labelled_by(label)
                 .on_hover_text(tr("Threads that paint, bake and export. Applies on restart."));
             if slider.changed() {
-                p.work_threads = work_threads_stored(threads, available_cores);
+                prefs.work_threads = work_threads_stored(threads, available_cores);
             }
             cores_in_total(ui, available_cores);
         });
         row(ui, tr("Cores kept for the UI"), |ui, label| {
-            ui.add(egui::Slider::new(&mut p.reserved_cores, 0..=available_cores).step_by(1.0)).labelled_by(label);
+            ui.add(egui::Slider::new(&mut prefs.reserved_cores, 0..=available_cores).step_by(1.0)).labelled_by(label);
             cores_in_total(ui, available_cores);
         });
         row(ui, tr("Max RAM while saving"), |ui, label| {
-            ui.add(egui::Slider::new(&mut p.save_ram_percent, 0..=100).step_by(1.0).suffix(" %")).labelled_by(label).on_hover_text(tr("0 % uses at least 1 %"));
-            let budget_bytes = texturecraft_engine::formats::save_ram_budget(available_ram_bytes, p.save_ram_percent);
+            ui.add(egui::Slider::new(&mut prefs.save_ram_percent, 0..=100).step_by(1.0).suffix(" %"))
+                .labelled_by(label)
+                .on_hover_text(tr("0 % uses at least 1 %"));
+            let budget_bytes = texturecraft_engine::formats::save_ram_budget(available_ram_bytes, prefs.save_ram_percent);
             ui.label(format!("≈ {:.2} GiB", budget_bytes as f64 / (1_u64 << 30) as f64));
         });
     }
     row(ui, tr("Max project size on open"), |ui, label| {
-        ui.add(egui::DragValue::new(&mut p.project_open_limit_gib).range(1..=u32::MAX).suffix(" GiB"))
+        ui.add(egui::DragValue::new(&mut prefs.project_open_limit_gib).range(1..=u32::MAX).suffix(" GiB"))
             .labelled_by(label)
             .on_hover_text(tr("Maximum decompressed project data. Increase this limit to open larger projects."));
     });
     row(ui, tr("Recent projects limit"), |ui, label| {
-        ui.add(egui::DragValue::new(&mut p.recent_projects_limit).range(0..=MAX_RECENT_PROJECTS))
+        ui.add(egui::DragValue::new(&mut prefs.recent_projects_limit).range(0..=MAX_RECENT_PROJECTS))
             .labelled_by(label)
             .on_hover_text(tr("Number of recent projects to remember. 0 disables recent-project history."));
     });
@@ -551,7 +570,7 @@ fn general(
     {
         section(ui, n_("AUTOSAVE"));
         row(ui, tr("Autosave every"), |ui, label| {
-            ui.add(egui::DragValue::new(&mut p.autosave_minutes).range(0..=120).suffix(format!(" {}", tr("min")))).labelled_by(label);
+            ui.add(egui::DragValue::new(&mut prefs.autosave_minutes).range(0..=120).suffix(format!(" {}", tr("min")))).labelled_by(label);
         });
     }
 }

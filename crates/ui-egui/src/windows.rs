@@ -33,6 +33,7 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     unsaved(app, ctx);
     reset_ui(app, ctx);
     crate::named_layouts::show(app, ctx);
+    crate::generator_preview_window::show(app, ctx);
 }
 
 /// Window ▸ Reset UI asks first: Escape closes the question, Enter answers Reset.
@@ -40,7 +41,7 @@ pub(crate) fn reset_ui_keys(app: &mut TextureCraftApp, input: &mut egui::InputSt
     if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
         app.ui.windows.confirm_reset_ui = false;
     } else if nothing_focused && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
-        app.ui.adopt_layout(crate::UiState::default());
+        app.ui.reset_ui();
         app.ui.windows.confirm_reset_ui = false;
     }
 }
@@ -53,7 +54,7 @@ fn reset_ui(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let mut open = true;
     let (mut reset, mut cancel) = (false, false);
     dialog(ctx, "reset_ui", tr("Reset UI"), &mut open).show(ctx, |ui| {
-        ui.label(tr("Reset the panels, view layout, zoom and every other view setting to their defaults? Settings and shortcuts stay."));
+        ui.label(tr("Reset the panels, view settings and interface language to their defaults? Other preferences and shortcuts stay."));
         ui.add_space(8.0);
 
         // One row keeps the window to its contents; a bare right-to-left layout fills the screen height
@@ -66,7 +67,7 @@ fn reset_ui(app: &mut TextureCraftApp, ctx: &egui::Context) {
     });
 
     if reset {
-        app.ui.adopt_layout(crate::UiState::default());
+        app.ui.reset_ui();
     }
     if reset || cancel || !open {
         app.ui.windows.confirm_reset_ui = false;
@@ -307,10 +308,13 @@ fn export_mesh(app: &mut TextureCraftApp, ctx: &egui::Context) {
 fn about(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let tk = Tokens::get(ctx);
     let mut open = app.ui.windows.about;
-    dialog(ctx, "about", tr("About TextureCraft"), &mut open).show(ctx, |ui| {
+    let name = crate::os_window::name();
+    // A Nightly window names its channel in the title too; the stable title keeps its translations.
+    let title = if name == "TextureCraft" { tr("About TextureCraft").to_owned() } else { trf("About {app}", &[("app", &name)]) };
+    dialog(ctx, "about", &title, &mut open).show(ctx, |ui| {
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("TextureCraft").size(22.0).strong().color(tk.text_strong));
-            ui.label(trf("Version {version}", &[("version", &texturecraft_engine::VERSION)]));
+            ui.label(RichText::new(name).size(22.0).strong().color(tk.text_strong));
+            ui.label(trf("Version {version}", &[("version", &crate::os_window::display_version())]));
             ui.add_space(6.0);
             ui.label(tr("3D texture painting: layers, masks, smart materials, mesh map baking and export."));
             ui.label(tr("Free and open source (MIT OR Apache-2.0), written in Rust."));
@@ -538,17 +542,21 @@ pub(crate) fn import_materialx(app: &mut TextureCraftApp, path: &str) -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) -> bool {
     match id {
-        "file.open" | "project.sample" => {
-            let dialog = if id == "project.sample" {
-                FileDialog::open().title(tr("Open Sample Project")).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT])
-            } else {
-                FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS)
-            };
-            app.ask_file(dialog, Bound::App, |app, paths| {
-                if let Some(path) = paths.first() {
-                    open_path(app, &path.display().to_string());
+        "file.open" => {
+            let dialog = FileDialog::open().filter(tr("TextureCraft project or mesh"), crate::web_files::OPEN_EXTS);
+            app.ask_file(dialog, Bound::App, open_picked);
+            true
+        }
+        "project.sample" => {
+            let dialog = FileDialog::open().title(tr("Open Sample Project")).filter(tr("TextureCraft project"), &[texturecraft_engine::core::PROJECT_EXT]);
+            let dialog = match crate::sample_project::install(&app.samples_folder) {
+                Ok(()) => dialog.directory(app.samples_folder.clone()),
+                Err(error) => {
+                    app.toast(trf("Could not prepare the sample project: {error}", &[("error", &error)]), true);
+                    dialog
                 }
-            });
+            };
+            app.ask_file(dialog, Bound::App, open_picked);
             true
         }
         "file.save" if app.session.path.is_some() => {
@@ -625,6 +633,14 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             true
         }
         _ => false,
+    }
+}
+
+/// Opens the project or mesh a file dialog picked
+#[cfg(not(target_arch = "wasm32"))]
+fn open_picked(app: &mut TextureCraftApp, paths: Vec<std::path::PathBuf>) {
+    if let Some(path) = paths.first() {
+        open_path(app, &path.display().to_string());
     }
 }
 
@@ -731,7 +747,7 @@ mod tests {
         harness.state_mut().ui.windows.export = true;
         harness.run_steps(5);
         let footer = harness.get_by_role_and_label(egui::Role::Button, "Reset all").rect();
-        let first = harness.get_by_label("Export set 1");
+        let first = harness.get_by_role_and_label(egui::Role::Button, "Export set 1");
         first.hover();
         harness.run_steps(2);
 
@@ -743,7 +759,7 @@ mod tests {
             source: egui::MouseWheelSource::Wheel,
         });
         harness.run_steps(15);
-        let last = harness.get_by_label("Export set 39");
+        let last = harness.get_by_role_and_label(egui::Role::Button, "Export set 39");
         last.click();
         harness.run_steps(4);
 

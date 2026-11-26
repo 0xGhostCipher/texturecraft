@@ -121,6 +121,9 @@ pub struct Windows {
     /// Window ▸ Reset UI is waiting for its answer.
     #[serde(skip)]
     pub confirm_reset_ui: bool,
+    /// The generator effect whose preview is open enlarged in its own window
+    #[serde(skip)]
+    pub generator_preview: Option<u64>,
 }
 
 /// An action that replaces or ends the project, held while the project has unsaved changes.
@@ -167,8 +170,8 @@ pub struct Prefs {
     pub reserved_cores: u32,
     /// Maximum decompressed project size accepted on open, in GiB (at least one).
     pub project_open_limit_gib: u32,
-    /// Percent of the free RAM a project save may hold at once (desktop; 0 to 100, a save holds
-    /// at least 1).
+    /// Percentage of free RAM available to a project save on desktop (0 to 100).
+    /// A stored zero uses the minimum budget of 1%.
     pub save_ram_percent: u8,
     /// Worker threads for painting, baking and export (desktop; 0: one per logical CPU). Read at
     /// startup, before the first parallel job.
@@ -198,11 +201,10 @@ pub struct Prefs {
     /// Settings > Baking options > Save preprocessed scene files. Stored only: bakes keep no
     /// preprocessed scene files.
     pub save_preprocessed_scene_files: bool,
-    /// Settings > Baking options > Enable live preview baking process. Stored only: the live bake
-    /// preview always runs.
+    /// Settings > Baking options > Enable live preview baking process.
     pub live_preview_baking: bool,
-    /// Settings > Preview options > Local cache directory (desktop). Empty or relative: the
-    /// system's temporary folder. Stored only: TextureCraft writes no preview cache yet.
+    /// Settings > Preview options > Local cache directory (desktop). Empty or relative uses the
+    /// app's default cache directory. Stored only until TextureCraft has a preview cache.
     pub local_cache_directory: String,
 }
 
@@ -315,6 +317,9 @@ pub struct NewProject {
     /// Import settings > Import cameras: keep the cameras stored in the mesh file
     #[serde(default = "import_cameras_default")]
     pub import_cameras: bool,
+    /// Import settings > Rebuild mesh UVs.
+    #[serde(default)]
+    pub rebuild_uvs: bool,
     /// Color management as chosen in the window (the project is always created as Legacy)
     #[serde(skip)]
     pub color_management: crate::project_form::ColorManagement,
@@ -352,6 +357,7 @@ impl Default for NewProject {
             template: default_template(),
             normal_format: None,
             import_cameras: true,
+            rebuild_uvs: false,
             color_management: crate::project_form::ColorManagement::Legacy,
             baked_maps: Vec::new(),
         }
@@ -732,6 +738,12 @@ impl UiState {
         self.inactive_render_dock = self.dock_is_rendering.then(Dock::default);
         self.bake_layout_version = BAKE_LAYOUT_VERSION;
         self.rail_panel = None;
+    }
+
+    /// Reset the workspace and return the interface to the system language.
+    pub(crate) fn reset_ui(&mut self) {
+        self.adopt_layout(Self::default());
+        self.prefs.language.clear();
     }
 
     /// Take `layout`'s panels, windows and view settings, keeping this state's dialogs, settings, files and shelf query

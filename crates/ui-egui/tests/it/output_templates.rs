@@ -84,6 +84,9 @@ fn drop_on(h: &mut Harness<'_, TextureCraftApp>, source: SourceRef, at: egui::Po
 
 /// Right-click the Presets list's `label` (listed before the selected one's name in the middle)
 fn right_click(h: &mut Harness<'_, TextureCraftApp>, label: &str) {
+    // The list holds more templates than it shows
+    h.get_all_by_label(label).next().unwrap_or_else(|| panic!("no {label}")).scroll_to_me();
+    h.run_steps(4);
     h.get_all_by_label(label).next().unwrap_or_else(|| panic!("no {label}")).click_secondary();
     h.run_steps(4);
 }
