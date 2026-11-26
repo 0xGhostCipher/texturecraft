@@ -557,10 +557,11 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
         let modifiers = ui.input(|input| input.modifiers);
         click_layer(app, modifiers, layer.id.0, Some("content"));
 
-        if matches!(app.session.view, texturecraft_engine::ViewMode::Mask(_)) {
+        if !modifiers.alt && matches!(app.session.view, texturecraft_engine::ViewMode::Mask(_)) {
             app.run("viewport.view", json!({"mode": "material"}));
         }
     }
+
     thumbnail_context_menu(ui, &content_response, content_label, &layer.name, content_target, |ui| layer_context_menu(app, ui, layer, true));
 
     x = thumbnail.right() + THUMBNAIL_SPACING;

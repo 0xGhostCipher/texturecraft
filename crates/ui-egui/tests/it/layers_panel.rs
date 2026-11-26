@@ -472,11 +472,23 @@ fn alt_click_on_a_mask_thumbnail_shows_that_mask_alone_without_changing_the_docu
 
 #[test]
 fn alt_click_on_the_content_thumbnail_leaves_the_view_alone() {
-    let (mut h, _) = harness();
-    let at = thumb(&h, "Masked fill", false);
-    alt_click(&mut h, at);
+    let (mut h, layer) = harness();
+    let content_thumbnail = thumb(&h, "Masked fill", false);
+    let mask_thumbnail = thumb(&h, "Masked fill", true);
+
+    alt_click(&mut h, content_thumbnail);
 
     assert_eq!(h.state().session.view, texturecraft_engine::ViewMode::Material);
+
+    alt_click(&mut h, mask_thumbnail);
+
+    assert_eq!(h.state().session.view, texturecraft_engine::ViewMode::Mask(layer));
+    assert_eq!(h.state().session.target, StackTarget::Mask);
+
+    alt_click(&mut h, content_thumbnail);
+
+    assert_eq!(h.state().session.view, texturecraft_engine::ViewMode::Mask(layer));
+    assert_eq!(h.state().session.target, StackTarget::Content);
 }
 
 /// Whether a bypassed mask's strike is painted across the thumbnail at `position`
