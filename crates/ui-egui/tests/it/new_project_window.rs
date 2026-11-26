@@ -98,12 +98,21 @@ fn the_uv_layout_control_is_disabled_when_uv_tiles_are_off() {
 }
 
 #[test]
-fn rebuild_mesh_uvs_is_off_and_usable_by_default() {
-    let h = harness();
+fn rebuild_mesh_uvs_is_off_by_default_and_toggles_with_space() {
+    let mut h = harness();
     let rebuild = h.get_by_role_and_label(Role::CheckBox, "Rebuild mesh UVs");
 
     assert!(!rebuild.accesskit_node().is_disabled());
-    assert_ne!(rebuild.accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+    assert_eq!(rebuild.accesskit_node().toggled(), Some(egui::accesskit::Toggled::False));
+
+    rebuild.focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Space);
+    h.run_steps(2);
+
+    let rebuild = h.get_by_role_and_label(Role::CheckBox, "Rebuild mesh UVs");
+    assert_eq!(rebuild.accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+    assert!(h.state().ui.new_project.rebuild_uvs);
 }
 
 #[test]
@@ -264,17 +273,18 @@ fn the_supported_settings_reach_the_create_command() {
 
 #[test]
 fn ticking_uv_tiles_creates_a_uv_tile_project() {
-    for (tick, rebuild_uvs, expected) in [(false, false, vec![]), (true, false, vec![1002]), (true, true, vec![1001])] {
+    for (enable_uv_tiles, rebuild_uvs, expected_tiles) in [(false, false, vec![]), (true, false, vec![1002]), (true, true, vec![1001])] {
         let mut h = harness();
         let dir = TempDir::new("new-project-udim");
         h.state_mut().ui.new_project.file = Some(mesh_file(&dir, TILE_1002_QUAD));
         h.state_mut().ui.new_project.resolution = 128;
         h.run_steps(2);
-        if tick {
+        if enable_uv_tiles {
             h.get_by_role_and_label(Role::CheckBox, "Use UV Tile workflow").click();
             h.run_steps(3);
             assert!(!disabled(&h, Role::RadioButton, "Keep UV tiles together per material"));
         }
+
         if rebuild_uvs {
             h.get_by_role_and_label(Role::CheckBox, "Rebuild mesh UVs").click();
             h.run_steps(3);
@@ -287,7 +297,7 @@ fn ticking_uv_tiles_creates_a_uv_tile_project() {
         let app = h.state();
         assert!(!app.ui.windows.new_project, "the window closes");
         assert_eq!(app.session.doc.project.name, "tiles");
-        assert_eq!(app.session.doc.project.texture_sets[0].uv_tiles, expected, "UV tiles ticked: {tick}");
+        assert_eq!(app.session.doc.project.texture_sets[0].uv_tiles, expected_tiles, "UV tiles enabled: {enable_uv_tiles}, rebuild UVs: {rebuild_uvs}");
         assert_eq!(app.session.doc.project.texture_sets[0].resolution, 128);
         if rebuild_uvs {
             let bytes = texturecraft_engine::formats::save_project_bytes(&app.session.project_file()).unwrap();
@@ -341,7 +351,7 @@ fn create_asks_before_discarding_edits_made_after_the_form_opened() {
     h.get_by_role_and_label(Role::Button, "Create").click();
     h.run_steps(3);
 
-    assert!(h.query_by_label("Unsaved changes").is_some());
+    assert!(h.query_by_label("Unsaved Changes").is_some());
     assert_eq!(h.state().session.doc.project.name, "Open");
 
     h.get_by_role_and_label(Role::Button, "Don't save").click();

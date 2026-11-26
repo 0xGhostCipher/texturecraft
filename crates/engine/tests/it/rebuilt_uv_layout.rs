@@ -55,3 +55,14 @@ fn a_rebuilt_project_reopens_with_its_saved_uv_layout_not_a_new_unwrap() {
     assert_eq!(reimported_layout, locked, "reimporting the project's own mesh keeps the saved layout");
     assert_eq!(corner_uvs(&resaved.source_mesh()), locked, "saving again keeps the layout");
 }
+
+#[test]
+fn opening_a_builtin_project_refuses_rebuilt_mesh_uvs() {
+    let mut file = texturecraft_engine::formats::load_project_bytes(&locked_archive()).unwrap();
+    file.project.mesh = "builtin:plane".into();
+    file.mesh = None;
+
+    let error = Session::from_project_file(file).map(|_| ()).expect_err("a built-in mesh cannot use the stored layout");
+
+    assert!(error.to_string().contains("uv_layout.bin"), "{error}");
+}

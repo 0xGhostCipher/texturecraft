@@ -1,8 +1,8 @@
-//! `uv_layout.bin`: the UVs of a mesh whose layout was rebuilt on import, so reopening does not
-//! depend on the unwrapper of the running version. A header (magic `TCUV`, version, corner count;
-//! u32 LE each) is followed by `u`, `v` (f32 LE) for every triangle corner in index order.
+//! `uv_layout.bin` stores the generated UVs independently of the running unwrapper.
+//! After the magic `TCUV`, the header stores a version and a corner count as little-endian u32s.
+//! The body stores a little-endian f32 pair for each triangle corner in index order.
 
-use std::io::Write;
+use std::io::{Read, Write};
 
 use texturecraft_geom::MAX_TRIANGLES;
 use texturecraft_geom::glam::Vec2;
@@ -16,61 +16,84 @@ pub const UV_LAYOUT_ENTRY: &str = "uv_layout.bin";
 const UV_LAYOUT_MAGIC: &[u8; 4] = b"TCUV";
 const UV_LAYOUT_VERSION: u32 = 1;
 const HEADER_BYTES: usize = 12;
-const CORNER_BYTES: usize = 8;
+const COORDINATE_BYTES: usize = 4;
+const CORNER_BYTES: usize = 2 * COORDINATE_BYTES;
+const BATCH_CORNERS: usize = 1024;
+const MAX_LAYOUT_CORNERS: usize = MAX_TRIANGLES * 3;
 
 /// Largest entry a valid mesh can need: every corner of the most triangles accepted.
-pub const MAX_UV_LAYOUT_BYTES: u64 = (HEADER_BYTES + MAX_TRIANGLES * 3 * CORNER_BYTES) as u64;
+pub const MAX_UV_LAYOUT_BYTES: u64 = uv_layout_bytes(MAX_LAYOUT_CORNERS);
 
 /// Encoded size of a layout of `corners` UVs.
-pub fn uv_layout_bytes(corners: usize) -> u64 {
-    (HEADER_BYTES + corners * CORNER_BYTES) as u64
+pub const fn uv_layout_bytes(corners: usize) -> u64 {
+    HEADER_BYTES as u64 + corners as u64 * CORNER_BYTES as u64
 }
 
-pub fn write_uv_layout(w: &mut dyn Write, layout: &[Vec2]) -> std::io::Result<()> {
-    let corners = u32::try_from(layout.len()).map_err(|_| std::io::Error::other("the UV layout has too many corners"))?;
-    w.write_all(UV_LAYOUT_MAGIC)?;
-    w.write_all(&UV_LAYOUT_VERSION.to_le_bytes())?;
-    w.write_all(&corners.to_le_bytes())?;
-
-    let mut body = Vec::with_capacity(layout.len() * CORNER_BYTES);
-    for uv in layout {
-        body.extend_from_slice(&uv.x.to_le_bytes());
-        body.extend_from_slice(&uv.y.to_le_bytes());
+pub fn write_uv_layout(writer: &mut dyn Write, layout: &[Vec2]) -> std::io::Result<()> {
+    if layout.len() > MAX_LAYOUT_CORNERS {
+        return Err(std::io::Error::other("the UV layout has too many corners"));
     }
-    w.write_all(&body)
+
+    writer.write_all(UV_LAYOUT_MAGIC)?;
+    writer.write_all(&UV_LAYOUT_VERSION.to_le_bytes())?;
+    writer.write_all(&(layout.len() as u32).to_le_bytes())?;
+
+    let mut buffer = [[0; CORNER_BYTES]; BATCH_CORNERS];
+    for batch in layout.chunks(BATCH_CORNERS) {
+        let encoded = &mut buffer[..batch.len()];
+        for (corner, uv) in encoded.iter_mut().zip(batch) {
+            if !uv.is_finite() {
+                return Err(std::io::Error::other("the UV layout has non-finite UVs"));
+            }
+
+            corner.copy_from_slice([uv.x.to_le_bytes(), uv.y.to_le_bytes()].as_flattened());
+        }
+
+        writer.write_all(encoded.as_flattened())?;
+    }
+
+    Ok(())
 }
 
-/// Decode an entry; a wrong header, size or a non-finite UV is an error.
-pub fn read_uv_layout(bytes: &[u8]) -> Result<Vec<Vec2>> {
+/// Decode one entry while holding only the decoded layout and a fixed-size buffer.
+pub fn read_uv_layout(reader: &mut impl Read, entry_bytes: u64) -> Result<Vec<Vec2>> {
     let bad = |why: &str| malformed(KIND, format!("{UV_LAYOUT_ENTRY}: {why}"));
-    let Some((header, body)) = bytes.split_first_chunk::<HEADER_BYTES>() else { return Err(bad("truncated header")) };
-    let [magic, version, corners] = header.as_chunks::<4>().0 else { return Err(bad("truncated header")) };
-
-    if magic != UV_LAYOUT_MAGIC {
+    let mut header = [[0; COORDINATE_BYTES]; 3];
+    reader.read_exact(header.as_flattened_mut()).map_err(|error| malformed(KIND, format!("{UV_LAYOUT_ENTRY}: {error}")))?;
+    let [magic, version, corners] = header;
+    if magic != *UV_LAYOUT_MAGIC {
         return Err(bad("bad magic"));
     }
 
-    if u32::from_le_bytes(*version) != UV_LAYOUT_VERSION {
+    if u32::from_le_bytes(version) != UV_LAYOUT_VERSION {
         return Err(bad("unsupported version"));
     }
 
-    let corners = u32::from_le_bytes(*corners) as usize;
-    if corners.checked_mul(CORNER_BYTES) != Some(body.len()) {
+    let corners = u32::from_le_bytes(corners) as usize;
+    if corners > MAX_LAYOUT_CORNERS || uv_layout_bytes(corners) != entry_bytes {
         return Err(bad("the corner count does not match the entry size"));
     }
 
-    let layout: Vec<Vec2> = body
-        .as_chunks::<CORNER_BYTES>()
-        .0
-        .iter()
-        .map(|corner| {
-            let (u, v) = corner.split_at(4);
-            Vec2::new(f32::from_le_bytes(u.try_into().unwrap_or_default()), f32::from_le_bytes(v.try_into().unwrap_or_default()))
-        })
-        .collect();
-    if layout.iter().any(|uv| !uv.is_finite()) {
-        return Err(bad("non-finite UVs"));
+    let mut layout = Vec::with_capacity(corners);
+    let mut buffer = [[[0; COORDINATE_BYTES]; 2]; BATCH_CORNERS];
+    while layout.len() < corners {
+        let count = (corners - layout.len()).min(BATCH_CORNERS);
+        let encoded = &mut buffer[..count];
+        reader.read_exact(encoded.as_flattened_mut().as_flattened_mut()).map_err(|error| malformed(KIND, format!("{UV_LAYOUT_ENTRY}: {error}")))?;
+        for &[u, v] in encoded.iter() {
+            let uv = Vec2::new(f32::from_le_bytes(u), f32::from_le_bytes(v));
+            if !uv.is_finite() {
+                return Err(bad("non-finite UVs"));
+            }
+
+            layout.push(uv);
+        }
     }
 
-    Ok(layout)
+    // Read through the end of the ZIP entry so its checksum is checked
+    match reader.read_exact(&mut [0]) {
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(layout),
+        Err(error) => Err(malformed(KIND, format!("{UV_LAYOUT_ENTRY}: {error}"))),
+        Ok(()) => Err(bad("the corner count does not match the entry size")),
+    }
 }

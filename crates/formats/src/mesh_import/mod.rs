@@ -11,6 +11,7 @@ mod dae;
 mod external;
 mod fbx;
 mod gltf;
+mod mesh_uv_source;
 mod obj;
 mod ply;
 #[cfg(test)]
@@ -32,6 +33,7 @@ use crate::{FormatError, Result};
 #[cfg(not(target_arch = "wasm32"))]
 pub use external::read_mesh_file;
 pub use external::{MeshFile, self_contained_mesh};
+pub use mesh_uv_source::MeshUvSource;
 
 /// Mesh files larger than this are refused before reading.
 pub const MAX_MESH_FILE_BYTES: u64 = 2 << 30;
@@ -307,7 +309,14 @@ pub fn import_mesh_bytes_with_uvs(file_name: &str, bytes: &[u8], rebuild_uvs: bo
 /// instead of the file's UVs or the automatic unwrap, so the layout does not depend on the
 /// unwrapper of the running version.
 pub fn import_mesh_bytes_with_layout(file_name: &str, bytes: &[u8], corner_uvs: &[Vec2]) -> Result<ImportedMesh> {
-    finish_with_layout(read(file_name, bytes)?, false, Some(corner_uvs))
+    finish_with_layout(read(file_name, bytes)?, MeshUvSource::Saved(corner_uvs))
+}
+
+/// Read validated geometry for project open and mesh replacement, which keep the project's cameras
+/// and do not need the import dialog's UV coverage report.
+pub fn import_mesh_geometry(file_name: &str, bytes: &[u8], uv_source: MeshUvSource<'_>) -> Result<Mesh> {
+    let (mesh, _, _) = complete_mesh(read(file_name, bytes)?, uv_source)?;
+    Ok(mesh)
 }
 
 /// The UV of every triangle corner, in index order: a layout that [`import_mesh_bytes_with_layout`]
@@ -510,42 +519,50 @@ fn geometry(raw: RawMesh) -> Result<(Mesh, Vec<String>, Option<Vec<Vec2>>)> {
 
 /// Complete a raw mesh: submeshes, normals, UVs, tangents, validation and the report.
 pub(crate) fn finish(raw: RawMesh, rebuild_uvs: bool) -> Result<ImportedMesh> {
-    finish_with_layout(raw, rebuild_uvs, None)
+    finish_with_layout(raw, MeshUvSource::from_rebuild_setting(rebuild_uvs))
 }
 
-/// [`finish`] with an optional saved UV layout that replaces both the file's UVs and the unwrap.
-fn finish_with_layout(mut raw: RawMesh, rebuild_uvs: bool, saved_layout: Option<&[Vec2]>) -> Result<ImportedMesh> {
+fn finish_with_layout(mut raw: RawMesh, uv_source: MeshUvSource<'_>) -> Result<ImportedMesh> {
     let mut raw_cameras = std::mem::take(&mut raw.cameras);
     raw_cameras.truncate(MAX_CAMERAS);
-    let (mut mesh, mut warnings, uvs) = geometry(raw)?;
-    let uvs_generated = match (saved_layout, uvs) {
-        (Some(layout), _) => {
-            apply_corner_uvs(&mut mesh, layout)?;
-            true
-        }
-        (None, Some(uv)) if !rebuild_uvs && uv.len() == mesh.positions.len() => {
-            if uv.iter().any(|v| !v.is_finite()) {
-                warnings.push("non-finite UVs were replaced with 0".into());
-            }
-            mesh.uvs = uv.into_iter().map(|v| if v.is_finite() { v } else { Vec2::ZERO }).collect();
-            mesh.compute_tangents();
-            false
-        }
-        _ => {
-            let charts = auto_unwrap(&mut mesh, UNWRAP_PADDING, UNWRAP_RESOLUTION)?;
-            let reason = if rebuild_uvs { "rebuild UVs was selected" } else { "the mesh has no UVs" };
-            warnings.push(format!("{reason}; generated an automatic unwrap with {charts} charts"));
-            true
-        }
-    };
-    mesh.validate()?;
+    let (mesh, warnings, uvs_generated) = complete_mesh(raw, uv_source)?;
+
     let report = report(&mesh, uvs_generated, warnings);
     let cameras = orbit_cameras(&raw_cameras, &mesh);
     Ok(ImportedMesh { mesh, report, cameras })
 }
 
-/// Give every triangle corner its UV from `layout` (one per index), splitting vertices whose
-/// corners differ, the way the automatic unwrap splits them at chart borders.
+fn complete_mesh(raw: RawMesh, uv_source: MeshUvSource<'_>) -> Result<(Mesh, Vec<String>, bool)> {
+    let (mut mesh, mut warnings, uvs) = geometry(raw)?;
+    let uvs_generated = match (uv_source, uvs) {
+        (MeshUvSource::Saved(layout), authored_uvs) => {
+            drop(authored_uvs);
+            apply_corner_uvs(&mut mesh, layout)?;
+            true
+        }
+        (MeshUvSource::FromFile, Some(uv)) if uv.len() == mesh.positions.len() => {
+            if uv.iter().any(|v| !v.is_finite()) {
+                warnings.push("non-finite UVs were replaced with 0".into());
+            }
+
+            mesh.uvs = uv.into_iter().map(|v| if v.is_finite() { v } else { Vec2::ZERO }).collect();
+            mesh.compute_tangents();
+            false
+        }
+        (source, authored_uvs) => {
+            drop(authored_uvs);
+            let charts = auto_unwrap(&mut mesh, UNWRAP_PADDING, UNWRAP_RESOLUTION)?;
+            let reason = if matches!(source, MeshUvSource::Rebuild) { "rebuild UVs was selected" } else { "the mesh has no UVs" };
+            warnings.push(format!("{reason}; generated an automatic unwrap with {charts} charts"));
+            true
+        }
+    };
+
+    mesh.validate()?;
+    Ok((mesh, warnings, uvs_generated))
+}
+
+/// Give every triangle corner its UV from `layout`, keeping independently packed materials split.
 fn apply_corner_uvs(mesh: &mut Mesh, layout: &[Vec2]) -> Result<()> {
     if layout.len() != mesh.indices.len() {
         return Err(FormatError::Invalid(format!("the saved UV layout has {} corners but the mesh has {}", layout.len(), mesh.indices.len())));
@@ -555,29 +572,41 @@ fn apply_corner_uvs(mesh: &mut Mesh, layout: &[Vec2]) -> Result<()> {
         return Err(FormatError::Invalid("the saved UV layout has non-finite UVs".into()));
     }
 
-    let mut vertex_of: HashMap<(u32, [u32; 2]), u32> = HashMap::with_capacity(mesh.positions.len() * 2);
+    let mut remapped_vertices = HashMap::with_capacity((mesh.positions.len() * 2).min(layout.len()));
     let (mut positions, mut normals, mut uvs, mut colors) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut indices = Vec::with_capacity(mesh.indices.len());
-    for (&vertex, &uv) in mesh.indices.iter().zip(layout) {
-        let index = *vertex_of.entry((vertex, [uv.x.to_bits(), uv.y.to_bits()])).or_insert_with(|| {
-            let source = vertex as usize;
-            positions.push(mesh.positions.get(source).copied().unwrap_or_default());
-            normals.push(mesh.normals.get(source).copied().unwrap_or(Vec3::Y));
-            if let Some(color) = mesh.colors.get(source) {
-                colors.push(*color);
-            }
-            uvs.push(uv);
-            (positions.len() - 1) as u32
-        });
-        indices.push(index);
+
+    // Geometry supplies contiguous submesh ranges and validates their vertex indices
+    for submesh in &mesh.submeshes {
+        let start = submesh.start as usize;
+        let end = start + submesh.count as usize;
+        let material = submesh.material as u32;
+        for (&vertex, &uv) in mesh.indices[start..end].iter().zip(&layout[start..end]) {
+            let index = *remapped_vertices.entry((vertex, material, uv.to_array().map(f32::to_bits))).or_insert_with(|| {
+                let source = vertex as usize;
+                positions.push(mesh.positions[source]);
+                normals.push(mesh.normals[source]);
+                if let Some(color) = mesh.colors.get(source) {
+                    colors.push(*color);
+                }
+
+                uvs.push(uv);
+                (positions.len() - 1) as u32
+            });
+            indices.push(index);
+        }
     }
+
+    drop(remapped_vertices);
 
     mesh.positions = positions;
     mesh.normals = normals;
     mesh.uvs = uvs;
     mesh.colors = colors;
     mesh.indices = indices;
+
     mesh.compute_tangents();
+
     Ok(())
 }
 
