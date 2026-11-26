@@ -15,7 +15,7 @@ const SUFFIX_DIGITS: usize = 8;
 const COPY_MARK: &str = "-copy-";
 
 /// The longest stem kept, so the suffix and the temporary files of a save still fit a file name
-const MAX_STEM_CHARS: usize = 180;
+const MAX_STEM_CHARS: usize = 170;
 
 impl TextureCraftApp {
     /// The open project's autosave file in `folder`. A saved project's copy is named after its file and stays the
