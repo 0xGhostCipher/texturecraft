@@ -1837,6 +1837,24 @@ fn map_preview_bounds_the_longer_side_of_a_tall_atlas() {
 }
 
 #[test]
+fn a_map_preview_is_no_larger_than_the_maps_own_size() {
+    let fx = Fx::new(&default_channels());
+    let mut options = one_map(FileFormat::Png, 8, roughness());
+    let own = RES / 4;
+    options.maps.insert(0, MapOverride { size: Some(own), ..MapOverride::default() });
+    let file = decode(&fx.render(&options)[0]);
+
+    let preview = MapPreview::sample(&fx.input(), &options, 0, RES).unwrap().unwrap();
+
+    assert_eq!((preview.width, preview.height), file.dimensions(), "the preview shows the file at its own size");
+    options.size = Some(RES / 2);
+    options.maps.clear();
+    let export_sized = MapPreview::sample(&fx.input(), &options, 0, RES).unwrap().unwrap();
+
+    assert!(export_sized.width > preview.width && export_sized.width < RES, "the export size bounds a map without its own");
+}
+
+#[test]
 fn a_map_preview_holds_the_values_its_file_stores() {
     let mut fx = Fx::new(&default_channels());
     fx.set_all(Channel::Metallic, |x, _| [x as f32 / 63.0; 3]);

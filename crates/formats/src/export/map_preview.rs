@@ -50,11 +50,13 @@ impl MapPreview {
             return Err(FormatError::Invalid(format!("composite size {composite_width}×{height} does not match its coverage")));
         }
 
+        // The file's longer side bounds the preview: the map's own size, else the export size, else the set's
+        let tile_res = (composite_width / set.tile_grid().map_or(1, |grid| grid.cols.max(1))).max(1);
+        let file_side = |source| super::scale_export_side(source, tile_res, options.map_size(map));
         let source_side = composite_width.max(height);
-        let preview_side = side.clamp(1, MAX_PREVIEW_SIDE).min(source_side);
+        let preview_side = side.clamp(1, MAX_PREVIEW_SIDE).min(file_side(composite_width).max(file_side(height))).min(source_side);
         let width = super::scale_export_side(composite_width, source_side, Some(preview_side));
         let rows = super::scale_export_side(height, source_side, Some(preview_side));
-        let tile_res = (composite_width / set.tile_grid().map_or(1, |grid| grid.cols.max(1))).max(1);
         let sampler = Sampler::new(input, options, set, tile_res, uncovered);
         let mut channel_layout = layout(set, spec);
         let grayscale = file.format == FileFormat::Pgm;
