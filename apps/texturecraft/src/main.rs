@@ -395,7 +395,13 @@ fn main() {
     prefs.apply_work_threads();
     prefs.apply_resource_limits();
     let session = initial_session(&args);
-    let frame_decision = TitleBar::decide(prefs.system_title_bar);
+    // winit picks Wayland whenever `WAYLAND_DISPLAY` is set; a pen works only through Xwayland there
+    #[cfg(target_os = "linux")]
+    let pen_needs_x11 = xwayland_pen::opens_through_xwayland();
+    #[cfg(not(target_os = "linux"))]
+    let pen_needs_x11 = false;
+    let backend = if pen_needs_x11 { craft_host::target::Backend::X11 } else { craft_host::target::Backend::from_env() };
+    let frame_decision = TitleBar::decide(prefs.system_title_bar, backend);
     let title_bar = TitleBar::of(&frame_decision.frame);
     let mut viewport = egui::ViewportBuilder::default()
         .with_app_id(os_window::app_id())
@@ -407,9 +413,8 @@ fn main() {
     }
     let viewport = texturecraft_ui_egui::titlebar::viewport(&frame_decision, viewport);
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persistence_path, ..Default::default() };
-    // winit picks Wayland whenever `WAYLAND_DISPLAY` is set; a pen works only through Xwayland there
     #[cfg(target_os = "linux")]
-    if xwayland_pen::opens_through_xwayland() {
+    if pen_needs_x11 {
         use winit::platform::x11::EventLoopBuilderExtX11 as _;
         options.event_loop_builder = Some(Box::new(|builder| {
             builder.with_x11();
@@ -460,7 +465,7 @@ fn main() {
             if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, window_name) {
                 log::warn!("the app menu could not be installed: {e}");
             }
-            texturecraft_ui_egui::framework::install(&cc.egui_ctx, frame_decision)?;
+            texturecraft_ui_egui::framework::install(&cc.egui_ctx, frame_decision, backend)?;
             let frame_guard = window_frame::service(cc, matches!(title_bar, TitleBar::App(_)));
             let mut app = TextureCraftApp::new(cc, session);
             app.title_bar = title_bar;

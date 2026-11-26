@@ -5819,6 +5819,7 @@ dependencies = [
 name = "texturecraft"
 version = "0.6.1"
 dependencies = [
+ "craft-host",
  "craft-image-codecs",
  "craft-menu",
  "craft-update",

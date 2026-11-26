@@ -68,12 +68,12 @@ const NIGHTLY_ICONS: [(f32, &[u8]); 5] = [
 impl TitleBar {
     /// Decide who draws the title bar; call once at startup, before the window is created, and
     /// hand the decision to the window ([`viewport`]) and the runtime (`framework::install`).
-    /// `system` is Settings › Interface › System title bar.
-    pub fn decide(system: bool) -> Decision {
+    /// `system` is Settings › Interface › System title bar; `backend` is the one the window opens on.
+    pub fn decide(system: bool, backend: craft_host::target::Backend) -> Decision {
         let choice = craft_window::Choice::probe(PREFIX);
         let wanted = Self::from_choice(choice.frame(), choice.overridden(), system);
         let pref = if wanted == TitleBar::System { TitleBarPref::System } else { TitleBarPref::Integrated };
-        craft_window::policy::decide_for(PREFIX, craft_host::target::Backend::from_env(), pref)
+        craft_window::policy::decide_for(PREFIX, backend, pref)
     }
 
     /// The bar a decided `frame` gives.

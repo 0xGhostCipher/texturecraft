@@ -31,11 +31,13 @@ const X11_LIBRARIES: &[&str] =
     &["libX11.so.6", "libX11-xcb.so.1", "libxcb.so.1", "libXcursor.so.1", "libXi.so.6", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"];
 
 /// Whether the window opens through Xwayland: a pen is attached on a Wayland desktop and Xwayland
-/// can run the window. Says so on stderr when it does.
+/// can run the window (the X11 libraries are installed and the X server answers). Says so on
+/// stderr when it does.
 pub fn opens_through_xwayland() -> bool {
     let var = |name: &str| std::env::var(name).ok();
     let pen = || std::fs::read_to_string("/proc/bus/input/devices").is_ok_and(|devices| has_pen(&devices));
-    if !pen_needs_xwayland(var, pen, x11_libraries_available) {
+    let xwayland_ready = || x11_libraries_available() && var("DISPLAY").is_some_and(|display| x_server_answers(&display));
+    if !pen_needs_xwayland(var, pen, xwayland_ready) {
         return false;
     }
 
@@ -45,11 +47,29 @@ pub fn opens_through_xwayland() -> bool {
 
 /// [`opens_through_xwayland`]'s decision. winit picks Wayland when `WAYLAND_DISPLAY` or
 /// `WAYLAND_SOCKET` is set; Xwayland needs `DISPLAY`. The system probes run only on Wayland.
-fn pen_needs_xwayland(var: impl Fn(&str) -> Option<String>, pen: impl FnOnce() -> bool, x11_libraries: impl FnOnce() -> bool) -> bool {
+fn pen_needs_xwayland(var: impl Fn(&str) -> Option<String>, pen: impl FnOnce() -> bool, xwayland_ready: impl FnOnce() -> bool) -> bool {
     let set = |name: &str| var(name).is_some_and(|value| !value.is_empty());
     let wayland = set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET");
     let keeps_wayland = var(NATIVE_WAYLAND_VARIABLE).is_some_and(|value| !value.is_empty() && value != "0");
-    wayland && !keeps_wayland && set("DISPLAY") && pen() && x11_libraries()
+    wayland && !keeps_wayland && set("DISPLAY") && pen() && xwayland_ready()
+}
+
+/// Does the X server `display` names accept a connection? winit can't fall back to Wayland once
+/// X11 is chosen, so a `DISPLAY` left over from another session must keep the window on Wayland.
+/// Only a local display is tried, by its socket path or the abstract socket of the same name.
+fn x_server_answers(display: &str) -> bool {
+    use std::os::linux::net::SocketAddrExt as _;
+    use std::os::unix::net::{SocketAddr, UnixStream};
+
+    let Some(socket) = local_x_socket(display) else { return false };
+    UnixStream::connect(&socket).is_ok() || SocketAddr::from_abstract_name(socket.as_bytes()).and_then(|address| UnixStream::connect_addr(&address)).is_ok()
+}
+
+/// The socket of a local X display (`:0`, `:0.0`, `unix:0`); `None` for a remote one
+fn local_x_socket(display: &str) -> Option<String> {
+    let number = display.strip_prefix(':').or_else(|| display.strip_prefix("unix:"))?;
+    let number: u32 = number.split('.').next()?.parse().ok()?;
+    Some(format!("/tmp/.X11-unix/X{number}"))
 }
 
 /// Is a pen among the input devices `/proc/bus/input/devices` lists? A pen's `B: KEY=` bitmap has
@@ -141,10 +161,11 @@ mod tests {
 
         assert!(pen_needs_xwayland(env(WAYLAND), || true, || true));
         assert!(!pen_needs_xwayland(env(WAYLAND), || false, || true), "no pen");
-        assert!(!pen_needs_xwayland(env(WAYLAND), || true, || false), "no X11 libraries");
+        assert!(!pen_needs_xwayland(env(WAYLAND), || true, || false), "Xwayland can't run the window");
         assert!(!pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0")]), || true, || true), "no Xwayland");
         assert!(!pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0"), (NATIVE_WAYLAND_VARIABLE, "1")]), || true, || true), "kept");
         assert!(pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0"), (NATIVE_WAYLAND_VARIABLE, "0")]), || true, || true));
         assert!(!pen_needs_xwayland(env(&[("DISPLAY", ":0")]), || panic!("probed off Wayland"), || panic!("probed off Wayland")), "X11 already has the pen");
+        assert_eq!([":1.0", "unix:0", "remote:0"].map(local_x_socket), [Some("/tmp/.X11-unix/X1".into()), Some("/tmp/.X11-unix/X0".into()), None]);
     }
 }
