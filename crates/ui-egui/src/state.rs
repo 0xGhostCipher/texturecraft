@@ -735,6 +735,7 @@ impl UiState {
         }
 
         self.export = keep.export;
+        self.mesh_recompute_normals = keep.mesh_recompute_normals;
         self.recent = keep.recent;
         self.last_template = keep.last_template;
         self.prefs = keep.prefs;
@@ -869,7 +870,9 @@ mod tests {
         let mut ui = UiState { recent: vec!["a.tcraft".into()], ..UiState::default() };
         ui.export.preset = "Mine".into();
         ui.keymap.insert("file.save".into(), "F5".into());
+        ui.mesh_recompute_normals = false;
         let mut layout = UiState::default();
+        assert!(layout.mesh_recompute_normals);
         layout.dock.close(crate::docking::Panel::Assets);
 
         ui.adopt_layout(layout);
@@ -878,6 +881,7 @@ mod tests {
         assert_eq!(ui.recent, vec!["a.tcraft".to_string()]);
         assert_eq!(ui.export.preset, "Mine");
         assert_eq!(ui.keymap.get("file.save").map(String::as_str), Some("F5"));
+        assert!(!ui.mesh_recompute_normals, "a layout does not change the user's export setting");
     }
 
     #[test]
