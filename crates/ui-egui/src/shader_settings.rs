@@ -78,8 +78,7 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
 
     if display != app.session.doc.project.display {
         app.session.doc.project.display = display;
-        app.session.modified = true;
-        app.session.revision = app.session.revision.wrapping_add(1);
+        app.session.mark_modified();
     }
     if ior_specular != app.session.doc.project.display.ior_specular {
         app.run("display.set", serde_json::json!({"iorSpecular": ior_specular}));
