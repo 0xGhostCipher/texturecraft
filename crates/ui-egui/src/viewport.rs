@@ -2543,6 +2543,9 @@ mod tests {
         use egui_kittest::Harness;
         use egui_kittest::kittest::Queryable;
 
+        // App creation and frames both set the shared UI language
+        let _language_guard = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
         let session =
             Session::new_project("Texture set hover", texturecraft_engine::geom::primitives::material_ball(), "builtin:material_ball", None, 128).unwrap();
         let hovered_set = 1;

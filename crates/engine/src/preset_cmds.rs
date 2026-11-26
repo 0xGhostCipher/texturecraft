@@ -2,6 +2,8 @@
 //! dialog's Output templates tab list, read, save and remove. On the desktop the user presets
 //! are mirrored as `<name>.json` files in a library folder (see [`Session::load_export_presets`]).
 
+use std::collections::HashSet;
+
 use serde_json::{Value, json};
 use texturecraft_formats::export::{MAX_PRESET_NAME, sanitize_file_stem};
 use texturecraft_formats::{ExportPreset, builtin_preset, builtin_presets, preset_from_json};
@@ -67,13 +69,16 @@ impl UserPresets {
 
     /// The first available name, adding a numbered suffix and shortening the base to fit.
     fn unique_name(&self, name: &str, skip: Option<usize>) -> Option<String> {
+        // File keys also cover case-insensitive name matches
+        let file_keys: HashSet<_> = self.list.iter().enumerate().filter(|(index, _)| Some(*index) != skip).map(|(_, preset)| file_key(&preset.name)).collect();
+
         (1..=MAX_USER_PRESETS + 1)
             .map(|number| {
                 let suffix = if number == 1 { String::new() } else { format!(" {number}") };
                 let base: String = name.chars().take(MAX_PRESET_NAME.saturating_sub(suffix.len())).collect();
                 format!("{}{suffix}", base.trim_end())
             })
-            .find(|candidate| !self.taken(candidate, skip))
+            .find(|candidate| !file_keys.contains(&file_key(candidate)) && builtin_preset(candidate).is_none())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -293,6 +298,21 @@ mod tests {
 
         run(&mut session, "export.preset.save", json!({"preset": replacement, "unique": null, "rename": null})).unwrap();
         assert_eq!(run(&mut session, "export.preset.get", json!({"name": "Mine"})).unwrap(), replacement);
+    }
+
+    #[test]
+    fn unique_saves_skip_presets_with_colliding_file_stems() {
+        let mut session = Session::closed().unwrap();
+        for name in ["My Preset", "My_Preset_2"] {
+            run(&mut session, "export.preset.save", json!({"preset": preset(name)})).unwrap();
+        }
+
+        let saved = run(&mut session, "export.preset.save", json!({"preset": preset("My Preset"), "unique": true})).unwrap();
+
+        assert_eq!(saved["name"], "My Preset 3");
+        for name in ["My Preset", "My_Preset_2", "My Preset 3"] {
+            assert_eq!(session.export_preset(name).unwrap().name, name);
+        }
     }
 
     #[test]
