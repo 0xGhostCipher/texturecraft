@@ -44,10 +44,22 @@ mod filter_transform_rows;
 mod folder_properties;
 pub mod fonts;
 mod frame_gizmo;
+pub mod framework;
+mod generator_input_card;
+mod generator_input_slot;
+mod generator_kind_rows;
 mod generator_panel;
+mod generator_params;
+mod generator_point_pick;
+mod generator_preview_window;
+mod generator_section_rows;
+mod generator_slot;
+mod generator_wear_rows;
 pub mod gpu;
 mod gray_slider;
 mod grid_tile;
+#[cfg(not(target_arch = "wasm32"))]
+mod high_poly_job;
 mod histogram_cache;
 pub mod i18n;
 pub mod id_color_pick;
@@ -66,6 +78,8 @@ mod levels_properties;
 mod line_snap;
 mod list_action;
 pub mod log_panel;
+#[cfg(not(target_arch = "wasm32"))]
+mod manual_save;
 mod mask_fill_panel;
 mod mask_paint_panel;
 mod mask_preview_image;
@@ -91,6 +105,7 @@ pub mod orb_previews;
 mod orb_shape;
 /// The channel's OS identity (app id, window and app names) — see its module docs.
 pub mod os_window;
+mod pane_split;
 pub mod parity;
 mod past_end;
 mod path_hit;
@@ -128,6 +143,8 @@ mod resource_picker;
 mod resource_picker_item;
 mod round_gizmo;
 mod running_bake;
+#[cfg(not(target_arch = "wasm32"))]
+mod sample_project;
 pub mod saved_search;
 mod screen_color_pick;
 pub mod screen_pick;
@@ -144,6 +161,7 @@ pub mod shelf_preview;
 mod shelf_tabs;
 mod shelf_toolbar;
 pub mod shelf_view;
+mod shortcut_dispatch;
 mod slot_thumbnail;
 #[cfg(not(target_arch = "wasm32"))]
 mod smart_mask_menu;
@@ -184,6 +202,8 @@ use texturecraft_engine::bake::Progress;
 
 pub use bake_job::BakeJob;
 pub use control::ControlRequest;
+#[cfg(not(target_arch = "wasm32"))]
+pub use high_poly_job::HighPolyJob;
 pub use running_bake::RunningBake;
 pub use state::UiState;
 
@@ -237,12 +257,16 @@ pub struct Toast {
     pub error: bool,
     pub until: f64,
     pub show_log: bool,
+    announce: bool,
 }
 
 pub struct TextureCraftApp {
     pub session: Session,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) session_log_file: Option<session_log_file::SessionLogFile>,
+    /// The folder File > Open Sample Project starts in, under the data folder
+    #[cfg(not(target_arch = "wasm32"))]
+    pub samples_folder: std::path::PathBuf,
     viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds,
     /// A smooth move to a saved camera in progress.
     camera_glide: Option<CameraGlide>,
@@ -266,14 +290,27 @@ pub struct TextureCraftApp {
     /// The Import PBR textures dialog while it is open.
     pub pbr_import: Option<pbr_import::PbrDialog>,
     pub resize: Option<ResizeJob>,
+    /// High poly files being loaded for the bake
+    #[cfg(not(target_arch = "wasm32"))]
+    pub high_poly_job: Option<HighPolyJob>,
     pub link_cooks: Vec<LinkCook>,
     #[cfg(not(target_arch = "wasm32"))]
     link_imports: Vec<link_import::LinkImport>,
     pub thumbs: thumbs::Thumbs,
     /// The Layers panel's thumbnails and folded groups.
     pub layer_panel: layer_panel::LayerPanel,
+    /// The Mesh Map Bakers rows' thumbnails
+    pub(crate) bake_map_thumbnails: bake_mode::MapThumbnails,
+    /// The map preview: the selected map on the model while Mesh Map Settings shows it
+    pub(crate) live_preview: bake_mode::LivePreview,
     /// Last frame's viewport rect (logical points), for scripted input.
     pub viewport_rect: egui::Rect,
+    /// Project and texture-set index from the last completed UI pass.
+    hovered_texture_set: Option<(u64, usize)>,
+    /// The set under the pointer in this pass, independent of dock drawing order.
+    next_hovered_texture_set: Option<(u64, usize)>,
+    /// Project identity of the current inline rename buffer.
+    rename_project_id: u64,
     pub fps: f32,
     /// User smart materials found in the library folder (refreshed on demand).
     pub library: Option<Vec<std::path::PathBuf>>,
@@ -311,6 +348,16 @@ pub struct TextureCraftApp {
     pub banner: Option<&'static str>,
     /// Who draws the window's title bar (decided at startup, before the window opens).
     pub title_bar: titlebar::TitleBar,
+    /// The dock area's workspace and panel specs between passes.
+    pub(crate) docks: docking::LiveDock,
+    /// The framework dialogs (the update dialogs), run once per pass after TextureCraft's own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
+    /// Who TextureCraft is to the framework's dialogs.
+    pub(crate) framework_host: std::sync::Arc<craft_host::Host>,
+    /// The Copy, Cut and Paste the runtime took from a floating panel's window (`framework::clipboard_events`), for the
+    /// shortcuts of the next `logic`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fired_clipboard: Vec<egui::Event>,
     last_time: f64,
     /// When the next autosave is due (seconds of app time; desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -325,10 +372,19 @@ pub struct TextureCraftApp {
     /// Native file dialogs and their continuations (desktop only).
     #[cfg(not(target_arch = "wasm32"))]
     pub file_dialogs: file_dialogs::FileDialogs,
-    /// The unsaved-changes dialog's Save is waiting on the Save dialog's answer.
+    /// Project whose unsaved-changes dialog can still answer.
+    prompt_project_id: u64,
+    /// A manual save running on the desktop archive writer.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) save_job: Option<manual_save::SaveJob>,
+    /// The unsaved-changes dialog's Save is waiting for a path or a save result.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) saving_for_prompt: bool,
-    /// That Save dialog saved the project; the prompt goes on at its next frame.
+    /// A close the finished save left waiting for an open stroke, with the id of the project it
+    /// belongs to; decided once the stroke ends, dropped when another project replaced that one.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) quit_after_stroke: Option<u64>,
+    /// The requested save completed; the prompt goes on at its next frame.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) prompt_saved: bool,
     /// The resolved keymap and its key dispatcher.
@@ -344,11 +400,8 @@ pub(crate) fn start_ui(saved: Option<UiState>, session: &mut Session) -> UiState
             ui.tool_settings.apply(&mut session.tool);
             ui
         }
-        None => {
-            let mut ui = UiState::default();
-            ui.prefs.language = i18n::SYSTEM_LANGUAGE.into();
-            ui
-        }
+        // The default language follows the operating system
+        None => UiState::default(),
     }
 }
 
@@ -396,6 +449,8 @@ impl TextureCraftApp {
             session,
             #[cfg(not(target_arch = "wasm32"))]
             session_log_file: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            samples_folder: std::path::PathBuf::new(),
             viewport_mesh_bounds: viewport_mesh_bounds::ViewportMeshBounds::default(),
             ui,
             ui_store,
@@ -407,12 +462,19 @@ impl TextureCraftApp {
             bake_report: Default::default(),
             pbr_import: None,
             resize: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            high_poly_job: None,
             link_cooks: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             link_imports: Vec::new(),
             thumbs: thumbs::Thumbs::default(),
             layer_panel: layer_panel::LayerPanel::default(),
+            bake_map_thumbnails: bake_mode::MapThumbnails::default(),
+            live_preview: bake_mode::LivePreview::default(),
             viewport_rect: egui::Rect::NOTHING,
+            hovered_texture_set: None,
+            next_hovered_texture_set: None,
+            rename_project_id: project_id,
             fps: 0.0,
             ui_ms: 0.0,
             profiler: profile::Profiler::default(),
@@ -436,6 +498,11 @@ impl TextureCraftApp {
             fonts: fonts::UiFonts::default(),
             banner: None,
             title_bar: titlebar::TitleBar::default(),
+            docks: docking::LiveDock::default(),
+            framework_dialogs: craft_ui::dialog::DialogHost::new(),
+            framework_host: framework::host(),
+            #[cfg(not(target_arch = "wasm32"))]
+            fired_clipboard: Vec::new(),
             last_time: 0.0,
             next_autosave,
             styled: None,
@@ -444,8 +511,13 @@ impl TextureCraftApp {
             updates_rt: updates_ui::Runtime::default(),
             #[cfg(not(target_arch = "wasm32"))]
             file_dialogs: file_dialogs::FileDialogs::new(cc.egui_ctx.clone()),
+            prompt_project_id: project_id,
+            #[cfg(not(target_arch = "wasm32"))]
+            save_job: None,
             #[cfg(not(target_arch = "wasm32"))]
             saving_for_prompt: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            quit_after_stroke: None,
             #[cfg(not(target_arch = "wasm32"))]
             prompt_saved: false,
             bindings: keymap::Bindings::default(),
@@ -467,6 +539,7 @@ impl TextureCraftApp {
         {
             // The first window of the process fixes it; a new folder applies on restart
             let _ = DATA_FOLDER.set(data_folder(&app.ui.prefs.data_folder));
+            app.samples_folder = user_dir(sample_project::SAMPLES_FOLDER);
 
             if cc.winit_window().is_some() {
                 match session_log_file::SessionLogFile::start(&crate::data_dir().join("logs")) {
@@ -592,33 +665,42 @@ impl TextureCraftApp {
     }
 
     pub fn toast(&mut self, text: impl Into<String>, error: bool) {
-        self.toasts.push(Toast { text: text.into(), error, until: self.last_time + if error { 6.0 } else { 3.0 }, show_log: false });
+        self.toasts.push(Toast { text: text.into(), error, until: self.last_time + if error { 6.0 } else { 3.0 }, show_log: false, announce: false });
     }
 
     /// An error toast that stays until the user dismisses it (for a problem that persists and
     /// is reported once, like a texture set the GPU could not hold).
     pub fn toast_sticky(&mut self, text: impl Into<String>) {
-        self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false });
+        self.toasts.push(Toast { text: text.into(), error: true, until: f64::INFINITY, show_log: false, announce: false });
     }
 
-    /// Start baking texture sets in the background, one after another. Invalid set indices
-    /// show an error without starting a preview or queuing any work.
+    /// Bake texture sets in the background, one after another; invalid set indices show an error without starting anything
     pub fn start_bake(&mut self, sets: Vec<usize>) {
+        self.start_bake_of(sets, None);
+    }
+
+    /// Bake `sets`: only map `only` when given, else each set's checked maps
+    pub fn start_bake_of(&mut self, sets: Vec<usize>, only: Option<texturecraft_engine::core::BakedMap>) {
         if self.bake.is_some() || sets.is_empty() {
             return;
         }
 
-        // Restore the picker's view before the preview starts following baked maps
-        id_color_pick::IdColorPick::end(self);
+        let orders = match self.session.bake_preview_orders(&sets, only) {
+            Ok(orders) => orders,
+            Err(error) => {
+                self.toast(error.to_string(), true);
+                return;
+            }
+        };
 
-        if let Err(error) = self.session.bake_preview_begin_for(&sets) {
-            self.toast(error.to_string(), true);
-            return;
-        }
+        // Restore the previous view before the real bake takes it over
+        self.live_preview.release(&mut self.session);
+        id_color_pick::IdColorPick::end(self);
+        self.session.bake_preview_begin(orders);
 
         let total = sets.len();
         self.bake_report = bake_report::BakeReport::started(self.last_time);
-        self.bake = Some(BakeJob { queue: sets, current: None, total, mesh_id: self.session.mesh_id });
+        self.bake = Some(BakeJob { queue: sets, current: None, total, mesh_id: self.session.mesh_id, only });
     }
 
     /// Re-cook MaterialCraft material layer `layer` in the background. While one cook of the layer
@@ -715,8 +797,7 @@ impl TextureCraftApp {
         }
     }
 
-    /// Show at most one streamed map per frame, then apply the set as one undo step after
-    /// its map channel closes. Closing the preview alone does not stop the background bake.
+    /// Show at most one streamed map per frame, then apply the set as one undo step once its map channel closes; closing the preview alone does not stop the bake
     fn poll_bake(&mut self, ctx: &egui::Context) {
         // Leaving Bake mode puts the view mode back; the bake goes on
         if self.session.bake_preview_active() && self.ui.mode != state::Mode::Baking {
@@ -724,8 +805,10 @@ impl TextureCraftApp {
         }
 
         let Some(job) = self.bake.as_mut() else {
-            // A preview whose bake is gone must not keep the view
-            self.session.bake_preview_end();
+            // A preview whose bake is gone must not keep the view; the map preview keeps its own
+            if self.live_preview.shown().is_none() {
+                self.session.bake_preview_end();
+            }
             return;
         };
 
@@ -738,7 +821,7 @@ impl TextureCraftApp {
             return;
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        ctx.request_repaint_after(BAKE_POLL_INTERVAL);
         if let Some(running) = &job.current {
             let set_index = running.set_index;
 
@@ -789,8 +872,14 @@ impl TextureCraftApp {
         }
 
         let set_index = job.queue.remove(0);
+        let only = job.only;
+
         self.session.bake_preview_set_current(set_index);
-        match self.session.bake_task(set_index) {
+        let task = match only {
+            Some(map) => self.session.bake_task_only(set_index, map),
+            None => self.session.bake_task(set_index),
+        };
+        match task {
             Ok(task) => {
                 let progress = Arc::new(Progress::new());
                 let worker_progress = progress.clone();
@@ -801,7 +890,9 @@ impl TextureCraftApp {
                 let receiver = spawn_worker("texturecraft-bake", move || {
                     task.run_streaming(&worker_progress, &mut |map| {
                         worker_done.fetch_add(1, Ordering::Relaxed);
-                        let _ = sender.send(map);
+                        if sender.send(map).is_err() {
+                            worker_progress.cancel();
+                        }
                     })
                 });
 
@@ -960,6 +1051,10 @@ impl TextureCraftApp {
     /// and written on a worker thread; the project data is shared copy-on-write).
     #[cfg(not(target_arch = "wasm32"))]
     fn autosave(&mut self, now: f64) {
+        if self.save_job.is_some() {
+            return;
+        }
+
         let period = autosave_period_seconds(self.ui.prefs.autosave_minutes);
 
         // The clock starts at the first unsaved change
@@ -1017,9 +1112,12 @@ struct CameraGlide {
 
 const GLIDE_SECONDS: f64 = 0.35;
 
+/// How often a running bake is checked for finished maps: often enough that each shows within a few frames
+const BAKE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// The share of the running frame rate and frame time averages each frame keeps (an average over about ten frames)
 const FRAME_AVERAGE_KEEP: f32 = 0.9;
-/// The interface scale applied: wider than the Settings slider, so a scale set elsewhere still applies within reason
+/// The interface scale applied (`prefs.ui_scale`, set through `ui.set`; Settings has no control for it), clamped to a usable range
 const UI_SCALE_APPLIED: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 /// Zoom factors closer than this are the same zoom (float noise), so the zoom is not set again each frame
 const SAME_ZOOM_TOLERANCE: f32 = 1e-3;
@@ -1054,6 +1152,7 @@ impl TextureCraftApp {
 impl eframe::App for TextureCraftApp {
     /// A drag that holds the pointer reads the pointer's moves as moves of a pointer no screen edge stops
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.before_input(ctx);
         pointer_lock::rewrite(ctx, raw_input);
     }
 
@@ -1108,11 +1207,19 @@ impl eframe::App for TextureCraftApp {
             }
         }
         self.poll_bake(ctx);
+        self.bake_map_thumbnails.retain_mesh(self.session.mesh_id);
+        bake_mode::poll_live_preview(self, ctx);
         self.poll_resize(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_high_poly_job(ctx);
         self.poll_link_cooks(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_link_imports(ctx);
-        self.thumbs.sync_project_previews(&self.session);
+        if self.thumbs.sync_project_previews(&self.session) {
+            self.ui.windows.generator_preview = None;
+            generator_point_pick::set(ctx, None);
+        }
+
         self.properties_scroll.sync(&self.session);
 
         // The library shelf rescans when the window comes back (MaterialCraft may have sent a material)
@@ -1127,7 +1234,10 @@ impl eframe::App for TextureCraftApp {
             ctx.set_zoom_factor(scale);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        self.autosave(now);
+        {
+            self.poll_save(ctx);
+            self.autosave(now);
+        }
         i18n::set_language(&self.ui.prefs.language);
         #[cfg(target_arch = "wasm32")]
         {
@@ -1140,6 +1250,11 @@ impl eframe::App for TextureCraftApp {
 
         self.bindings.sync(&self.ui.keymap, craft_keymap::egui::platform(ctx));
         menus::shortcuts(self, ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let events = std::mem::take(&mut self.fired_clipboard);
+            menus::forwarded_shortcuts(self, ctx, events, egui::Modifiers::NONE);
+        }
         screen_pick::sync(self, ctx);
         move_on_model::end_when_gone(self, ctx);
 
@@ -1160,7 +1275,9 @@ impl eframe::App for TextureCraftApp {
         self.profiler.logic_ms = (now_ms() - logic_start_ms) as f32;
 
         // Last, so it sees every close request this frame's work made
-        windows::close_request(self, ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.resume_close_after_stroke(ctx);
+        self.close_path(ctx);
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
@@ -1187,9 +1304,29 @@ impl eframe::App for TextureCraftApp {
         let hide_ui = self.ui.hide_ui;
         let tokens = theme::Tokens::get(&ctx);
 
+        // Layer and effect IDs can repeat in a replacement project
+        if self.rename_project_id != self.session.project_id {
+            self.ui.rename = None;
+            self.rename_project_id = self.session.project_id;
+        }
+
         // The dock keeps the cards' gutter from the bars and rails around it
         let panel_frame = if hide_ui { egui::Frame::NONE.fill(tokens.viewport) } else { egui::Frame::NONE.fill(tokens.chrome).inner_margin(theme::GUTTER) };
-        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| if hide_ui { viewport::central(self, ui) } else { docking::show(self, ui) });
+        egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| {
+            if hide_ui {
+                viewport::central(self, ui);
+            } else {
+                docking::show(self, ui);
+            }
+        });
+        dock::finish_hidden_effect_rename(self);
+
+        let hovered_texture_set = self.next_hovered_texture_set.take();
+        if self.hovered_texture_set != hovered_texture_set {
+            self.hovered_texture_set = hovered_texture_set;
+            ctx.request_repaint();
+        }
+
         windows::show(self, &ctx);
 
         // Finish after the dock and windows have requested their thumbnails
@@ -1197,6 +1334,7 @@ impl eframe::App for TextureCraftApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
+        self.framework_dialogs.run(ui);
         toasts(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.file_dialogs.show_pending(frame);
@@ -1250,7 +1388,23 @@ pub fn data_folder(pref: &str) -> std::path::PathBuf {
     std::path::Path::new(&home).join("Documents").join("TextureCraft")
 }
 
-/// The data folder in use: the Nightly profile when this is one, else Settings › Folders › Data folder.
+/// An absolute preview cache override, or the app's default under the user's cache directory.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn local_cache_folder(pref: &str) -> std::path::PathBuf {
+    let chosen = std::path::Path::new(pref.trim());
+    if chosen.is_absolute() {
+        return chosen.to_path_buf();
+    }
+
+    let cache = if has_data_root() {
+        data_dir().join("cache")
+    } else {
+        craft_update::Paths::per_user(UPDATE_APP.id).map_or_else(|_| data_dir().join("cache"), |paths| paths.cache)
+    };
+    cache.join("previews")
+}
+
+/// The Nightly profile's data folder, or the folder chosen in Settings › Files.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir() -> std::path::PathBuf {
     if let Some(root) = DATA_ROOT.get() {
@@ -1259,7 +1413,7 @@ pub fn data_dir() -> std::path::PathBuf {
     DATA_FOLDER.get().cloned().unwrap_or_else(|| data_folder(""))
 }
 
-/// `<sub>` in the data folder in use (Settings › Folders › Data folder).
+/// `<sub>` in the data folder in use (Settings › Files › Data folder).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn user_dir(sub: &str) -> std::path::PathBuf {
     data_dir().join(sub)
@@ -1339,7 +1493,10 @@ fn toasts(app: &mut TextureCraftApp, ctx: &egui::Context) {
                         ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                             egui::ScrollArea::vertical().id_salt(("toast", i)).max_height(max_text_height).show(ui, |ui| {
                                 ui.set_max_width(width);
-                                ui.add(egui::Label::new(egui::RichText::new(&t.text).color(tk.text_strong)).wrap());
+                                let label = ui.add(egui::Label::new(egui::RichText::new(&t.text).color(tk.text_strong)).wrap());
+                                if t.announce {
+                                    ui.ctx().accesskit_node_builder(label.id, |node| node.set_live(egui::accesskit::Live::Polite));
+                                }
                             });
                             if t.show_log && ui.link(i18n::tr("Open Log")).clicked() {
                                 show_log = true;
