@@ -1875,7 +1875,7 @@ mod tests {
         use egui_kittest::Harness;
 
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
-        let mut harness = Harness::builder().build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let mut harness = Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
         let app = harness.state_mut();
         let ts = app.session.ts();
         let saved = app.session.export_preset("Unreal Engine (Packed)").unwrap();

@@ -3230,8 +3230,12 @@ fn export_window_snapshots() {
         set.name = format!("Set {}", session.doc.project.texture_sets.len() + 1);
         session.doc.project.texture_sets.push(set);
     }
-    let mut harness =
-        Harness::builder().with_size(egui::vec2(1112.0, 662.0)).with_pixels_per_point(2.0).wgpu().build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1112.0, 662.0))
+        .with_pixels_per_point(2.0)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .wgpu()
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.state_mut().ui.prefs.language = "en".into();
     harness.state_mut().ui.prefs.brightness = brightness;
     harness.set_render_cursor(false);
