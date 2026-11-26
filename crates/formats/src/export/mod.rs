@@ -895,9 +895,17 @@ fn plan_outputs(project: &Project, ts: usize, mesh_name: &str, opts: &ExportOpti
             FormatError::Invalid(reason) | FormatError::TooLarge(reason) => reason,
             other => other.to_string(),
         };
-        first.warnings.push(format!("\"{name}\" was not written: {reason}"));
+        first.warnings.push(format!("\"{name}\" {PSD_NOT_WRITTEN}{reason}"));
     }
     Ok(out)
+}
+
+/// What a set's PSD planning failure says after the file name
+const PSD_NOT_WRITTEN: &str = "was not written: ";
+
+/// Whether `warning` is about a PSD of the set that was not planned rather than the file carrying it, so it outlives that file
+pub fn is_set_warning(warning: &str) -> bool {
+    warning.split_once(".psd\" ").is_some_and(|(name, rest)| name.starts_with('"') && rest.starts_with(PSD_NOT_WRITTEN))
 }
 
 /// `stem.ext`, or `stem_2.ext`… when an earlier file has the name ignoring case (as Windows and macOS file systems do): the name and the suffix added
@@ -1764,11 +1772,14 @@ fn keep_first_names<T>(files: impl IntoIterator<Item = T>, name: impl Fn(&T) -> 
     let files = files.into_iter();
     let mut first = HashMap::new();
     let mut kept = Vec::with_capacity(files.size_hint().0);
-    for file in files {
-        let filename = name(&file);
+    for mut file in files {
+        let filename = name(&file).to_owned();
         match first.entry(filename.to_ascii_lowercase()) {
             Entry::Occupied(previous) => {
+                // The later file's set warnings stay with the export
+                let moved: Vec<_> = warnings(&mut file).extract_if(.., |warning| is_set_warning(warning)).collect();
                 if let Some(winner) = kept.get_mut(*previous.get()) {
+                    warnings(winner).extend(moved);
                     warnings(winner).push(format!(
                         "\"{}\" of a later texture set has the name of a file an earlier texture set exports, so it was not written; add $textureSet to the template's file names or rename a texture set",
                         filename

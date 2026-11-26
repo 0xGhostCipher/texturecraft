@@ -967,8 +967,20 @@ fn reserve_export_names(
     let mut blocked_maps = HashSet::new();
     plans.retain(|plan| {
         let name = plan.name.to_ascii_lowercase();
-        if reserved_patterns.iter().any(|pattern| udim_matches(pattern, &name)) {
-            blocked_maps.extend(plan.maps());
+        let reserved = reserved_patterns.iter().any(|pattern| udim_matches(pattern, &name));
+        if !reserved && let Entry::Vacant(entry) = taken_names.entry(name) {
+            entry.insert(Some(set_index));
+            return true;
+        }
+
+        // A set warning outlives the file that carried it
+        for warning in plan.warnings.iter().filter(|warning| texturecraft_formats::export::is_set_warning(warning)) {
+            if !warnings.contains(warning) {
+                warnings.push(warning.clone());
+            }
+        }
+        blocked_maps.extend(plan.maps());
+        if reserved {
             warnings.push(format!(
                 "\"{}\" was not written: an earlier MaterialX document uses that UDIM pattern. Rename a texture set or change the template file names",
                 plan.name
@@ -976,12 +988,6 @@ fn reserve_export_names(
             return false;
         }
 
-        if let Entry::Vacant(entry) = taken_names.entry(name) {
-            entry.insert(Some(set_index));
-            return true;
-        }
-
-        blocked_maps.extend(plan.maps());
         if fallback {
             warnings.push(format!(
                 "MaterialX: \"{}\" was not written: a file of the chosen template or of an earlier command of this export has the name. Rename a texture set or change the template file names",

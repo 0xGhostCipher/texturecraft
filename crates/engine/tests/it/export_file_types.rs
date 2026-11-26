@@ -116,3 +116,26 @@ fn a_shaders_json_named_like_an_earlier_commands_folder_is_a_warning() {
 
     assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("already used by a texture file or folder"))), "{result}");
 }
+
+#[test]
+fn a_psd_warning_outlives_a_reserved_file_that_carried_it() {
+    let mut session = texturecraft_engine::sample_session(128, 32).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let roughness = json!([["L", {"Channel": {"channel": "Roughness"}}]]);
+    let colour = json!([["R", {"Channel": {"channel": "BaseColor"}}], ["G", {"Channel": {"channel": "BaseColor", "component": 1}}], ["B", {"Channel": {"channel": "BaseColor", "component": 2}}], ["A", {"Constant": 0.5}]]);
+    let preset = json!({"name": "Two and a PSD", "maps": [
+        {"file": "first", "format": "Png", "bit_depth": 8, "channels": roughness},
+        {"file": "second", "format": "Png", "bit_depth": 8, "channels": roughness},
+        {"file": "layered", "format": "Psd", "bit_depth": 16, "channels": colour},
+    ]});
+    let params = |reserved: Vec<String>| json!({"dir": dir.path().display().to_string(), "ts": 0, "preset": preset, "maps": [{"map": 2, "size": 16384}], "reservedNames": reserved});
+    let plan = execute(&mut session, "export.plan", &params(Vec::new())).unwrap();
+    let first = plan[0]["file"].as_str().unwrap().to_owned();
+    let second = plan[1]["file"].as_str().unwrap().to_owned();
+
+    let result = execute(&mut session, "file.exportTextures", &params(vec![first.clone()])).unwrap();
+
+    let warnings = result["warnings"].as_array().unwrap();
+    assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains(".psd\" was not written"))), "{result}");
+    assert!(dir.path().join(&second).exists() && !dir.path().join(&first).exists(), "{result}");
+}
