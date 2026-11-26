@@ -123,19 +123,25 @@ fn a_psd_warning_outlives_a_reserved_file_that_carried_it() {
     let dir = tempfile::tempdir().unwrap();
     let roughness = json!([["L", {"Channel": {"channel": "Roughness"}}]]);
     let colour = json!([["R", {"Channel": {"channel": "BaseColor"}}], ["G", {"Channel": {"channel": "BaseColor", "component": 1}}], ["B", {"Channel": {"channel": "BaseColor", "component": 2}}], ["A", {"Constant": 0.5}]]);
-    let preset = json!({"name": "Two and a PSD", "maps": [
+    let mut preset = json!({"name": "Two and a PSD", "maps": [
         {"file": "first", "format": "Png", "bit_depth": 8, "channels": roughness},
         {"file": "second", "format": "Png", "bit_depth": 8, "channels": roughness},
-        {"file": "layered", "format": "Psd", "bit_depth": 16, "channels": colour},
     ]});
-    let params = |reserved: Vec<String>| json!({"dir": dir.path().display().to_string(), "ts": 0, "preset": preset, "maps": [{"map": 2, "size": 16384}], "reservedNames": reserved});
+    // Four 16-bit RGBA layers at 8192 pixels and the merged image pass the 2 GiB PSD limit
+    for layer in 0..4 {
+        preset["maps"].as_array_mut().unwrap().push(json!({"file": format!("layer{layer}"), "format": "Psd", "bit_depth": 16, "channels": colour}));
+    }
+    let sizes: Vec<_> = (2..6).map(|map| json!({"map": map, "size": 8192})).collect();
+    let params = |reserved: Vec<String>| json!({"dir": dir.path().display().to_string(), "ts": 0, "preset": preset, "maps": sizes, "reservedNames": reserved});
     let plan = execute(&mut session, "export.plan", &params(Vec::new())).unwrap();
     let first = plan[0]["file"].as_str().unwrap().to_owned();
     let second = plan[1]["file"].as_str().unwrap().to_owned();
+    let psd_warning =
+        |warnings: &serde_json::Value| warnings.as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.contains(".psd\" was not written")));
+    assert!(plan.as_array().unwrap().len() == 2 && psd_warning(&plan[0]["warnings"]), "{plan}");
 
     let result = execute(&mut session, "file.exportTextures", &params(vec![first.clone()])).unwrap();
 
-    let warnings = result["warnings"].as_array().unwrap();
-    assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains(".psd\" was not written"))), "{result}");
+    assert!(psd_warning(&result["warnings"]), "{result}");
     assert!(dir.path().join(&second).exists() && !dir.path().join(&first).exists(), "{result}");
 }
