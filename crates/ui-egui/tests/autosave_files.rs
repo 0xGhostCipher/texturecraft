@@ -34,7 +34,10 @@ fn copies(folder: &Path) -> Vec<PathBuf> {
 
 /// Runs an app on `session` until the autosave folder holds `count` copies
 fn autosave(session: Session, folder: &Path, count: usize) -> Harness<'static, TextureCraftApp> {
-    let mut harness = Harness::builder().with_step_dt(FRAME_SECONDS).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_step_dt(FRAME_SECONDS)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     let started = Instant::now();
     while copies(folder).len() < count {
         harness.step();
