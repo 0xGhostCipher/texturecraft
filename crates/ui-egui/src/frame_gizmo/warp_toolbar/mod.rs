@@ -253,7 +253,10 @@ mod tests {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mesh = texturecraft_engine::geom::primitives::material_ball();
         let session = texturecraft_engine::Session::new_project("Warp placement", mesh, "builtin:material_ball", None, 128).unwrap();
-        let mut harness = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let mut harness = Harness::builder()
+            .with_size(vec2(1600.0, 960.0))
+            .with_context_setup(crate::framework::install_headless)
+            .build_eframe(|context| TextureCraftApp::new(context, session));
         let layer = harness.state_mut().run("layer.add.fill", json!({})).unwrap()["layer"].as_u64().unwrap();
         harness.state_mut().run("layer.fill.projection", json!({"layer": layer, "projection": "warp"})).unwrap();
         harness.run_steps(2);
