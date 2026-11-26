@@ -56,10 +56,15 @@ fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// `path` with links and, on Windows, the verbatim prefix resolved so two spellings of one folder compare equal; made absolute when that fails
+fn resolved(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| absolute(path))
+}
+
 /// Whether `path` is an autosave copy of `folder`: a project file there whose name ends in the copy mark and a suffix
 fn is_copy_in(path: &Path, folder: &Path) -> bool {
     let suffix = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.rsplit_once(COPY_MARK)).map(|(_, suffix)| suffix);
-    path.parent() == Some(folder)
+    path.parent().is_some_and(|parent| resolved(parent) == resolved(folder))
         && path.extension().is_some_and(|extension| extension == PROJECT_EXT)
         && suffix.is_some_and(|suffix| suffix.len() == SUFFIX_DIGITS && suffix.bytes().all(|digit| digit.is_ascii_hexdigit()))
 }
