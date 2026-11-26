@@ -278,3 +278,22 @@ fn a_map_picks_its_own_size_and_the_export_writes_it_at_that_size() {
         assert_eq!(image::image_dimensions(&path).unwrap(), (side, side), "{}", path.display());
     }
 }
+
+#[test]
+fn rows_with_a_one_depth_file_type_each_have_their_own_bit_depth_list() {
+    let mut h = harness();
+    let rows: Vec<usize> = plan(&mut h).iter().take(2).map(|file| file["map"].as_u64().unwrap() as usize).collect();
+    let template = h.state().ui.export.preset.clone();
+    let mut o = SetExport { maps_template: template, ..SetExport::default() };
+    for map in &rows {
+        o.maps.insert(*map, MapExport { enabled: true, file_type: Some(FileType { format: "bmp".into(), bit_depth: 8, dithering: false }), size: None });
+    }
+    h.state_mut().ui.export.sets.insert(0, o);
+    h.run_steps(4);
+
+    let greyed: Vec<_> = h.get_all_by_role_and_label(egui::Role::ComboBox, "Bit depth").map(|node| node.accesskit_node().id()).collect();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(greyed.len(), 2, "each row's greyed bit depth list is its own node");
+    assert_ne!(greyed[0], greyed[1]);
+}

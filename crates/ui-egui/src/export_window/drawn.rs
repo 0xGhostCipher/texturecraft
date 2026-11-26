@@ -235,10 +235,10 @@ pub(crate) fn field_button(ui: &mut Ui, rect: Rect, id: Id, text: &str) -> Respo
     response
 }
 
-/// A dropdown that cannot be used: a step lighter than the others, its value and chevron dim
-pub(crate) fn disabled_combo(ui: &mut Ui, rect: Rect, shown: &str, name: &str) -> Response {
+/// A dropdown that cannot be used: a step lighter than the others, its value and chevron dim; `id` tells it from the rows' other ones
+pub(crate) fn disabled_combo(ui: &mut Ui, rect: Rect, id: impl std::hash::Hash + std::fmt::Debug, shown: &str, name: &str) -> Response {
     let look = ExportLook::get(ui.ctx());
-    let response = ui.interact(rect, ui.scope_id().with(("export_disabled_combo", name)), Sense::hover());
+    let response = ui.interact(rect, ui.scope_id().with(("export_disabled_combo", id)), Sense::hover());
     response.widget_info(|| {
         let mut info = WidgetInfo::labeled(Role::ComboBox, false, name);
         info.current_text_value = Some(shown.to_owned());

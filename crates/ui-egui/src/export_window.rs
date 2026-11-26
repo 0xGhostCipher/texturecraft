@@ -298,7 +298,7 @@ fn file_type_lists(
     let options = parsed.map(depth_options).unwrap_or_default();
     let shown = if parsed.is_some() { depth_label(parsed, *bit_depth, *dithering) } else { String::new() };
     if options.len() < 2 {
-        drawn::disabled_combo(ui, rects[1], &shown, tr("Bit depth"));
+        drawn::disabled_combo(ui, rects[1], ("bits", id), &shown, tr("Bit depth"));
         return;
     }
 
