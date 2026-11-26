@@ -162,6 +162,11 @@ pub fn handle(app: &mut TextureCraftApp, ctx: &egui::Context, method: &str, para
                         app.thumbs.forget_saved_files();
                     }
 
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if id == "file.open" {
+                        app.detach_autosave_copy();
+                    }
+
                     // Work from the old project must not reach its replacement
                     if matches!(id, "file.open" | "file.new" | "file.close" | "project.new" | "project.sample") {
                         app.resize = None;

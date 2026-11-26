@@ -555,6 +555,9 @@ impl TextureCraftApp {
                 }
             }
 
+            // A copy named on the command line is already open
+            app.detach_autosave_copy();
+
             // An export folder still at the default follows the data folder
             if app.ui.export.dir == data_folder("").join("export").display().to_string() {
                 app.ui.export.dir = user_dir("export").display().to_string();
@@ -602,6 +605,11 @@ impl TextureCraftApp {
             Ok(value) => {
                 if matches!(id, "brush.preset.store" | "brush.preset.rename" | "brush.preset.delete") {
                     self.thumbs.forget_saved_files();
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
+                if id == "file.open" {
+                    self.detach_autosave_copy();
                 }
 
                 // Pending work and thumbnail snapshots belong to the old project

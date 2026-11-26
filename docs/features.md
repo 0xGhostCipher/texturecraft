@@ -281,7 +281,7 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   the default). Nightly shows its fixed profile path in the same row.
 - **Autosave**: each project keeps its own copy in the data folder's `autosave`, named
   `<name>-copy-<suffix>.tcraft` after its saved file (or, until it is saved, the project), so projects made from
-  one mesh never overwrite each other's copy.
+  one mesh never overwrite each other's copy. A copy opens as an unsaved project, so Save asks for a new file.
 - A **Settings window** (Edit › Settings) with General, Shortcuts and Libraries pages; changes
   apply on OK and Cancel drops them. General holds the language (or the system's), the 3D view's
   rotation, zoom and wheel speeds with inverse directions, GPU or CPU bake rays, resource limits

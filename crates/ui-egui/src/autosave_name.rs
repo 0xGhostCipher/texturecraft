@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use texturecraft_engine::core::PROJECT_EXT;
 use texturecraft_engine::formats::export::sanitize_file_stem;
 
-use crate::TextureCraftApp;
+use crate::{TextureCraftApp, user_dir};
 
 /// Hex digits of a copy's suffix
 const SUFFIX_DIGITS: usize = 16;
@@ -18,6 +18,16 @@ const COPY_MARK: &str = "-copy-";
 const MAX_STEM_CHARS: usize = 170;
 
 impl TextureCraftApp {
+    /// A project just opened from an autosave copy becomes an unsaved one: the project the copy came from
+    /// autosaves there again, so work saved into it would be lost
+    pub(crate) fn detach_autosave_copy(&mut self) {
+        let folder = absolute(&user_dir("autosave"));
+        if self.session.path.as_deref().is_some_and(|path| is_copy_in(&absolute(Path::new(path)), &folder)) {
+            self.session.path = None;
+            self.session.modified = true;
+        }
+    }
+
     /// The open project's autosave file in `folder`. A saved project's copy is named after its file and stays the
     /// same across restarts; an unsaved project gets one that no other open project or running instance shares
     pub(crate) fn autosave_path(&mut self, folder: &Path) -> PathBuf {
@@ -35,12 +45,6 @@ impl TextureCraftApp {
         };
 
         let saved = absolute(Path::new(saved));
-
-        // A project opened from its autosave copy keeps writing there, rather than chaining suffixes
-        if is_copy_in(&saved, &absolute(folder)) {
-            return saved;
-        }
-
         let stem = saved.file_stem().map_or_else(|| self.session.doc.project.name.clone(), |stem| stem.to_string_lossy().into_owned());
         folder.join(file_name(&stem, hash(saved.as_os_str().as_encoded_bytes())))
     }
@@ -142,22 +146,24 @@ mod tests {
     }
 
     #[test]
-    fn a_project_opened_from_its_copy_keeps_writing_to_it() {
-        let folder = std::env::temp_dir().join("tc-autosave");
+    fn only_a_project_opened_from_a_copy_is_detached_from_its_file() {
+        let folder = user_dir("autosave");
         let mut app = app(project("hero"));
         let copy = app.autosave_path(&folder);
 
+        // A file there that is not a copy is the user's own, and so is a copy kept somewhere else
+        let elsewhere = folder.join("kept").join(name_of(&copy));
+        for own in [folder.join("hero.tcraft"), folder.join("hero-20240115.tcraft"), elsewhere] {
+            let own = own.display().to_string();
+            app.session.path = Some(own.clone());
+            app.detach_autosave_copy();
+            assert_eq!(app.session.path, Some(own));
+        }
+
         app.session.path = Some(copy.display().to_string());
-        assert_eq!(app.autosave_path(&folder), copy);
-
-        // A file there that is not a copy is the user's own: autosave leaves it alone
-        let own = folder.join("hero.tcraft");
-        app.session.path = Some(own.display().to_string());
-        assert_ne!(app.autosave_path(&folder), own);
-
-        let dated = folder.join("hero-20240115.tcraft");
-        app.session.path = Some(dated.display().to_string());
-        assert_ne!(app.autosave_path(&folder), dated);
+        app.detach_autosave_copy();
+        assert_eq!(app.session.path, None, "Save asks for a file");
+        assert!(app.session.modified, "closing asks to save the recovered work");
     }
 
     #[test]
