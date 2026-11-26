@@ -44,6 +44,8 @@ use psd_budget::PsdBudget;
 /// width tilts the normal 45°, at any resolution.
 const HEIGHT_SPAN: f32 = 16.0;
 const JPEG_QUALITY: u8 = 95;
+/// Glossiness a set lacks: the KHR_materials_pbrSpecularGlossiness glossinessFactor default
+const MISSING_GLOSSINESS: SourceRef = SourceRef::Constant(1.0);
 const PSD_MAX_SIDE_PIXELS: u32 = 30_000;
 const PSD_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Planes of a PSD image or layer: red, green, blue and alpha
@@ -584,7 +586,12 @@ pub(crate) fn source_present(set: &TextureSet, s: &SourceRef) -> bool {
 /// does not have is dropped.
 fn layout<'m>(set: &TextureSet, map: &'m MapSpec) -> Vec<(Dest, &'m SourceRef)> {
     let get = |d: Dest| map.channels.iter().find(|(x, _)| *x == d).map(|(_, s)| s);
-    let alpha = get(Dest::A).filter(|s| !matches!(s, SourceRef::Channel { channel, .. } if !set.has_channel(*channel)));
+
+    // A glossiness alpha stays, fully glossy, so a specular/glossiness file is RGBA without the channel too
+    let alpha = match get(Dest::A) {
+        Some(SourceRef::Channel { channel: Channel::Glossiness, .. }) if !set.has_channel(Channel::Glossiness) => Some(&MISSING_GLOSSINESS),
+        alpha => alpha.filter(|s| !matches!(s, SourceRef::Channel { channel, .. } if !set.has_channel(*channel))),
+    };
     let black = &SourceRef::Constant(0.0);
     let mut out = match get(Dest::L) {
         Some(l) => vec![(Dest::L, l)],

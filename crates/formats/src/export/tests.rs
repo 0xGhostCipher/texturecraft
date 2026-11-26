@@ -2040,6 +2040,18 @@ fn the_gltf_specular_glossiness_template_packs_a_specular_glossiness_sets_own_ch
 }
 
 #[test]
+fn the_gltf_specular_glossiness_file_is_rgba_and_fully_glossy_without_a_glossiness_channel() {
+    let mut fx = Fx::new(&[Channel::BaseColor, Channel::Specular, Channel::Normal]);
+    fx.set_all(Channel::Specular, |_, _| [0.2, 0.5, 0.8]);
+
+    let files = fx.render_preset("glTF Specular Glossiness (archived extension)");
+
+    let specular_glossiness = find(&files, "_SpecularGlossiness.png");
+    assert_eq!(decode(specular_glossiness).color(), image::ColorType::Rgba8, "the extension reads glossiness from alpha");
+    assert_eq!(pixel(specular_glossiness)[3], 255, "glossinessFactor defaults to 1");
+}
+
+#[test]
 fn the_redshift_template_writes_one_map_per_input_the_set_has() {
     let mut channels = default_channels();
     channels.extend([Channel::ScatterWeight, Channel::CoatWeight]);
