@@ -9,7 +9,7 @@ use texturecraft_engine::formats::export::sanitize_file_stem;
 use crate::TextureCraftApp;
 
 /// Hex digits of a copy's suffix
-const SUFFIX_DIGITS: usize = 8;
+const SUFFIX_DIGITS: usize = 16;
 
 /// Between a copy's stem and its suffix, so a user's own file named like `report-20240115` is not taken for a copy
 const COPY_MARK: &str = "-copy-";
@@ -46,7 +46,7 @@ impl TextureCraftApp {
     }
 }
 
-fn file_name(stem: &str, suffix: u32) -> String {
+fn file_name(stem: &str, suffix: u64) -> String {
     let stem: String = sanitize_file_stem(stem).chars().take(MAX_STEM_CHARS).collect();
     format!("{stem}{COPY_MARK}{suffix:0SUFFIX_DIGITS$x}.{PROJECT_EXT}")
 }
@@ -66,7 +66,7 @@ fn is_copy_in(path: &Path, folder: &Path) -> bool {
 
 /// A suffix for the unsaved project `project`: from this process and the moment, so another instance or a later run
 /// takes a different one
-fn new_suffix(project: u64) -> u32 {
+fn new_suffix(project: u64) -> u64 {
     let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
     let mut seed = Vec::new();
     seed.extend_from_slice(&std::process::id().to_le_bytes());
@@ -75,9 +75,10 @@ fn new_suffix(project: u64) -> u32 {
     hash(&seed)
 }
 
-/// 32-bit FNV-1a: the same bytes give the same suffix in every release, which the standard hasher does not promise
-fn hash(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0x811c_9dc5, |hash, byte| (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193))
+/// 64-bit FNV-1a: the same bytes give the same suffix in every release, which the standard hasher does not promise.
+/// Wide enough that two paths are very unlikely to share one
+fn hash(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
 #[cfg(test)]
@@ -157,7 +158,7 @@ mod tests {
     #[test]
     fn suffixes_have_a_fixed_width_and_long_names_are_cut() {
         let narrow = file_name("hero", 1);
-        let wide = file_name("hero", u32::MAX);
+        let wide = file_name("hero", u64::MAX);
         assert_eq!(narrow.len(), wide.len(), "every suffix has the same width");
         assert!(file_name(&"a".repeat(500), 1).len() < 200);
     }

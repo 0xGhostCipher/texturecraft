@@ -363,7 +363,7 @@ pub struct TextureCraftApp {
     next_autosave: f64,
     /// The unsaved project (its id) and the suffix of its autosave copy.
     #[cfg(not(target_arch = "wasm32"))]
-    unsaved_autosave_suffix: Option<(u64, u32)>,
+    unsaved_autosave_suffix: Option<(u64, u64)>,
     /// The brightness and accent the style was last built for.
     styled: Option<(theme::Brightness, theme::Accent)>,
     /// Whether the window had focus last frame.
