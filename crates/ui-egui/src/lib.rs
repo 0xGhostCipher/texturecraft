@@ -299,6 +299,12 @@ pub struct TextureCraftApp {
     pub(crate) live_preview: bake_mode::LivePreview,
     /// Last frame's viewport rect (logical points), for scripted input.
     pub viewport_rect: egui::Rect,
+    /// Project and texture-set index from the last completed UI pass.
+    hovered_texture_set: Option<(u64, usize)>,
+    /// The set under the pointer in this pass, independent of dock drawing order.
+    next_hovered_texture_set: Option<(u64, usize)>,
+    /// Project identity of the current inline rename buffer.
+    rename_project_id: u64,
     pub fps: f32,
     /// User smart materials found in the library folder (refreshed on demand).
     pub library: Option<Vec<std::path::PathBuf>>,
@@ -444,6 +450,9 @@ impl TextureCraftApp {
             bake_map_thumbnails: bake_mode::MapThumbnails::default(),
             live_preview: bake_mode::LivePreview::default(),
             viewport_rect: egui::Rect::NOTHING,
+            hovered_texture_set: None,
+            next_hovered_texture_set: None,
+            rename_project_id: project_id,
             fps: 0.0,
             ui_ms: 0.0,
             profiler: profile::Profiler::default(),
@@ -1248,9 +1257,23 @@ impl eframe::App for TextureCraftApp {
         let hide_ui = self.ui.hide_ui;
         let tokens = theme::Tokens::get(&ctx);
 
+        // Layer and effect IDs can repeat in a replacement project
+        if self.rename_project_id != self.session.project_id {
+            self.ui.rename = None;
+            self.rename_project_id = self.session.project_id;
+        }
+
         // The dock keeps the cards' gutter from the bars and rails around it
         let panel_frame = if hide_ui { egui::Frame::NONE.fill(tokens.viewport) } else { egui::Frame::NONE.fill(tokens.chrome).inner_margin(theme::GUTTER) };
         egui::CentralPanel::default().frame(panel_frame).show(ui, |ui| if hide_ui { viewport::central(self, ui) } else { docking::show(self, ui) });
+        dock::finish_hidden_effect_rename(self);
+
+        let hovered_texture_set = self.next_hovered_texture_set.take();
+        if self.hovered_texture_set != hovered_texture_set {
+            self.hovered_texture_set = hovered_texture_set;
+            ctx.request_repaint();
+        }
+
         windows::show(self, &ctx);
 
         // Finish after the dock and windows have requested their thumbnails

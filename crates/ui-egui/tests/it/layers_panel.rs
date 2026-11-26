@@ -75,9 +75,10 @@ fn an_instance_mask_thumbnail_opens_the_inherited_mask_effects() {
     assert!(h.query_by_label("Effect M").is_none(), "the same thumbnail closes the stack");
     click(&mut h, mask);
 
-    // Selecting the inherited effect through the instance keeps the instance selected and the stack open
+    // Select the effect through the instance
     let row = h.get_by_label("Effect M").rect();
     click(&mut h, row.center());
+
     let StackTarget::Effect(effect) = h.state().session.target else { panic!("{:?}", h.state().session.target) };
     assert_eq!(h.state().session.doc.project.effect(effect).map(|(owner, _)| owner), Some(source));
     assert_eq!(h.state().session.selected_layer(), Some(instance));
@@ -98,6 +99,7 @@ fn an_instance_with_its_own_mask_opens_its_own_mask_effects() {
 
     let mask = thumb(&h, "Instance row", true);
     click(&mut h, mask);
+
     assert!(h.query_by_label("Own effect").is_some(), "the instance's own mask effect is listed");
     assert!(h.query_by_label("Effect M").is_none(), "the source's mask effect is not");
 }
@@ -139,7 +141,7 @@ fn keyboard_toggles_effects_without_editing_the_document() {
     let content = "Select the layer content (Masked fill)";
     assert_eq!(h.get_by_label(content).accesskit_node().data().is_expanded(), Some(false));
 
-    // Move focus to the thumbnail and activate it with the standard button keys.
+    // Use the standard button keys so both paths preserve focus
     h.get_by_label(content).focus();
     h.run_steps(3);
     assert!(h.get_by_label(content).is_focused());

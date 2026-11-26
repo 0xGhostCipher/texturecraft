@@ -20,9 +20,10 @@ one just above itself. `effect.copy {effect?}` and `effect.cut {effect?}` put an
 layer clipboard, and `effect.paste {layer?, target?}` adds it to another layer's content or mask.
 `layer.select {layers: [id], layer?}` selects several layers of one texture set at once (`layer`
 is the active one), and `{layer, range: true}` / `{layer, toggle: true}` do what Shift+click and
-Ctrl+click do in the Layers panel. `layer.select {layer, target}` takes `content`, `mask` or an effect id: one of the layer, or of the mask it draws with. `layer.select {all: true}` (Ctrl+A with the pointer over the
-Layers panel) selects every shown row of the active texture set: the folder rows and the layers
-of open folders, not the layers of collapsed ones. `{layer, toggle: true}` on the only selected
+Ctrl+click do in the Layers panel. `layer.select {layer, target}` takes `content`, `mask`, or
+the ID of an effect on the layer or on the mask it draws with. `layer.select {all: true}`
+(Ctrl+A with the pointer over the Layers panel) selects every shown row of the active texture
+set, including folder rows and layers in open folders. `{layer, toggle: true}` on the only selected
 layer leaves nothing selected. `layer.visible {layers, layer}` gives every listed layer the
 opposite of `layer`'s visibility (the Layers panel's eye uses `{layer}` and acts on that layer
 only). `layer.group` puts the new folder at the place and in the folder of the topmost selected

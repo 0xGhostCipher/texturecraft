@@ -78,6 +78,9 @@ pub(crate) fn texture_set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().id_salt("ts_scroll").show(ui, |ui| {
         for (i, (name, size, visible)) in sets.into_iter().enumerate() {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ListItem, ui.is_enabled(), &name));
+            ui.ctx().accesskit_node_builder(resp.id, |node| node.set_selected(i == active));
+
             let p = ui.painter();
             let bg = if i == active {
                 tk.row_selected
@@ -90,9 +93,17 @@ pub(crate) fn texture_set_list(app: &mut TextureCraftApp, ui: &mut Ui) {
             if i == active {
                 p.rect_stroke(rect, 2.0, Stroke::new(1.0, tk.accent), egui::StrokeKind::Inside);
             }
+            if resp.has_focus() {
+                p.rect_stroke(rect.shrink(2.0), 2.0, Stroke::new(1.0, tk.text_strong), egui::StrokeKind::Inside);
+            }
+
             let eye = Rect::from_min_size(rect.min + vec2(4.0, 3.0), vec2(16.0, 16.0));
             let eye_resp = ui.interact(eye, ui.scope_id().with(("ts_eye", i)), Sense::click()).on_hover_text(tr("Show or hide the texture set"));
             p.text(eye.center(), egui::Align2::CENTER_CENTER, if visible { ic::EYE } else { ic::EYE_SLASH }, egui::FontId::proportional(13.0), tk.text);
+
+            if ui.is_enabled() && (resp.contains_pointer() || eye_resp.contains_pointer()) {
+                app.next_hovered_texture_set = Some((app.session.project_id, i));
+            }
 
             // Narrow panels drop the shader label, then the resolution, before cutting the name
             let cy = rect.center().y;
@@ -152,6 +163,7 @@ pub(crate) fn layers(app: &mut TextureCraftApp, ui: &mut Ui) {
     } else if app.layer_panel.expanded_effects != selected_stack {
         app.layer_panel.expanded_effects = None;
     }
+
     egui::ScrollArea::vertical().id_salt("layers_scroll").auto_shrink([false, false]).show(ui, |ui| {
         let mut count = 0;
         for id in stack {
@@ -185,12 +197,20 @@ pub(crate) fn layers(app: &mut TextureCraftApp, ui: &mut Ui) {
         }
     });
     select_all_layers(app, ui);
-    // A thumbnail or selection can close the editor before its TextEdit sees lost focus.
+}
+
+/// Close the name editor when its effect leaves the open stack, even while the panel is hidden.
+pub(crate) fn finish_hidden_effect_rename(app: &mut TextureCraftApp) {
     if let Some((id, _)) = &app.ui.rename
-        && app.session.doc.project.effect(LayerId(*id)).is_some()
+        && !app.session.doc.project.layers.contains_key(&LayerId(*id))
         && app.layer_panel.expanded_effects.is_none_or(|(layer, in_mask)| {
             let project = &app.session.doc.project;
-            !project.layers.get(&layer).is_some_and(|l| stack_effects(project, l, in_mask).iter().any(|e| e.id.0 == *id))
+            let effects = if in_mask {
+                mask_effects(project, layer)
+            } else {
+                project.layers.get(&layer).map(|layer| layer.content_effects.as_slice()).unwrap_or_default()
+            };
+            !effects.iter().any(|effect| effect.id.0 == *id)
         })
     {
         finish_effect_rename(app);
@@ -289,9 +309,11 @@ const EYE_CHIP_ROUNDING: f32 = 4.0;
 /// An effect thumbnail's corner rounding and border, the strike across a hidden effect's, and the line marking where a drag drops.
 const THUMBNAIL_ROUNDING: f32 = 2.0;
 const THUMBNAIL_BORDER_WIDTH: f32 = 1.0;
-const EFFECT_DISCLOSURE_SIZE: f32 = 13.0;
 const HIDDEN_STRIKE_WIDTH: f32 = 1.5;
 const DROP_LINE_WIDTH: f32 = 2.0;
+/// The effect disclosure's square and glyph sizes in points.
+const EFFECT_DISCLOSURE_SIZE: f32 = 13.0;
+const EFFECT_DISCLOSURE_FONT_SIZE: f32 = 10.0;
 /// The eye's size and the column it sits in (the eye and a gap before the thumbnail).
 const EYE_SIZE: f32 = 16.0;
 const EYE_COLUMN_WIDTH: f32 = 22.0;
@@ -377,11 +399,6 @@ fn layer_name_layout(rect: Rect, left: f32) -> (Rect, bool) {
     (Rect::from_min_max(pos2(left, rect.top() + 4.0), pos2(name_right.max(left), rect.bottom() - 4.0)), show_blend)
 }
 
-/// Whether `text` at font `size` is wider than `width`, so a row shows it shortened.
-fn text_is_cut(painter: &egui::Painter, text: &str, size: f32, width: f32) -> bool {
-    painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(size), Color32::WHITE).size().x > width
-}
-
 /// Preserve the effect eye, preview and a readable name before spending space on nesting.
 fn effect_row_indent(width: f32, level: usize, preview: f32) -> f32 {
     (level as f32 * INDENT).min((width - ROW_LEFT_PADDING - EYE_COLUMN_WIDTH - preview - THUMBNAIL_GAP - MIN_NAME_WIDTH - ROW_RIGHT_PADDING).max(0.0))
@@ -392,13 +409,9 @@ fn level_x(left: f32, level: usize) -> f32 {
     left + ROW_LEFT_PADDING + level as f32 * INDENT + EYE_SIZE * 0.5
 }
 
-/// The effects `layer` lists in its mask (the mask it draws with, so an instance without its own shows its source's) or content.
-fn stack_effects(project: &Project, layer: &Layer, in_mask: bool) -> Vec<Effect> {
-    if in_mask {
-        project.layers.get(&project.mask_owner(layer.id)).and_then(|owner| owner.mask.as_ref()).map_or_else(Vec::new, |mask| mask.effects.clone())
-    } else {
-        layer.content_effects.clone()
-    }
+/// The effects of the mask the layer draws with, including a mask inherited from its source.
+fn mask_effects(project: &Project, layer: LayerId) -> &[Effect] {
+    project.layers.get(&project.mask_owner(layer)).and_then(|owner| owner.mask.as_ref()).map_or(&[], |mask| mask.effects.as_slice())
 }
 
 fn layer_tree(app: &mut TextureCraftApp, ui: &mut Ui, id: LayerId, depth: usize, count: &mut usize) {
@@ -407,12 +420,21 @@ fn layer_tree(app: &mut TextureCraftApp, ui: &mut Ui, id: LayerId, depth: usize,
     let index = *count;
     *count += 1;
     layer_row(app, ui, &layer, depth, index);
+
     if let Some((open_layer, in_mask)) = app.layer_panel.expanded_effects
         && open_layer == id
     {
-        let stack = stack_effects(&app.session.doc.project, &layer, in_mask);
+        // Read the mask after the layer row has handled its controls
+        let mask_snapshot;
+        let stack: &[Effect] = if in_mask {
+            mask_snapshot = mask_effects(&app.session.doc.project, id).to_vec();
+            &mask_snapshot
+        } else {
+            &layer.content_effects
+        };
+
         for (index, effect) in stack.iter().rev().enumerate() {
-            effect_row(app, ui, &layer, &stack, effect, index, depth + 2, index + 1 == stack.len(), in_mask);
+            effect_row(app, ui, &layer, stack, effect, index, depth + 2, index + 1 == stack.len(), in_mask);
         }
     }
 
@@ -430,13 +452,17 @@ fn layer_tree(app: &mut TextureCraftApp, ui: &mut Ui, id: LayerId, depth: usize,
     }
 }
 
-/// The picture for `target` inside `rect` (drawn over the well), whether there is one yet.
-fn thumb_box(ui: &Ui, app: &mut TextureCraftApp, rect: Rect, target: ThumbTarget, dim: bool) -> bool {
+/// Draw a visible thumbnail over its well, using the fallback until its picture arrives.
+fn draw_thumbnail(ui: &Ui, app: &mut TextureCraftApp, rect: Rect, target: ThumbTarget, dim: bool, fallback: impl FnOnce()) {
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+
     let tokens = Tokens::get(ui.ctx());
     let painter = ui.painter();
     painter.rect_filled(rect, THUMBNAIL_ROUNDING, tokens.field);
 
-    // A checkerboard shows through where the layer has nothing (transparent texels).
+    // The checkerboard shows through transparent texels
     let cell_size = rect.width() / THUMB_CHECKER_CELLS as f32;
     let check = tokens.field.lerp_to_gamma(tokens.row_hover, 0.6);
     for y in 0..THUMB_CHECKER_CELLS {
@@ -445,16 +471,12 @@ fn thumb_box(ui: &Ui, app: &mut TextureCraftApp, rect: Rect, target: ThumbTarget
         }
     }
 
-    // Only rows on screen ask for a picture.
-    if ui.is_rect_visible(rect)
-        && let Some(texture) = app.layer_panel.texture(ui.ctx(), &app.session, target)
-    {
+    if let Some(texture) = app.layer_panel.texture(ui.ctx(), &app.session, target) {
         let tint = if dim { Color32::WHITE.gamma_multiply(0.4) } else { Color32::WHITE };
         painter.image(texture, rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
-        return true;
+    } else {
+        fallback();
     }
-
-    false
 }
 
 /// The row of `layer` at folder depth `depth`, the `index`th row of the stack (rows alternate shades).
@@ -510,7 +532,6 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
         painter.rect_stroke(rect.shrink(SOLO_OUTLINE_WIDTH * 0.5), 0.0, Stroke::new(SOLO_OUTLINE_WIDTH, tokens.warning), egui::StrokeKind::Inside);
     }
 
-    // The eye
     let content_left = rect.left() + ROW_LEFT_PADDING + indent;
     let eye = Rect::from_center_size(pos2(content_left + EYE_SIZE * 0.5, rect.center().y), vec2(LAYER_EYE_SIZE, LAYER_EYE_SIZE));
     let eye_response = ui.interact(eye, ui.scope_id().with(("eye", layer.id.0)), Sense::click()).on_hover_ui(|ui| {
@@ -563,9 +584,9 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
     // Content thumbnail: the layer's own result in the displayed channel
     let channel = app.ui.layer_channel;
     let thumbnail = Rect::from_min_size(pos2(x, rect.center().y - thumbnail_size * 0.5), vec2(thumbnail_size, thumbnail_size));
-    if !thumb_box(ui, app, thumbnail, ThumbTarget::Content { layer: layer.id, channel }, !layer.visible) {
-        content_glyph(&painter, &tokens, thumbnail, layer);
-    }
+    draw_thumbnail(ui, app, thumbnail, ThumbTarget::Content { layer: layer.id, channel }, !layer.visible, || {
+        content_glyph(&painter, &tokens, thumbnail, layer)
+    });
 
     let content_label = tr("Select the layer content");
     let content_response = ui.interact(thumbnail, ui.scope_id().with(("content", layer.id.0)), Sense::click()).on_hover_text(content_label);
@@ -574,9 +595,11 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
     if content_response.clicked() {
         let modifiers = ui.input(|input| input.modifiers);
         click_layer(app, modifiers, layer.id.0, Some("content"));
+
         if !modifiers.shift && !modifiers.command {
             app.layer_panel.toggle_effects(content_stack);
         }
+
         if !modifiers.alt && matches!(app.session.view, texturecraft_engine::ViewMode::Mask(_)) {
             app.run("viewport.view", json!({"mode": "material"}));
         }
@@ -627,7 +650,7 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
             }
         }
 
-        if !thumb_box(ui, app, mask_rect, ThumbTarget::Mask { layer: layer.id }, !layer.visible || !mask_enabled) {
+        draw_thumbnail(ui, app, mask_rect, ThumbTarget::Mask { layer: layer.id }, !layer.visible || !mask_enabled, || {
             let white = mask_background == texturecraft_engine::core::MaskBackground::White;
             painter.rect_filled(mask_rect, THUMBNAIL_ROUNDING, Color32::from_gray(if white { WHITE_MASK_GRAY } else { BLACK_MASK_GRAY }));
             if mask_effect_count > 0 {
@@ -639,7 +662,7 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
                     tokens.text_dim,
                 );
             }
-        }
+        });
         painter.rect_stroke(mask_rect, THUMBNAIL_ROUNDING, target_stroke(&tokens, mask_target), egui::StrokeKind::Outside);
         if !mask_enabled {
             painter.line_segment([mask_rect.left_top(), mask_rect.right_bottom()], Stroke::new(HIDDEN_STRIKE_WIDTH, tokens.danger));
@@ -706,6 +729,7 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
     } else if show_name {
         let name_color = if layer.visible { tokens.text_strong } else { tokens.text_dim };
         let galley = elided(&painter, layer.name.clone(), LAYER_NAME_FONT_SIZE, name_color, name_rect.width());
+        let name_elided = galley.elided;
         painter.galley(pos2(name_rect.left(), rect.center().y - NAME_LINE_GAP - galley.size().y), galley, tokens.text);
         let kind = tr(match &layer.kind {
             LayerKind::Paint => "Paint layer",
@@ -720,14 +744,12 @@ fn layer_row(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, depth: usize
             (None, 1) => format!("{kind} · {}", tr("1 effect")),
             (None, count) => format!("{kind} · {}", trf("{count} effects", &[("count", &count)])),
         };
+        let subtitle = elided(&painter, subtitle, LAYER_SUBTITLE_FONT_SIZE, tokens.text_dim, name_rect.width());
 
         // A name or subtitle cut short by a narrow panel is shown in full on hover
-        if text_is_cut(&painter, &layer.name, LAYER_NAME_FONT_SIZE, name_rect.width())
-            || text_is_cut(&painter, &subtitle, LAYER_SUBTITLE_FONT_SIZE, name_rect.width())
-        {
-            row.clone().on_hover_text(format!("{}\n{subtitle}", layer.name));
+        if name_elided || subtitle.elided {
+            row.clone().on_hover_text(format!("{}\n{}", layer.name, subtitle.text()));
         }
-        let subtitle = elided(&painter, subtitle, LAYER_SUBTITLE_FONT_SIZE, tokens.text_dim, name_rect.width());
         painter.galley(pos2(name_rect.left(), rect.center().y + NAME_LINE_GAP), subtitle, tokens.text_dim);
     }
 
@@ -885,35 +907,37 @@ fn content_glyph(p: &egui::Painter, tk: &Tokens, thumb: Rect, layer: &Layer) {
 
 /// Draw the effect disclosure on its thumbnail and expose the same state to AccessKit.
 fn effect_stack_thumbnail(app: &TextureCraftApp, painter: &egui::Painter, tokens: &Tokens, response: &egui::Response, stack: Option<(LayerId, bool)>) {
-    if let Some(stack) = stack {
-        let expanded = app.layer_panel.expanded_effects == Some(stack);
-        response.ctx.accesskit_node_builder(response.id, |node| node.set_expanded(expanded));
-        if response.rect.width() < EFFECT_DISCLOSURE_SIZE {
-            return;
-        }
-        let size = vec2(EFFECT_DISCLOSURE_SIZE, EFFECT_DISCLOSURE_SIZE);
-        let badge = Rect::from_min_size(response.rect.max - size, size);
-        painter.rect_filled(badge, THUMBNAIL_ROUNDING, tokens.button);
-        painter.text(
-            badge.center(),
-            egui::Align2::CENTER_CENTER,
-            if expanded { ic::CARET_DOWN } else { ic::CARET_RIGHT },
-            egui::FontId::proportional(EFFECT_DISCLOSURE_SIZE - 3.0),
-            tokens.text_strong,
-        );
+    let Some(stack) = stack else { return };
+    let expanded = app.layer_panel.expanded_effects == Some(stack);
+    response.ctx.accesskit_node_builder(response.id, |node| node.set_expanded(expanded));
+    if response.rect.width() < EFFECT_DISCLOSURE_SIZE {
+        return;
     }
+
+    let size = vec2(EFFECT_DISCLOSURE_SIZE, EFFECT_DISCLOSURE_SIZE);
+    let badge = Rect::from_min_size(response.rect.max - size, size);
+    painter.rect_filled(badge, THUMBNAIL_ROUNDING, tokens.button);
+    painter.text(
+        badge.center(),
+        egui::Align2::CENTER_CENTER,
+        if expanded { ic::CARET_DOWN } else { ic::CARET_RIGHT },
+        egui::FontId::proportional(EFFECT_DISCLOSURE_FONT_SIZE),
+        tokens.text_strong,
+    );
 }
 
 /// Draw the line along the open effect stack and a branch to this row.
-fn effect_tree_line(p: &egui::Painter, tk: &Tokens, rect: Rect, indent: f32, more: bool) {
+fn effect_tree_line(painter: &egui::Painter, tokens: &Tokens, rect: Rect, indent: f32, continues: bool) {
     if indent < INDENT {
         return;
     }
-    let stroke = Stroke::new(1.0, tk.button_border);
-    let x = rect.left() + 15.0 + indent - INDENT;
-    let end = if more { rect.bottom() } else { rect.center().y };
-    p.vline(x, rect.top()..=end, stroke);
-    p.hline(x..=x + INDENT * 0.6, rect.center().y, stroke);
+
+    const BRANCH_WIDTH: f32 = INDENT * 0.6;
+    let stroke = Stroke::new(FOLDER_LINE_WIDTH, tokens.button_border);
+    let x = level_x(rect.left() + indent - INDENT, 0);
+    let end = if continues { rect.bottom() } else { rect.center().y };
+    painter.vline(x, rect.top()..=end, stroke);
+    painter.hline(x..=x + BRANCH_WIDTH, rect.center().y, stroke);
 }
 
 /// The drag-and-drop payload of an effect row (the effect id).
@@ -1008,10 +1032,9 @@ fn effect_row(
     let row = ui.interact(rect, ui.scope_id().with(("effect_row", effect_id.0)), Sense::click_and_drag());
     row.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, selected, &effect.name));
 
-    // Background, tree lines and the selected row's accent edge
     let painter = ui.painter().clone();
 
-    // Effect rows alternate two shades just above the panel, counted from the top of their list
+    // Alternate the shades of unselected rows from the top of the stack
     let background = if selected {
         tokens.row_selected
     } else if row.hovered() {
@@ -1026,7 +1049,7 @@ fn effect_row(
         painter.rect_filled(Rect::from_min_size(rect.min, vec2(SELECTED_EDGE_WIDTH, rect.height())), 0.0, tokens.accent);
     }
 
-    // The eye, then the stack as it is up to and including this effect (a hidden one shows what it bypasses)
+    // Hidden effects preview the result that bypasses them
     let content_left = rect.left() + ROW_LEFT_PADDING + indent;
     let eye = Rect::from_center_size(pos2(content_left + EYE_SIZE * 0.5, rect.center().y), vec2(EYE_SIZE, EYE_SIZE));
     let eye_response = ui.interact(eye, ui.scope_id().with(("eff_eye", effect_id.0)), Sense::click()).on_hover_text(tr("Enable or disable the effect"));
@@ -1037,16 +1060,16 @@ fn effect_row(
 
     // Content rows edit the displayed channel's blend
     let row_channel = (!in_mask && !app.ui.layer_material_view).then_some(channel);
-    if !thumb_box(ui, app, thumbnail, ThumbTarget::Stage { effect: effect_id, channel }, false) {
+    draw_thumbnail(ui, app, thumbnail, ThumbTarget::Stage { effect: effect_id, channel }, false, || {
         let glyph = if in_mask { ic::MAGIC_WAND } else { ic::SPHERE };
         painter.text(thumbnail.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(preview_size * 0.5), tokens.text_dim);
-    }
+    });
     painter.rect_stroke(thumbnail, THUMBNAIL_ROUNDING, Stroke::new(THUMBNAIL_BORDER_WIDTH, tokens.button_border), egui::StrokeKind::Outside);
     if !visible {
         painter.line_segment([thumbnail.left_bottom(), thumbnail.right_top()], Stroke::new(HIDDEN_STRIKE_WIDTH, tokens.text_dim));
     }
 
-    // The name, then the blend mode and opacity side by side at the right when the name keeps room to be read
+    // Hide blend controls when the name needs the room
     let name_left = thumbnail.right() + THUMBNAIL_GAP;
     let controls_left = rect.right() - ROW_CONTROL_GAP - EFFECT_BLEND_WIDTH;
     let show_blend = controls_left - ROW_CONTROL_GAP - name_left >= MIN_NAME_WIDTH;
@@ -1059,10 +1082,10 @@ fn effect_row(
         effect_rename_editor(app, ui, name_rect);
     } else {
         let name_width = (name_right - name_left).max(MIN_NAME_WIDTH);
-        if text_is_cut(&painter, &effect.name, EFFECT_NAME_FONT_SIZE, name_width) {
+        let galley = elided(&painter, effect.name.clone(), EFFECT_NAME_FONT_SIZE, name_color, name_width);
+        if galley.elided {
             row.clone().on_hover_text(&effect.name);
         }
-        let galley = elided(&painter, effect.name.clone(), EFFECT_NAME_FONT_SIZE, name_color, name_width);
         painter.galley(pos2(name_left, rect.center().y - galley.size().y * 0.5), galley, tokens.text);
     }
     if show_blend {
@@ -1091,7 +1114,7 @@ fn effect_row(
         app.run("layer.select", json!({"layer": layer.id.0, "target": effect_id.0}));
     }
 
-    // Drag to reorder within the stack: a drop lands above this row, or below it from its lower half
+    // The half of the target row under the pointer determines the insertion side
     if row.drag_started() {
         row.dnd_set_drag_payload(EffectDrag(effect_id.0));
     }
@@ -1137,7 +1160,7 @@ fn effect_row(
                 button = button.shortcut_text(shortcut);
             }
             if ui.add_enabled(enabled, button).clicked() {
-                // Selected first: a paste lands above it, a duplicate takes the selection
+                // Select the row so it anchors a paste and its duplicate takes focus
                 app.run("layer.select", json!({"layer": layer.id.0, "target": effect_id.0}));
                 app.run(command, json!({"effect": effect_id.0}));
                 ui.close();
@@ -1193,6 +1216,7 @@ fn effect_rename_editor(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect) {
 
 fn finish_effect_rename(app: &mut TextureCraftApp) {
     let Some((id, name)) = app.ui.rename.take() else { return };
+
     let name = name.trim();
     if !name.is_empty() && app.session.doc.project.effect(LayerId(id)).is_some_and(|(_, effect)| name != effect.name) {
         app.run("effect.set", json!({"effect": id, "name": name}));
@@ -3309,5 +3333,38 @@ mod layer_layout_tests {
         assert_eq!(indent, 28.0);
         assert_eq!(size, 36.0);
         assert!(show_blend);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod texture_set_list_tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use super::*;
+
+    #[test]
+    fn keyboard_selection_updates_the_texture_set_list_items() {
+        let session = texturecraft_engine::Session::new_project(
+            "Texture set selection",
+            texturecraft_engine::geom::primitives::material_ball(),
+            "builtin:material_ball",
+            None,
+            128,
+        )
+        .unwrap();
+        let first = session.doc.project.texture_sets[0].name.clone();
+        let second = session.doc.project.texture_sets[1].name.clone();
+        let mut harness = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        harness.run_steps(4);
+
+        harness.get_by_role_and_label(egui::Role::ListItem, &second).focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(3);
+
+        assert_eq!(harness.state().session.ts(), 1);
+        assert_eq!(harness.get_by_role_and_label(egui::Role::ListItem, &first).accesskit_node().is_selected(), Some(false));
+        assert_eq!(harness.get_by_role_and_label(egui::Role::ListItem, &second).accesskit_node().is_selected(), Some(true));
     }
 }

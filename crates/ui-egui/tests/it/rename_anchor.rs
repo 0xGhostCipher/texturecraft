@@ -12,9 +12,9 @@ use texturecraft_engine::core::{Channel, EffectKind, LayerId, Source};
 use texturecraft_engine::geom::primitives;
 use texturecraft_engine::{Session, StackTarget};
 use texturecraft_ui_egui::TextureCraftApp;
+use texturecraft_ui_egui::file_dialogs::Answer;
 
 use super::layers_panel::click_selected_content_thumbnail;
-use texturecraft_ui_egui::file_dialogs::Answer;
 
 const BLACK: [f32; 3] = [0.0; 3];
 const WHITE: [f32; 3] = [1.0; 3];
@@ -136,6 +136,38 @@ fn collapsing_an_effect_stack_finishes_its_rename() {
     assert!(h.query_by_label("Pitted rust").is_none(), "the effect stack closed");
     click_selected_content_thumbnail(&mut h);
     assert!(h.query_by_label("Pitted rust").is_some());
+}
+
+#[test]
+fn reopening_a_project_discards_an_uncommitted_effect_rename() {
+    let (mut harness, effect) = effect_harness();
+    let file = temp_file("pending-rename");
+    save_to(&mut harness, &file);
+    rename_from_the_menu(&mut harness, "Effect A", "Uncommitted name");
+
+    reopen(&mut harness, &file);
+    std::fs::remove_dir_all(file.parent().unwrap()).unwrap();
+
+    assert_eq!(effect_name(&harness, effect), "Effect A");
+    assert!(!harness.state().session.modified);
+    assert!(harness.state().ui.rename.is_none());
+}
+
+#[test]
+fn undoing_an_effect_removal_restores_its_committed_name() {
+    let (mut harness, effect) = effect_harness();
+    rename_from_the_menu(&mut harness, "Effect A", "Uncommitted name");
+
+    harness.state_mut().ui.hide_ui = true;
+    harness.state_mut().run("effect.remove", json!({"effect": effect})).unwrap();
+    harness.run_steps(3);
+    harness.state_mut().run("edit.undo", Value::Null).unwrap();
+    harness.state_mut().ui.hide_ui = false;
+    harness.run_steps(3);
+    click_selected_content_thumbnail(&mut harness);
+
+    assert_eq!(effect_name(&harness, effect), "Effect A");
+    assert!(harness.state().ui.rename.is_none());
 }
 
 #[test]

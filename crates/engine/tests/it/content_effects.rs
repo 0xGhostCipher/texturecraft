@@ -259,22 +259,24 @@ fn an_instance_selects_the_effects_of_the_mask_it_draws_with() {
     let instance = id(execute(&mut s, "layer.instance", &json!({"layer": source})).unwrap(), "layer");
     let select = |s: &mut Session, effect: u64| execute(s, "layer.select", &json!({"layer": instance, "target": effect}));
 
-    // Without a mask of its own the instance draws with the source's, so it selects that mask's effects
+    // The instance inherits its source mask
     select(&mut s, source_mask).unwrap();
+
     assert_eq!(s.selected_layer(), Some(LayerId(instance)));
     assert_eq!(s.target, StackTarget::Effect(LayerId(source_mask)));
 
-    // Content effects of the source and effects of unrelated layers stay out of reach
+    // The source's content and unrelated layers remain outside the selection
     for effect in [source_content, other_mask] {
         let error = select(&mut s, effect).unwrap_err().to_string();
         assert!(error.contains("an effect id of this layer or of the mask it draws with"), "{error}");
     }
     assert_ne!(other, instance);
 
-    // An instance with its own mask draws with that one: the source's mask effects are not its own
+    // A local mask overrides the source mask
     execute(&mut s, "layer.select", &json!({"layer": instance})).unwrap();
     execute(&mut s, "mask.add.black", &Value::Null).unwrap();
     let own = id(execute(&mut s, "effect.add.generator", &json!({"generator": "position", "level": 0.5})).unwrap(), "effect");
+
     assert!(select(&mut s, source_mask).is_err());
     select(&mut s, own).unwrap();
     assert_eq!(s.target, StackTarget::Effect(LayerId(own)));

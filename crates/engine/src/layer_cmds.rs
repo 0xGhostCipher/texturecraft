@@ -324,8 +324,7 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Some(Value::String(t)) if t == "content" => StackTarget::Content,
         Some(v) => match v.as_u64() {
-            // An instance without a mask of its own edits the effects of the mask it draws with, as it edits that mask
-            Some(e) if selectable_effect(&s.doc.project, id, LayerId(e)) => StackTarget::Effect(LayerId(e)),
+            Some(effect) if selectable_effect(&s.doc.project, id, LayerId(effect)) => StackTarget::Effect(LayerId(effect)),
             _ => return Err(bad("layer.select", "target must be content, mask or an effect id of this layer or of the mask it draws with")),
         },
         None => StackTarget::Content,
@@ -335,12 +334,13 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "layer": id.0, "textureSet": ts, "layers": [id.0] }))
 }
 
-/// Whether effect `effect` can be selected on layer `id`: one of its own, or one in the mask it draws with.
-fn selectable_effect(project: &texturecraft_core::Project, id: LayerId, effect: LayerId) -> bool {
-    let Some((owner, _)) = project.effect(effect) else { return false };
-    owner == id
-        || (owner == project.mask_owner(id)
-            && project.layers.get(&owner).and_then(|l| l.mask.as_ref()).is_some_and(|mask| mask.effects.iter().any(|e| e.id == effect)))
+/// Whether the effect belongs to the layer or to the mask it draws with.
+fn selectable_effect(project: &Project, layer: LayerId, effect_id: LayerId) -> bool {
+    let Some((owner, _)) = project.effect(effect_id) else { return false };
+
+    owner == layer
+        || (owner == project.mask_owner(layer)
+            && project.layers.get(&owner).and_then(|layer| layer.mask.as_ref()).is_some_and(|mask| mask.effects.iter().any(|effect| effect.id == effect_id)))
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
