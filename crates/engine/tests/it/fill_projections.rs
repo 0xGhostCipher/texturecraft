@@ -361,6 +361,43 @@ fn a_warps_frame_resets_apart_from_its_corners() {
     assert_eq!(s.history_labels().len(), steps + 1, "a fitted frame adds no undo step");
 }
 
+#[test]
+fn a_warps_global_reset_clears_the_projector_transform() {
+    let mut session = session();
+    let layer = checker_fill(&mut session);
+    let pulled = [[-0.5, 0.5], [0.9, 0.9], [0.5, -0.5], [-0.5, -0.5]];
+    set(&mut session, layer, json!({"projection": "warp", "warpCorners": pulled, "depthCulling": false, "projectionDepth": 0.2}));
+    let fitted = projection(&session, layer);
+    set(&mut session, layer, json!({"projectorRotation": [12, 0, 20], "projectorScale": [2, 2, 1]}));
+    let edited = projection(&session, layer);
+    let steps = session.history_labels().len();
+
+    execute(&mut session, "layer.fill.resetFrame", &json!({"layer": layer.0, "keepCorners": true})).unwrap();
+
+    assert_eq!(projection(&session, layer), fitted, "restore the displayed frame and keep its corners and projection settings");
+    assert_eq!(session.history_labels().len(), steps + 1);
+
+    session.undo().unwrap();
+
+    assert_eq!(projection(&session, layer), edited);
+}
+
+#[test]
+fn invalid_keep_corners_cannot_reset_the_warp() {
+    let mut session = session();
+    let layer = checker_fill(&mut session);
+    let pulled = [[-0.5, 0.5], [0.9, 0.9], [0.5, -0.5], [-0.5, -0.5]];
+    set(&mut session, layer, json!({"projection": "warp", "warpCorners": pulled}));
+    let before = projection(&session, layer);
+    let steps = session.history_labels().len();
+
+    let result = execute(&mut session, "layer.fill.resetFrame", &json!({"layer": layer.0, "keepCorners": "true"}));
+
+    assert!(result.is_err());
+    assert_eq!(projection(&session, layer), before);
+    assert_eq!(session.history_labels().len(), steps);
+}
+
 /// Depth culling keeps planar and warp projections off surfaces hidden behind others from the projector; new ones start with it on, older saves without it
 #[test]
 fn depth_culling_keeps_planar_and_warp_projections_off_hidden_surfaces() {

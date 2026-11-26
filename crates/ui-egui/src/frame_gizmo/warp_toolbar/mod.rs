@@ -17,9 +17,10 @@ pub use warp_toolbar_settings::WarpToolbarSettings;
 
 use crate::TextureCraftApp;
 use crate::i18n::tr;
-use crate::widgets::{icon_button, icon_dropdown_button, slider};
+use crate::toolbar::icon_dropdown;
+use crate::widgets::{icon_button, icon_dropdown_button};
 use texturecraft_engine::core::Projection;
-use warp_target::WarpTarget;
+pub(crate) use warp_target::WarpTarget;
 use warp_toolbar_settings::{ANGLE_STEPS, GRID_STEPS, MANIPULATOR_SIZES};
 
 /// The width of the settings popup (points)
@@ -34,19 +35,13 @@ const MODES: [(GizmoMode, &str, &str); 4] = [
 ];
 
 /// The warp modes the bar lists; only the first works until the warp has a grid of vertices
-const WARP_MODES: [&str; 5] = ["Transform warp", "Edit vertices", "Split warp crosswise", "Split warp horizontally", "Split warp vertically"];
+const WARP_MODES: [&str; 5] = ["Transform warp", "Edit vertices", "Split both directions", "Split horizontally", "Split vertically"];
 
 /// Why the warp modes past the first and the vertex reset are greyed out
 const NEEDS_GRID: &str = "Needs the warp grid, which is not available yet";
 
-/// Whether the selected fill projects through a warp, so the top tool bar shows the warp controls
-pub(crate) fn shown(app: &TextureCraftApp) -> bool {
-    WarpTarget::of(app).is_some()
-}
-
 /// The warp controls of the top tool bar, left to right
-pub(crate) fn controls(app: &mut TextureCraftApp, ui: &mut Ui) {
-    let Some(target) = WarpTarget::of(app) else { return };
+pub(crate) fn controls(app: &mut TextureCraftApp, ui: &mut Ui, target: WarpTarget) {
     let size = ui.spacing().interact_size.y;
 
     // The only tool there is, so it stays on
@@ -87,9 +82,11 @@ fn manipulator_settings(app: &mut TextureCraftApp, ui: &mut Ui, size: f32) {
         ui.label(egui::RichText::new(tr("MANIPULATOR SETTINGS")).strong());
 
         let settings = &mut app.ui.warp_toolbar;
-        slider(ui, tr("Manipulator size"), &mut settings.manipulator_size, MANIPULATOR_SIZES, 2);
-        slider(ui, tr("Grid steps"), &mut settings.grid_steps, GRID_STEPS, 2).on_hover_text(tr("Hold Ctrl while dragging to move in these steps"));
-        slider(ui, tr("Angle steps"), &mut settings.angle_steps, ANGLE_STEPS, 0).on_hover_text(tr("Hold Ctrl while dragging to turn in these steps"));
+        ui.add(egui::Slider::new(&mut settings.manipulator_size, MANIPULATOR_SIZES).text(tr("Manipulator size")).fixed_decimals(2));
+        ui.add(egui::Slider::new(&mut settings.grid_steps, GRID_STEPS).text(tr("Grid steps")).fixed_decimals(2))
+            .on_hover_text(tr("Hold Ctrl while dragging to move in these steps"));
+        ui.add(egui::Slider::new(&mut settings.angle_steps, ANGLE_STEPS).text(tr("Angle steps")).fixed_decimals(0))
+            .on_hover_text(tr("Hold Ctrl while dragging to turn in these steps"));
     });
 }
 
@@ -126,7 +123,7 @@ fn gizmo_space(app: &mut TextureCraftApp, ui: &mut Ui) {
 fn resets(app: &mut TextureCraftApp, ui: &mut Ui, target: &WarpTarget) {
     let mut command = None;
     icon_dropdown(ui, "warp_reset", ic::ARROW_COUNTER_CLOCKWISE, tr("Reset"), |ui| {
-        if menu_row(ui, tr("Restore the global transformation"), false, None) {
+        if menu_row(ui, tr("Reset warp transform"), false, None) {
             command = Some(("layer.fill.resetFrame", json!({"keepCorners": true})));
         }
         if menu_row(ui, tr("Reset all vertices"), false, None) {
@@ -142,18 +139,6 @@ fn resets(app: &mut TextureCraftApp, ui: &mut Ui, target: &WarpTarget) {
     }
 }
 
-/// An icon button with a caret that opens `menu` below it, highlighted while open
-fn icon_dropdown(ui: &mut Ui, id_salt: &str, icon: &str, tooltip: &str, menu: impl FnOnce(&mut Ui)) {
-    let popup_id = ui.make_persistent_id(id_salt);
-    let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-    let mut response = icon_dropdown_button(ui, icon, tooltip, open, ui.spacing().interact_size.y);
-    if !open {
-        response = response.on_hover_text(tooltip);
-    }
-
-    egui::Popup::menu(&response).id(popup_id).show(menu);
-}
-
 /// One list entry; `unavailable` greys it out and says why on hover. Returns true when clicked
 fn menu_row(ui: &mut Ui, label: &str, selected: bool, unavailable: Option<&str>) -> bool {
     let response = ui.add_enabled(unavailable.is_none(), egui::Button::new(label).selected(selected));
@@ -167,6 +152,7 @@ fn menu_row(ui: &mut Ui, label: &str, selected: bool, unavailable: Option<&str>)
 
 #[cfg(test)]
 mod tests {
+    use egui::accesskit::Role;
     use egui::{Modifiers, Pos2, vec2};
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
@@ -211,7 +197,9 @@ mod tests {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut harness, _) = fill_app("warp");
         let start = gizmo(&harness);
-        let ring_point = *start.ring.as_ref().expect("a frame facing the camera shows its ring").iter().max_by(|a, b| a.y.total_cmp(&b.y)).unwrap();
+        click_label(&mut harness, "Rotate");
+        let ring = gizmo(&harness).ring.expect("a frame facing the camera shows its ring");
+        let ring_point = *ring.iter().max_by(|first, second| first.y.total_cmp(&second.y)).unwrap();
         let handles: [(FrameGrab, Pos2, GizmoMode); 4] = [
             (FrameGrab::Slide, start.center, GizmoMode::Move),
             (FrameGrab::Axis(0), start.arrows[0].unwrap(), GizmoMode::Move),
@@ -261,6 +249,41 @@ mod tests {
     }
 
     #[test]
+    fn place_on_surface_keeps_a_warp_on_its_own_texture_set() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mesh = texturecraft_engine::geom::primitives::material_ball();
+        let session = texturecraft_engine::Session::new_project("Warp placement", mesh, "builtin:material_ball", None, 128).unwrap();
+        let mut harness = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|context| TextureCraftApp::new(context, session));
+        let layer = harness.state_mut().run("layer.add.fill", json!({})).unwrap()["layer"].as_u64().unwrap();
+        harness.state_mut().run("layer.fill.projection", json!({"layer": layer, "projection": "warp"})).unwrap();
+        harness.run_steps(2);
+        click_label(&mut harness, "Place on surface");
+
+        let app = harness.state();
+        let rect = app.viewport_rect;
+        let frame = gizmo(&harness);
+        let on_other_set = |point: Pos2| {
+            let local = point - rect.min;
+            app.session.texture_set_at(Vec2::new(local.x, local.y), app.session.viewport).is_some_and(|set| set != app.session.ts())
+        };
+        let movement = vec2(12.0, 0.0);
+        let rows = (0..rect.height() as usize).step_by(8);
+        let columns = (0..rect.width() as usize).step_by(8);
+        let mut candidates = rows.flat_map(|y| columns.clone().map(move |x| rect.min + vec2(x as f32, y as f32)));
+        let from = candidates
+            .find(|point| frame.grab(*point) == Some(FrameGrab::Place) && (0..=4).all(|step| on_other_set(*point + movement * (step as f32 / 4.0))))
+            .expect("a drag entirely on the material ball's other set");
+        let layer = frame.layer;
+        let before = projection(&harness, layer);
+        let steps = app.session.history_labels().len();
+
+        drag(&mut harness, from, from + movement, Modifiers::NONE);
+
+        assert_eq!(projection(&harness, layer), before, "the foreign surface must not take the warp");
+        assert_eq!(harness.state().session.history_labels().len(), steps);
+    }
+
+    #[test]
     fn world_space_arrows_ignore_the_frames_turn() {
         let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut harness, layer) = fill_app("warp");
@@ -295,11 +318,29 @@ mod tests {
         let tip = start.arrows[0].unwrap();
         let along = (tip - start.center).normalized();
 
-        drag(&mut harness, tip, tip + along * 37.0, Modifiers::COMMAND);
+        // On macOS Ctrl is independent of the platform Command modifier
+        drag(&mut harness, tip, tip + along * 37.0, Modifiers::CTRL);
 
         let (frame, _) = warp_parts(&harness, layer);
         let steps = frame.offset[0] / grid_step;
         assert!(frame.offset[0].abs() > 1e-3 && (steps - steps.round()).abs() < 1e-3, "moved by whole steps of {grid_step}: {:?}", frame.offset);
+    }
+
+    #[test]
+    fn keyboard_changes_the_warp_drag_steps() {
+        let _language = crate::i18n::TEST_LANGUAGE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut harness, _) = fill_app("warp");
+        let before = harness.state().ui.warp_toolbar.grid_step();
+        click_label(&mut harness, "Manipulator settings");
+        harness.get_by_role_and_label(Role::Slider, "Grid steps").focus();
+        harness.run_steps(2);
+
+        harness.key_press(egui::Key::ArrowRight);
+        harness.run_steps(2);
+
+        assert!(harness.get_by_role_and_label(Role::Slider, "Grid steps").is_focused());
+        assert!(harness.state().ui.warp_toolbar.grid_step() > before);
+        assert!(harness.query_by_role_and_label(Role::Slider, "Angle steps").is_some());
     }
 
     #[test]
@@ -325,7 +366,7 @@ mod tests {
         assert_eq!(harness.state().session.history_labels().len(), steps + 3);
 
         click_label(&mut harness, "Reset");
-        click_label(&mut harness, "Restore the global transformation");
+        click_label(&mut harness, "Reset warp transform");
 
         let (frame, corners) = warp_parts(&harness, layer);
         assert_eq!((frame, corners), (fitted, pulled), "the frame goes back and the corners stay");
