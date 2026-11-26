@@ -96,3 +96,23 @@ fn a_shaders_json_that_cannot_be_written_is_a_warning_after_the_textures() {
 
     assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.starts_with("The shader settings file was not written"))), "{result}");
 }
+
+#[test]
+fn a_shaders_json_named_like_an_earlier_commands_folder_is_a_warning() {
+    let mut session = texturecraft_engine::sample_session(128, 32).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let name = texturecraft_engine::shader_parameters::shader_parameters_file(&session.doc.project.name);
+    let reserved = format!("{}/Color.png", name.to_uppercase());
+
+    let result = execute(
+        &mut session,
+        "file.exportTextures",
+        &json!({"dir": dir.path().display().to_string(), "ts": 0, "shaderParameters": true, "reservedNames": [reserved]}),
+    )
+    .unwrap();
+
+    assert!(!dir.path().join(&name).exists(), "{result}");
+    let warnings = result["warnings"].as_array().unwrap();
+
+    assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("already used by a texture file or folder"))), "{result}");
+}

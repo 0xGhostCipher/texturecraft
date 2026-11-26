@@ -34,12 +34,19 @@ pub fn shader_parameters_file(name: &str) -> String {
     format!("{}_shaders.json", texturecraft_formats::export::sanitize_file_stem(name))
 }
 
+/// Refuse the file name `name` when one of the export's texture paths (`/`-separated, relative to the export folder) is that file or lies in a folder of that name, ignoring case
+pub fn check_shader_parameters_name<'a>(name: &str, texture_paths: impl IntoIterator<Item = &'a str>) -> std::result::Result<(), String> {
+    if texture_paths.into_iter().any(|path| path.split('/').next().is_some_and(|root| root.eq_ignore_ascii_case(name))) {
+        return Err(format!("\"{name}\" is already used by a texture file or folder"));
+    }
+
+    Ok(())
+}
+
 /// Build the download or headless sidecar after checking its name against every texture path.
 pub fn shader_parameters_sidecar(project: &Project, sets: &[usize], textures: &[ExportedFile]) -> std::result::Result<ExportedFile, String> {
     let name = shader_parameters_file(&project.name);
-    if textures.iter().any(|texture| texture.name.split('/').next().is_some_and(|root| root.eq_ignore_ascii_case(&name))) {
-        return Err(format!("\"{name}\" is already used by a texture file or folder"));
-    }
+    check_shader_parameters_name(&name, textures.iter().map(|texture| texture.name.as_str()))?;
 
     let bytes = serde_json::to_vec_pretty(&shader_parameters(project, sets)).map_err(|error| error.to_string())?;
     Ok(ExportedFile { name, bytes, width: 0, height: 0, warnings: Vec::new() })

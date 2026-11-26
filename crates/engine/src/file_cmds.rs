@@ -825,11 +825,16 @@ fn export_textures(session: &mut Session, params: &Value) -> Result<Value> {
         written.extend(write_usd_asset(session, dir, exports, &mut warnings));
     }
     if let Some(shader_sets) = shader_sets {
-        let path = dir.join(crate::shader_parameters::shader_parameters_file(&session.doc.project.name));
+        let name = crate::shader_parameters::shader_parameters_file(&session.doc.project.name);
+        let path = dir.join(&name);
         let parameters = crate::shader_parameters::shader_parameters(&session.doc.project, &shader_sets);
 
+        // Check the name against this command's files and the earlier commands' `reservedNames`, as the web download and headless export do
+        let roots = written.iter().filter_map(|written| written.strip_prefix(dir).ok()?.components().next()?.as_os_str().to_str());
+        let checked = crate::shader_parameters::check_shader_parameters_name(&name, roots.chain(taken_names.keys().map(String::as_str)));
+
         // The textures are written by now: a shaders file that fails is a warning, as a failed USD asset is
-        let text = serde_json::to_vec_pretty(&parameters).map_err(|error| error.to_string());
+        let text = checked.and_then(|()| serde_json::to_vec_pretty(&parameters).map_err(|error| error.to_string()));
         match text.and_then(|text| texturecraft_formats::write_atomic(&path, &text).map_err(|error| error.to_string())) {
             Ok(()) => written.push(path),
             Err(error) => warnings.push(format!("The shader settings file was not written: {error}")),
