@@ -588,6 +588,10 @@ pub struct UiState {
     /// Window ▸ Hide UI (Tab): only the viewport.
     pub hide_ui: bool,
     pub windows: Windows,
+    /// Mesh Export Options: compute smooth normals on the exported copy, not the project.
+    /// Off by default so an export keeps the project's authored normals unless the user opts in.
+    #[serde(default)]
+    pub mesh_recompute_normals: bool,
     pub uv_zoom: f32,
     pub uv_pan: [f32; 2],
     /// The 2D view's turn, counter-clockwise on screen in radians (Alt+left drag)
@@ -763,6 +767,7 @@ impl UiState {
         }
 
         self.export = keep.export;
+        self.mesh_recompute_normals = keep.mesh_recompute_normals;
         self.recent = keep.recent;
         self.last_template = keep.last_template;
         self.prefs = keep.prefs;
@@ -802,6 +807,7 @@ impl Default for UiState {
             selected_baked_map: None,
             hide_ui: false,
             windows: Windows::default(),
+            mesh_recompute_normals: false,
             uv_zoom: 1.0,
             uv_pan: [0.0, 0.0],
             uv_rotation: 0.0,
@@ -885,6 +891,15 @@ mod tests {
     }
 
     #[test]
+    fn mesh_export_normal_choice_defaults_off_for_older_saved_states() {
+        assert!(!UiState::default().mesh_recompute_normals);
+        let mut saved = serde_json::to_value(UiState::default()).unwrap();
+        saved.as_object_mut().unwrap().remove("mesh_recompute_normals");
+        let loaded: UiState = serde_json::from_value(saved).unwrap();
+        assert!(!loaded.mesh_recompute_normals, "older states keep the project's stored normals unless the user opts in");
+    }
+
+    #[test]
     fn adopting_a_layout_keeps_recent_files_and_user_settings() {
         use crate::frame_gizmo::warp_toolbar::{GizmoMode, GizmoSpace, WarpToolbarSettings};
 
@@ -893,7 +908,9 @@ mod tests {
         ui.warp_toolbar = warp_toolbar;
         ui.export.preset = "Mine".into();
         ui.keymap.insert("file.save".into(), "F5".into());
+        ui.mesh_recompute_normals = false;
         let mut layout = UiState::default();
+        layout.mesh_recompute_normals = true;
         layout.dock.close(crate::docking::Panel::Assets);
 
         ui.adopt_layout(layout);
@@ -902,6 +919,7 @@ mod tests {
         assert_eq!(ui.recent, vec!["a.tcraft".to_string()]);
         assert_eq!(ui.export.preset, "Mine");
         assert_eq!(ui.keymap.get("file.save").map(String::as_str), Some("F5"));
+        assert!(!ui.mesh_recompute_normals, "a layout does not change the user's export setting");
         assert_eq!(ui.warp_toolbar, warp_toolbar, "loading a layout keeps the user's warp settings");
     }
 
