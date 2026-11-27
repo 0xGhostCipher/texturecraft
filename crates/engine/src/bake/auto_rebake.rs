@@ -47,7 +47,7 @@ impl Session {
             let map = set.auto_rebake?;
             let record = set.bake_sources.get(&map).filter(|_| set.baked.contains(&map))?;
             let current = self.bake_source(index, map).ok()?;
-            (!record.changes(&current).is_empty()).then_some((index, map, current))
+            (*record != current).then_some((index, map, current))
         })
         .collect()
     }

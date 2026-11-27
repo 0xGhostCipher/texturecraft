@@ -47,8 +47,12 @@ impl Session {
                 let set = self.doc.project.texture_sets.get(*index)?;
                 let map = set.auto_rebake.filter(|map| set.baked.contains(map))?;
                 let from_high = !set.bake.high_poly.use_low_as_high && !self.doc.bake_meshes.high.is_empty();
-                (from_high && self.bake_changes(*index, map).is_empty()).then_some(())?;
-                Some((*index, map, self.bake_source(*index, map).ok()?, region.stroke))
+                from_high.then_some(())?;
+                let current = self.bake_source(*index, map).ok()?;
+
+                // Only painting changed it: a map without a record is never out of date
+                let up_to_date = set.bake_sources.get(&map).is_none_or(|record| *record == current);
+                up_to_date.then_some((*index, map, current, region.stroke))
             })
             .collect()
     }
