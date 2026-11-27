@@ -5,6 +5,7 @@ use egui::{Color32, CornerRadius, Rect, Response, RichText, Sense, Stroke, Strok
 
 use crate::drawn_icon::DrawnIcon;
 use crate::i18n::tr;
+use crate::press_edit::PressEdit;
 use crate::theme::Tokens;
 
 /// The drag-and-drop payload of type `T` released on `resp` this frame. Unlike
@@ -50,13 +51,6 @@ pub(crate) fn press_edit(ui: &Ui, id: egui::Id, changed: bool) -> Option<bool> {
         };
         changed.then_some(merge)
     })
-}
-
-/// The press an editor's last change belonged to, and the frame it was seen in
-#[derive(Clone, Copy)]
-struct PressEdit {
-    press: u64,
-    frame: u64,
 }
 
 /// [`slider`] for a value re-read from the document every frame: `Some(merge)` on every frame

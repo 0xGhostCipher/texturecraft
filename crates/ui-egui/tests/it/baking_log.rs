@@ -1,7 +1,7 @@
 //! The Baking Log panel: the latest bake, map by map
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use texturecraft_engine::bake::{BakeHighState, BakeLogHigh, BakeLogMap, BakeLogMatching, BakeMapState, NamePair};
 use texturecraft_engine::core::{BakeResolution, BakedMap};
 use texturecraft_ui_egui::TextureCraftApp;
@@ -54,6 +54,20 @@ fn the_baking_process_tab_lists_each_set_and_map_with_how_it_went() {
         assert!(harness.query_by_label(&format!("{} {map}, Baked", names[0])).is_some(), "set 0's {map} row is ticked");
     }
     assert!(harness.query_by_label(&format!("{} ID, Not baked", names[1])).is_some(), "set 1's row failed");
+}
+
+#[test]
+fn a_failed_rows_reason_is_read_without_hovering() {
+    let mut harness = harness();
+
+    bake_with_set_1_failing(&mut harness, &[BakedMap::Id]);
+
+    let app = harness.state();
+    let row = app.session.bake_log.maps.iter().find(|row| row.texture_set == 1).unwrap();
+    let BakeMapState::Failed(reason) = &row.state else { panic!("set 1's bake failed: {:?}", row.state) };
+    let label = format!("{} ID, Not baked", row.set_name);
+    let node = harness.get_by_label(&label);
+    assert_eq!(node.accesskit_node().description().as_deref(), Some(reason.as_str()), "the row's node carries its tooltip's reason");
 }
 
 #[test]
@@ -174,10 +188,13 @@ fn the_high_poly_tab_lists_each_sets_high_poly_files_under_a_row_that_folds() {
     harness.run_steps(3);
     let set_name = harness.state().session.doc.project.texture_sets[0].name.clone();
     harness.get_by_label("ball_high.obj, Loaded");
+    let set_row = format!("{set_name}, High poly files");
+    assert_eq!(harness.get_by_label(&set_row).accesskit_node().data().is_expanded(), Some(true));
 
-    harness.get_by_label(&format!("{set_name}, High poly files")).click();
+    harness.get_by_label(&set_row).click();
     harness.run_steps(3);
     assert!(harness.query_by_label("ball_high.obj, Loaded").is_none(), "a folded set hides its files");
+    assert_eq!(harness.get_by_label(&set_row).accesskit_node().data().is_expanded(), Some(false), "the row says it is folded");
 }
 
 #[test]

@@ -109,8 +109,8 @@ fn a_skew_stroke_rebakes_only_its_box_and_the_box_matches_a_whole_bake() {
     let pixels = output.maps[&BakedMap::Position].chunks(components).zip(before.chunks(components)).zip(whole.chunks(components));
     let mut changed = 0;
     for (index, ((rebaked, kept), baked_whole)) in pixels.enumerate() {
+        assert_eq!(rebaked, baked_whole, "texel {index} matches a whole bake");
         if region.contains(index % width, index / width) {
-            assert_eq!(rebaked, baked_whole, "texel {index} inside the box");
             changed += usize::from(rebaked != kept);
         } else {
             assert_eq!(rebaked, kept, "texel {index} outside the box");
@@ -138,6 +138,42 @@ fn a_stroke_painted_while_the_rebake_runs_waits_for_the_next_one() {
 
     let painted: Vec<_> = session.auto_rebake_painted().into_iter().map(|(set, map, _, _)| (set, map)).collect();
     assert_eq!(painted, [(0, BakedMap::Position)], "the second stroke is not in the stored map yet");
+}
+
+#[test]
+fn undoing_the_rebake_of_a_stroke_makes_its_box_due_again() {
+    let mut session = super::bake::leaning_session(true);
+    execute(&mut session, "bake.run", &json!({ "maps": ["position"], "dilation": 2 })).unwrap();
+    execute(&mut session, "bake.autoRebake", &json!({ "map": "position" })).unwrap();
+    execute(&mut session, "bake.skew.paint", &json!({ "points": [[0.3, 0.3]], "radius": 0.05, "size": 64 })).unwrap();
+    let mut task = session.bake_painted_task(0, BakedMap::Position).unwrap();
+    task.tracer = None;
+    let output = task.run_streaming(&Progress::new(), &mut |_| {}).unwrap();
+    session.apply_streamed_bake(0, output).unwrap();
+    assert!(session.auto_rebake_painted().is_empty(), "the rebake took the stroke");
+
+    session.undo().unwrap();
+
+    let painted: Vec<_> = session.auto_rebake_painted().into_iter().map(|(set, map, _, _)| (set, map)).collect();
+    assert_eq!(painted, [(0, BakedMap::Position)], "the map is back to its pixels from before the stroke, which is still painted");
+    session.redo().unwrap();
+    assert!(session.auto_rebake_painted().is_empty(), "redo brings the rebake back");
+}
+
+#[test]
+fn a_bake_after_a_mesh_reimport_takes_the_strokes_painted_before_it() {
+    let quad = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nf 1/1 2/2 3/3\nf 1/1 3/3 4/4\n";
+    let mut session = Session::from_mesh_bytes_with_uvs("quad.obj", quad.as_bytes(), 128, "quad", None, false).unwrap();
+    session.add_high_poly_bytes("quad_high.obj", quad.replace("v 1 1 0", "v 1 1 0.1").into_bytes()).unwrap();
+    execute(&mut session, "bake.run", &json!({ "resolution": 32, "maps": ["position"], "dilation": 0 })).unwrap();
+    execute(&mut session, "bake.autoRebake", &json!({ "map": "position" })).unwrap();
+    execute(&mut session, "bake.skew.paint", &json!({ "points": [[0.5, 0.5]], "radius": 0.05, "size": 64 })).unwrap();
+
+    session.reimport_mesh(None, false).unwrap();
+    execute(&mut session, "bake.run", &json!({})).unwrap();
+
+    let painted: Vec<_> = session.auto_rebake_painted().into_iter().map(|(set, map, _, _)| (set, map)).collect();
+    assert!(painted.is_empty(), "the bake after the reimport took the stroke: {painted:?}");
 }
 
 #[test]
