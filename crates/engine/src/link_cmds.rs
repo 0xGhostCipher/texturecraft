@@ -355,7 +355,7 @@ const HANDOFF_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 
 /// Write `package` as `file_name` inside a new folder only this call can have made under the temp folder, and return the
 /// file's path (for [`open_in_materialcraft`]). A fixed `<temp>/<name>` is guessable: on a shared `/tmp` another user
 /// could plant a file or link there first and the write would go through it. The folder name is random, is created
-/// exclusively (mode `0700` on Unix) and the file is created with `create_new`, so nothing planted is ever written through.
+/// exclusively (mode `0700` on Unix) and the file is created with `create_new` (mode `0600`), so nothing planted is ever written through.
 /// The folder stays after the call because MaterialCraft needs the file while it is open; folders over a week old go.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn stage_handoff_package(file_name: &str, package: &[u8]) -> Result<std::path::PathBuf> {
@@ -371,9 +371,18 @@ fn stage_handoff_package_in(base: &std::path::Path, file_name: &str, package: &[
     }
     sweep_old_handoffs(base, HANDOFF_MAX_AGE);
     // Dropped (and removed) on any early return, so a failed write leaves no empty folder behind.
-    let dir = tempfile::Builder::new().prefix(HANDOFF_PREFIX).tempdir_in(base).map_err(io)?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(HANDOFF_PREFIX);
+    // tempfile makes folders with the default mode (0755 under the usual umask), so ask for 0700 and 0600 explicitly.
+    #[cfg(unix)]
+    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    let dir = builder.tempdir_in(base).map_err(io)?;
     let path = dir.path().join(file_name);
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(io)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&path).map_err(io)?;
     file.write_all(package).map_err(io)?;
     file.sync_all().map_err(io)?;
     let _ = dir.keep();
@@ -804,6 +813,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(a.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+            assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
         }
         std::fs::remove_dir_all(&base).unwrap();
     }
