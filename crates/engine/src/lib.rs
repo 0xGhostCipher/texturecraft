@@ -51,6 +51,7 @@ pub mod material_lib;
 mod material_preview_pixel;
 pub mod materials;
 pub mod materialx_cmds;
+mod mesh_map_sampler;
 pub mod meshmap_cmds;
 mod meshmap_file_name;
 pub mod meshmap_import_cmds;

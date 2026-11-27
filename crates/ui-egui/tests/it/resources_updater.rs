@@ -85,6 +85,8 @@ fn the_window_opens_from_the_keyboard_and_updates_an_outdated_resource_as_one_un
     assert_eq!(width_of(&h, "zz_changed.png"), 8, "the new file's pixels are in the project");
     assert_eq!(h.state().session.history_labels().len(), steps + 1, "one undo step");
     assert!(shows(&h, "(2 resources, 0 outdated)"));
+    let result = h.get_by_label("Updated 1 resources");
+    assert_eq!(result.accesskit_node().live(), egui::accesskit::Live::Polite, "the update result is announced away from focus");
 
     // Undo brings the old pixels back, so Refresh shows the file as changed again
     h.state_mut().run("edit.undo", json!({})).unwrap();
@@ -118,7 +120,11 @@ fn select_new_resource_follows_the_chosen_file_and_the_name_filter_narrows_the_l
     h.run_steps(3);
 
     assert_eq!(width_of(&h, "first.png"), 16, "the resource keeps its name and takes the chosen file's pixels");
-    assert!(h.state().session.doc.project.resource_sources["first.png"].path.ends_with("other.png"));
+    let source = &h.state().session.doc.project.resource_sources["first.png"].path;
+    assert!(source.ends_with("other.png"));
+    let announcement = format!("first.png now reads {source}");
+    let result = h.get_by_label(&announcement);
+    assert_eq!(result.accesskit_node().live(), egui::accesskit::Live::Polite, "the relink result is announced away from focus");
 
     h.get_by_role_and_label(Role::TextInput, "Name filter:").focus();
     h.run_steps(2);
@@ -155,6 +161,11 @@ fn show_in_folder_shows_the_folder_of_the_resource_file_and_materials_have_no_fi
     assert!(shows(&h, "Name : brick.mcmat"), "the material is listed");
     assert!(h.query_by_label("Select new resource brick.mcmat").is_none(), "a material cannot point at an image file");
     assert!(h.query_by_label("Show in folder brick.mcmat").is_none(), "it has no file");
+    assert!(h.get_by_label("Update brick.mcmat").accesskit_node().is_disabled());
+    assert!(
+        h.get_all_by_label("Material").any(|node| node.accesskit_node().description().is_some_and(|text| text.contains("stored in the project"))),
+        "the material status explains the stored package in the accessibility tree"
+    );
 }
 
 #[test]
@@ -200,7 +211,8 @@ fn a_file_changed_while_the_window_stays_open_shows_without_refresh() {
     png(&dir, "bricks.png", 8);
     h.run_steps(FRAMES);
 
-    assert!(shows(&h, "(1 resources, 1 outdated)"), "no document change, no focus change and no Refresh");
+    let summary = h.get_by_label("(1 resources, 1 outdated)");
+    assert_eq!(summary.accesskit_node().live(), egui::accesskit::Live::Polite, "an idle change is announced away from keyboard focus");
 }
 
 #[test]

@@ -83,5 +83,3 @@ egui_kittest = { version = "0.37", features = ["wgpu", "eframe"] }
 pollster = "0.4"
 image = { workspace = true }
 craft-image-codecs = { workspace = true }
-# Test folders removed when the test ends
-tempfile = "3"

@@ -137,7 +137,8 @@ fn outdated_resources_come_first_then_missing_up_to_date_unlinked_and_materials(
 
     assert_eq!(order, ["d_changed.png", "c_gone.png", "b_fine.png", "a_unlinked.png", "a_brick.mcmat"], "by status first, against the name order");
     assert_eq!(statuses, ["outdated", "missing", "upToDate", "noSource", "material"], "the alpha's and the environment's files are checked too");
-    assert!(execute(&mut s, "resource.update", &json!({"names": ["a_brick.mcmat"]})).is_err(), "a material has no file to read again");
+    let error = execute(&mut s, "resource.update", &json!({"names": ["a_brick.mcmat"]})).unwrap_err();
+    assert!(error.to_string().contains("only image resources can be relinked"), "{error}");
 }
 
 #[test]
@@ -168,6 +169,25 @@ fn a_same_size_file_is_compared_by_contents_once_per_time() {
     // Another time reads the file, and its bytes differ
     set_modified(&file, later + Duration::from_secs(10));
     assert_eq!(status_of(&mut s, &name), ResourceStatus::Outdated);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_without_a_usable_timestamp_is_compared_on_each_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archived.png");
+    write_png(&path, 4, RED);
+    set_modified(&path, SystemTime::UNIX_EPOCH - Duration::from_secs(20));
+    let mut session = session();
+    let name = import(&mut session, &path);
+    assert_eq!(status_of(&mut session, &name), ResourceStatus::UpToDate);
+
+    let mut changed = std::fs::read(&path).unwrap();
+    changed[0] ^= 1;
+    std::fs::write(&path, changed).unwrap();
+    set_modified(&path, SystemTime::UNIX_EPOCH - Duration::from_secs(10));
+
+    assert_eq!(status_of(&mut session, &name), ResourceStatus::Outdated);
 }
 
 #[test]
@@ -328,12 +348,80 @@ fn an_imported_mesh_map_follows_its_changed_file_until_something_else_replaces_i
 }
 
 #[test]
+fn an_explicit_mesh_map_replacement_breaks_the_import_link_even_when_pixels_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("Ball_ao.png");
+    let replacement = dir.path().join("replacement.png");
+    let equal_color = [60, 60, 60, 255];
+    write_png(&original, 4, equal_color);
+    write_png(&replacement, 4, equal_color);
+    let mut session = ball();
+    let replacement_name = import(&mut session, &replacement);
+    execute(&mut session, "textureSet.meshMap.import", &json!({"files": [{"path": text(&original)}]})).unwrap();
+    let imported = ambient_occlusion(&session);
+
+    execute(&mut session, "textureSet.meshMap.set", &json!({"ts": 0, "map": "ambientOcclusion", "image": replacement_name})).unwrap();
+    write_png(&original, 8, [200, 200, 200, 255]);
+    let result = execute(&mut session, "resource.update", &Value::Null).unwrap();
+
+    assert_eq!(result["updated"], json!(["Ball_ao.png"]));
+    assert!(ambient_occlusion(&session) == imported, "replacing a map explicitly takes ownership even when the pixels were equal");
+}
+
+#[test]
+fn removing_unused_resources_keeps_the_file_that_feeds_an_imported_mesh_map() {
+    let dir = tempfile::tempdir().unwrap();
+    let map_file = dir.path().join("Ball_ao.png");
+    let unused_file = dir.path().join("unused.png");
+    write_png(&map_file, 4, [60, 60, 60, 255]);
+    write_png(&unused_file, 4, RED);
+    let mut session = ball();
+    let unused_name = import(&mut session, &unused_file);
+    execute(&mut session, "textureSet.meshMap.import", &json!({"files": [{"path": text(&map_file)}]})).unwrap();
+    let imported = ambient_occlusion(&session);
+
+    let cleanup = execute(&mut session, "file.removeUnused", &Value::Null).unwrap();
+
+    assert_eq!(cleanup["removed"], json!([unused_name]));
+    write_png(&map_file, 8, [200, 200, 200, 255]);
+    let update = execute(&mut session, "resource.update", &Value::Null).unwrap();
+
+    assert_eq!(update["updated"], json!(["Ball_ao.png"]));
+    assert_ne!(ambient_occlusion(&session), imported);
+}
+
+#[test]
+fn updating_duplicate_names_replaces_each_image_once_and_releases_old_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = ["first.png", "second.png"].map(|name| dir.path().join(name));
+    let mut session = session();
+    let names = files.each_ref().map(|path| {
+        write_png(path, 4, RED);
+        import(&mut session, path)
+    });
+    let old_pixels = names.each_ref().map(|name| Arc::downgrade(&session.images[name]));
+    for file in &files {
+        write_png(file, 8, GREEN);
+    }
+
+    let result = execute(&mut session, "resource.update", &json!({"names": [&names[0], &names[1], &names[0]]})).unwrap();
+
+    assert_eq!(result["updated"], json!(names));
+    assert!(old_pixels.iter().all(|pixels| pixels.upgrade().is_none()), "history keeps the encoded bytes, so replaced decoded images can drop");
+    for name in names {
+        assert_eq!(session.images[&name].width, 8);
+    }
+}
+
+#[test]
 fn pbr_folder_and_materialx_imports_remember_their_image_files() {
     let dir = tempfile::tempdir().unwrap();
-    let color = dir.path().join("moss_col.png");
+    let long_name = |suffix: &str| format!("{}{suffix}", "m".repeat(texturecraft_formats::MAX_RESOURCE_NAME_LEN - suffix.len()));
+    let color = dir.path().join(long_name("_col.png"));
     write_png(&color, 4, RED);
     std::fs::create_dir(dir.path().join("tex")).unwrap();
-    let base = dir.path().join("tex").join("base.png");
+    let base_name = long_name("_base.png");
+    let base = dir.path().join("tex").join(&base_name);
     write_png(&base, 4, GREEN);
     let mtlx = dir.path().join("m.mtlx");
     let document = r#"<?xml version="1.0"?>
@@ -342,22 +430,29 @@ fn pbr_folder_and_materialx_imports_remember_their_image_files() {
   <tiledimage name="a" type="color3"><input name="file" type="filename" value="base.png" /></tiledimage>
   <surfacematerial name="M" type="material"><input name="surfaceshader" type="surfaceshader" nodename="S" /></surfacematerial>
 </materialx>"#;
-    std::fs::write(&mtlx, document).unwrap();
+    std::fs::write(&mtlx, document.replace("base.png", &base_name)).unwrap();
     let mut s = session();
+    import(&mut s, &color);
+    import(&mut s, &base);
 
     let pbr = execute(&mut s, "file.importPbrFolder", &json!({"files": [text(&color)]})).unwrap();
     let materialx = execute(&mut s, "file.importMaterialX", &json!({"path": text(&mtlx)})).unwrap();
     let pbr_name = pbr["resources"][0].as_str().unwrap().to_string();
     let materialx_name = materialx["resources"][0].as_str().unwrap().to_string();
 
-    assert!(s.doc.project.resource_sources[&pbr_name].path.ends_with("moss_col.png"));
-    assert!(s.doc.project.resource_sources[&materialx_name].path.ends_with("base.png"));
+    let mut reopened = Session::from_project_bytes(&s.to_project_bytes().unwrap()).unwrap();
+    assert_eq!(Path::new(&reopened.doc.project.resource_sources[&pbr_name].path).canonicalize().unwrap(), color.canonicalize().unwrap());
+    assert_eq!(Path::new(&reopened.doc.project.resource_sources[&materialx_name].path).canonicalize().unwrap(), base.canonicalize().unwrap());
 
     write_png(&color, 8, GREEN);
     write_png(&base, 8, RED);
 
-    assert_eq!(status_of(&mut s, &pbr_name), ResourceStatus::Outdated);
-    assert_eq!(status_of(&mut s, &materialx_name), ResourceStatus::Outdated);
+    let rows = reopened.resource_states();
+    let missing: Vec<_> = [&pbr_name, &materialx_name]
+        .into_iter()
+        .filter(|name| !rows.iter().any(|row| row.name == name.as_str() && row.status == ResourceStatus::Outdated))
+        .collect();
+    assert!(missing.is_empty(), "both material imports must keep their source images after reopening: {missing:?}");
 }
 
 #[test]
@@ -379,4 +474,49 @@ fn a_mesh_map_imported_twice_follows_the_latest_file() {
 
     assert_ne!(ambient_occlusion(&s), imported, "the mesh map follows the file imported last");
     assert!(s.doc.project.resource_sources[&first].mesh_map.is_none(), "the earlier import no longer feeds the slot");
+}
+
+#[test]
+fn an_undecodable_saved_resource_is_reported_even_when_its_file_is_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("broken.png");
+    write_png(&file, 4, RED);
+    let mut session = session();
+    let name = import(&mut session, &file);
+    let invalid = b"incomplete image".to_vec();
+    std::fs::write(&file, &invalid).unwrap();
+    session.doc.resources.insert(name.clone(), Arc::new(invalid));
+    session.images.remove(&name);
+
+    let result = execute(&mut session, "resource.update", &json!({"names": [name]}));
+
+    assert!(result.unwrap_err().to_string().contains("nothing was updated"));
+    assert!(!session.images.contains_key(&name));
+}
+
+#[test]
+fn a_rejected_update_restores_all_previously_decoded_images() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session();
+    let names = ["left.png", "right.png"].map(|name| {
+        let path = dir.path().join(name);
+        write_png(&path, 4, RED);
+        let imported = import_as_fill(&mut session, &path);
+        write_png(&path, 8, GREEN);
+        imported
+    });
+
+    // Make final document validation fail after both replacements have been processed
+    let layer = session.doc.project.layers.values_mut().next().unwrap();
+    layer.kind = texturecraft_engine::core::LayerKind::Instance { source: layer.id };
+    let steps = session.history_labels().len();
+
+    let result = execute(&mut session, "resource.update", &json!({"names": names}));
+
+    assert!(result.unwrap_err().to_string().contains("would draw itself"));
+    assert_eq!(session.history_labels().len(), steps);
+    for name in names {
+        assert_eq!(session.images[&name].width, 4);
+        assert_eq!(status_of(&mut session, &name), ResourceStatus::Outdated);
+    }
 }

@@ -304,11 +304,9 @@ impl Session {
                     }
                 };
                 let base = texturecraft_formats::sanitize_resource_name(&resource_name);
-                let (mut unique, mut suffix_index) = (base.clone(), 2);
-                while self.doc.resources.contains_key(&unique) || added.iter().any(|(a, _)| *a == unique) {
-                    unique = format!("{suffix_index}_{base}");
-                    suffix_index += 1;
-                }
+                let unique = crate::resource_cmds::unique_resource_name(base, |name| {
+                    self.doc.resources.contains_key(name) || added.iter().any(|(added_name, _)| added_name == name)
+                });
 
                 // Only a resource holding the file's own bytes can be compared with it later
                 if take == Take::Whole

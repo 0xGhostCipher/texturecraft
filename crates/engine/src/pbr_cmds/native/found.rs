@@ -11,8 +11,6 @@ pub(in crate::pbr_cmds) struct Found {
 }
 
 impl Found {
-    /// Reads one file of the list. Archive entries are read through a limit, since their
-    /// declared size can lie.
     /// The file on disk `name` is read from (None for an archive entry or a name not in the list)
     pub(in crate::pbr_cmds) fn disk_path(&self, name: &str) -> Option<String> {
         let path = match &self.source {
@@ -23,6 +21,8 @@ impl Found {
         path.to_str().map(str::to_string)
     }
 
+    /// Reads one file of the list. Archive entries are read through a limit, since their
+    /// declared size can lie.
     pub(in crate::pbr_cmds) fn load(&self, name: &str) -> std::result::Result<Vec<u8>, String> {
         match &self.source {
             Origin::Folder { root } => read_regular(&root.join(name), MAX_FILE_BYTES),

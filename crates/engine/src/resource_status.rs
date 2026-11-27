@@ -12,8 +12,7 @@ pub enum ResourceStatus {
     UpToDate,
     /// Made in the app or imported without a file path: there is nothing to compare with.
     NoSource,
-    /// A linked MaterialCraft material's package: it has no file to compare with and updates by
-    /// cooking it again (`material.link.cook`).
+    /// A linked MaterialCraft package stored in the project, without a source file to compare.
     Material,
 }
 

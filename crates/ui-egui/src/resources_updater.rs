@@ -17,7 +17,6 @@ use crate::state::ResourcesUpdater;
 use crate::theme::Tokens;
 use crate::toast_action::ToastAction;
 use crate::web_files::IMAGE_EXTS;
-use crate::widgets::primary_button;
 use row_request::RowRequest;
 
 /// Width of the window
@@ -103,7 +102,10 @@ pub(crate) fn update(app: &mut TextureCraftApp, names: Option<Vec<String>>) {
         Some(names) => json!({ "names": names }),
         None => json!({}),
     };
-    let Some(result) = app.run("resource.update", params) else { return };
+    let Some(result) = app.run("resource.update", params) else {
+        app.announce_latest_toast();
+        return;
+    };
 
     let updated = result["updated"].as_array().map_or(0, Vec::len);
     let failed: Vec<String> = result["failed"]
@@ -117,6 +119,7 @@ pub(crate) fn update(app: &mut TextureCraftApp, names: Option<Vec<String>>) {
     } else {
         app.toast(trf("Updated {count} resources; could not update {failed}", &[("count", &updated), ("failed", &failed.join("; "))]), true);
     }
+    app.announce_latest_toast();
 
     // What was announced is handled; a later change is announced again
     app.resources_notified.clear();
@@ -129,12 +132,14 @@ fn select_new_resource(app: &mut TextureCraftApp, name: String) {
         let Some(path) = paths.first() else { return };
         let Some(path) = path.to_str() else {
             app.toast(trf("Could not use a path that is not UTF-8: {path}", &[("path", &path.display())]), true);
+            app.announce_latest_toast();
             return;
         };
 
         if app.run("resource.relink", json!({ "name": name, "path": path })).is_some() {
             app.toast(trf("{name} now reads {path}", &[("name", &name), ("path", &path)]), false);
         }
+        app.announce_latest_toast();
     });
 }
 
@@ -143,6 +148,7 @@ fn show_in_folder(app: &mut TextureCraftApp, path: &str) {
     let folder = std::path::Path::new(path).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     if let Err(error) = app.file_dialogs.show_folder(&folder) {
         app.toast(trf("Could not show {folder}: {error}", &[("folder", &folder.display()), ("error", &error)]), true);
+        app.announce_latest_toast();
     }
 }
 
@@ -161,7 +167,7 @@ fn summary(rows: &[ResourceState]) -> String {
 pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let Some(mut window) = app.ui.windows.resources_updater.take() else { return };
 
-    // Resources of another project are not this one's
+    // Drop the window state when its project closes or changes
     if window.project != app.session.project_id || !app.session.project_open {
         return;
     }
@@ -176,8 +182,8 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
     }
 
-    // Escape closes the window only while one of its controls had the keyboard (egui takes the focus away on it); otherwise it cancels a stroke as usual
-    // egui consumes that Escape to take the focus away, so the raw events are read
+    // Only close on Escape when the window owned keyboard focus
+    // Read raw input because egui consumes Escape when it clears focus
     let escape = ctx.input(|input| input.raw.events.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })));
     if window.had_keyboard && escape && !egui::Popup::is_any_open(ctx) {
         return;
@@ -193,7 +199,6 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.label(format!("{} {}", tr("Project :"), app.session.doc.project.name));
 
-            // Shader resources have no equivalent here: the one tab lists image resources
             let tab = ui.add(egui::Button::selectable(true, tr("Resources")));
             tab.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, true, tr("Resources")));
             ui.separator();
@@ -232,10 +237,13 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                     let refresh_button = ui.button(tr("Refresh"));
                     refresh_button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Refresh resources")));
                     refresh = refresh_button.clicked();
-                    ui.label(summary(&window.rows));
+                    let count = ui.label(summary(&window.rows));
+                    ui.ctx().accesskit_node_builder(count.id, |node| node.set_live(egui::accesskit::Live::Polite));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let outdated = window.rows.iter().any(|row| row.status == ResourceStatus::Outdated);
-                        let button = ui.add_enabled(outdated, primary_button(ui, tr("Update All")));
+                        let label = egui::RichText::new(tr("Update All")).color(tokens.text_strong);
+                        let action = egui::Button::new(label).fill(tokens.accent_dim).stroke(egui::Stroke::new(1.0, tokens.text_dim));
+                        let button = ui.add_enabled(outdated, action);
                         update_all = button.on_disabled_hover_text(tr("No resource is outdated")).clicked();
                     });
                 });
@@ -254,7 +262,7 @@ pub(crate) fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
                             ui.label(tr("No resources match the filters"));
                         }
                         for (index, row) in visible.into_iter().enumerate() {
-                            // Ids from the name alone, so the keyboard focus stays with its resource when a check reorders the rows
+                            // Keep keyboard focus with the resource when rows move
                             let row_scope = egui::UiBuilder::new().scope_id(ui.scope_id().with(("resources_updater_row", &row.name)));
                             let asked = ui.scope_builder(row_scope, |ui| row_ui(app, ui, &tokens, index + 1, row)).inner;
                             if let Some(asked) = asked {
@@ -311,16 +319,20 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
         ui.horizontal(|ui| {
             match app.session.images.get(&row.name) {
                 Some(image) => {
-                    let texture = app.thumbs.image(ui.ctx(), &row.name, image);
-                    ui.add(egui::Image::new(&texture).fit_to_exact_size(egui::vec2(THUMBNAIL_POINTS, THUMBNAIL_POINTS)));
+                    let (rect, preview) = ui.allocate_exact_size(egui::Vec2::splat(THUMBNAIL_POINTS), egui::Sense::hover());
+                    preview.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &row.name));
+                    if ui.is_rect_visible(rect) {
+                        let texture = app.thumbs.image(ui.ctx(), &row.name, image);
+                        egui::Image::new(&texture).paint_at(ui, rect);
+                    }
                 }
 
-                // A file that could not be decoded has no picture; the row keeps its place
+                // Reserve thumbnail space for images that failed to decode
                 None => ui.add_space(THUMBNAIL_POINTS),
             }
             ui.label(number.to_string());
 
-            // Buttons go first, so the texts truncate in what is left; each accessible name names its resource
+            // Reserve space for the buttons before truncating the labels
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let update = ui.add_enabled(outdated, egui::Button::new(tr("Update")));
                 let update_name = format!("{} {}", tr("Update"), row.name);
@@ -329,7 +341,7 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
                     request = Some(RowRequest::Update(row.name.clone()));
                 }
 
-                // A material is no image file, so it cannot point at one
+                // Only images can be relinked to disk
                 let material = row.status == ResourceStatus::Material;
                 if !material {
                     let select = ui.button(tr("Select new resource"));
@@ -355,10 +367,13 @@ fn row_ui(app: &mut TextureCraftApp, ui: &mut egui::Ui, tokens: &Tokens, number:
                     let file = row.path.as_deref().unwrap_or(tr("No source file"));
                     ui.add(egui::Label::new(format!("{} {}", tr("File :"), file)).truncate()).on_hover_text(file);
                     let status = ui.label(tr(row.status.label()));
-                    if let Some(error) = &row.error {
-                        status.on_hover_text(error);
-                    } else if material {
-                        status.on_hover_text(tr("A MaterialCraft material has no file on disk: it updates when MaterialCraft cooks it again"));
+                    let detail = row
+                        .error
+                        .as_deref()
+                        .or_else(|| material.then(|| tr("This MaterialCraft package is stored in the project. Its cooked maps are separate image resources.")));
+                    if let Some(detail) = detail {
+                        ui.ctx().accesskit_node_builder(status.id, |node| node.set_description(detail));
+                        status.on_hover_text(detail);
                     }
                 });
             });
@@ -373,6 +388,7 @@ mod tests {
     use std::sync::PoisonError;
 
     use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT as _, Queryable as _};
     use texturecraft_engine::Session;
 
     use super::*;
@@ -393,6 +409,8 @@ mod tests {
         write_png(&path, 4);
         let session = Session::new_project("Test", texturecraft_engine::geom::primitives::cube(1.0), "builtin:cube", None, 128).unwrap();
         let mut harness = Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        harness.state_mut().ui.prefs.language = "en".into();
+        harness.run_steps(2);
         let app = harness.state_mut();
         let name = app.run("resource.import", json!({ "path": path.to_str().unwrap() })).unwrap()["name"].as_str().unwrap().to_string();
 
@@ -409,8 +427,15 @@ mod tests {
         ToastAction::UpdateResources { project: app.session.project_id + 1 }.run(app);
         assert_eq!(app.session.images[&name].width, 4);
 
-        announced[0].run(app);
+        harness.run_steps(2);
+        let message = harness.get_by_label("1 resource changed on disk");
+        assert_eq!(message.accesskit_node().live(), egui::accesskit::Live::Polite, "the notice is announced away from focus");
+        harness.get_by_role_and_label(egui::Role::Button, "Update resources").focus();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
 
+        let app = harness.state();
         assert_eq!(app.session.images[&name].width, 8, "the notice's button updated the resource");
         assert_eq!(app.session.history_labels().last().map(String::as_str), Some("Update resources"));
     }

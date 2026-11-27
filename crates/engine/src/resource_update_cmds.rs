@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Check resources on disk",
             [],
             None,
-            "{} → {resources: [{name, status: outdated|missing|upToDate|noSource|material, path?, error?}] (outdated first; material: a linked MaterialCraft package, updated by material.link.cook), total, outdated}",
+            "{} → {resources: [{name, status: outdated|missing|upToDate|noSource|material, path?, error?}] (outdated first; material: a stored MaterialCraft package), total, outdated}",
             always,
             |s, _| Ok(status(s))
         ),
@@ -44,9 +44,9 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 impl Session {
-    /// The image resources with their files and how they compare, outdated first, then by name.
-    /// A file is read only when its size matches the stored bytes but its modification time does
-    /// not, and that verdict is kept until the file's size or time changes again.
+    /// Project images and linked MaterialCraft packages, ordered by status and then by name.
+    /// Equal-size files are compared when their modification time changed or is unknown.
+    /// A known time lets later checks reuse the verdict.
     pub fn resource_states(&mut self) -> Vec<ResourceState> {
         let mut states = self.compare_resources();
         let materials = self.material_packages().into_iter();
@@ -112,78 +112,78 @@ impl Session {
             .collect()
     }
 
-    /// Put reloaded files in place of their resources' bytes as one undo step, resample the mesh
-    /// maps imported from them, then decode the stored bytes as undo, redo and reopening do
+    /// Stream changed files into one undo step. A mesh map is compared before its first tile is replaced.
     #[cfg(not(target_arch = "wasm32"))]
-    fn install_reloaded(&mut self, label: &str, files: Vec<crate::reloaded_file::ReloadedFile>) -> Result<Vec<String>> {
-        use std::collections::{BTreeMap, BTreeSet};
-
-        if files.is_empty() {
+    fn install_reloaded(&mut self, label: &str, files: impl Iterator<Item = crate::reloaded_file::ReloadedFile>) -> Result<Vec<String>> {
+        let mut files = files.peekable();
+        if files.peek().is_none() {
             return Ok(Vec::new());
         }
 
-        let names: Vec<String> = files.iter().map(|file| file.name.clone()).collect();
-        self.edit(label, |session| {
-            let mut fresh = BTreeMap::new();
-            let mut slots = BTreeSet::new();
+        let mut updated = Vec::new();
+        let result = self.edit(label, |session| {
+            let mut slots = std::collections::BTreeMap::new();
             for file in files {
-                slots.extend(file.source.mesh_map.map(|slot| (slot.texture_set, slot.map)));
-                session.doc.resources.insert(file.name.clone(), std::sync::Arc::new(file.bytes));
-                session.doc.project.resource_sources.insert(file.name.clone(), file.source);
-                fresh.insert(file.name, crate::resource_cmds::decoded(file.image));
+                if let Some(slot) = file.source.mesh_map {
+                    slots.entry((slot.texture_set, slot.map)).or_insert_with(|| session.mesh_map_matches(slot.texture_set, slot.map));
+                }
+
+                let name = file.name;
+                if crate::fill_alpha::matches_saved_picture(&name, &file.image) {
+                    session.library_alphas.insert(name.clone());
+                } else {
+                    session.library_alphas.remove(&name);
+                }
+
+                session.images.insert(name.clone(), crate::resource_cmds::decoded(file.image));
+                session.doc.resources.insert(name.clone(), std::sync::Arc::new(file.bytes));
+                session.doc.project.resource_sources.insert(name.clone(), file.source);
+                updated.push(name);
             }
 
-            for (texture_set, map) in slots {
-                session.refresh_mesh_map(texture_set, map, &fresh)?;
+            for ((texture_set, map), matches) in slots {
+                if matches {
+                    let images = session.mesh_map_images(texture_set, map).ok_or_else(|| bad("resource.update", "a mesh map source image is missing"))?;
+                    crate::meshmap_cmds::use_images(session, "resource.update", texture_set, map, &images)?;
+                }
             }
-
             Ok(())
-        })?;
+        });
 
-        for name in &names {
-            self.images.remove(name);
+        if let Err(error) = result {
+            // The edit restored the encoded bytes, so rebuild any cache entries replaced before rollback
+            for name in &updated {
+                self.images.remove(name);
+            }
+            self.sync_images();
+            return Err(error);
         }
-        self.sync_images();
-        Ok(names)
+
+        Ok(updated)
     }
 
-    /// Resample mesh map `map` of set `texture_set` from the new pixels of the files it was
-    /// imported from, unless a bake or another image has replaced it since (it no longer equals
-    /// what the old pixels give)
     #[cfg(not(target_arch = "wasm32"))]
-    fn refresh_mesh_map(
-        &mut self,
+    fn mesh_map_images(
+        &self,
         texture_set: usize,
         map: texturecraft_core::BakedMap,
-        fresh: &std::collections::BTreeMap<String, std::sync::Arc<texturecraft_compose::ImageRes>>,
-    ) -> Result<()> {
-        const CMD: &str = "resource.update";
-
-        let tiles: Vec<(u32, String)> = self
-            .doc
-            .project
-            .resource_sources
-            .iter()
-            .filter_map(|(name, source)| {
-                source.mesh_map.filter(|slot| slot.texture_set == texture_set && slot.map == map).map(|slot| (slot.tile, name.clone()))
-            })
-            .collect();
-        let (mut before, mut after) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::new());
-        for (tile, name) in tiles {
-            let Some(old) = self.images.get(&name) else { return Ok(()) };
-
-            before.insert(tile, old.clone());
-            after.insert(tile, fresh.get(&name).unwrap_or(old).clone());
+    ) -> Option<std::collections::BTreeMap<u32, std::sync::Arc<texturecraft_compose::ImageRes>>> {
+        let mut images = std::collections::BTreeMap::new();
+        for (name, source) in &self.doc.project.resource_sources {
+            if let Some(slot) = source.mesh_map.filter(|slot| slot.texture_set == texture_set && slot.map == map) {
+                images.insert(slot.tile, self.images.get(name)?.clone());
+            }
         }
 
-        let current = self.doc.baked.get(&texture_set).and_then(|baked| baked.maps.get(&map));
-        let unchanged = crate::meshmap_cmds::resampled(self, CMD, texture_set, map, &before).ok();
-        let from_these_files = current.zip(unchanged).is_some_and(|(current, (_, unchanged))| current.as_slice() == unchanged.as_slice());
-        if from_these_files {
-            crate::meshmap_cmds::use_images(self, CMD, texture_set, map, &after)?;
-        }
+        Some(images)
+    }
 
-        Ok(())
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mesh_map_matches(&self, texture_set: usize, map: texturecraft_core::BakedMap) -> bool {
+        let Some(current) = self.doc.baked.get(&texture_set).and_then(|baked| baked.maps.get(&map)) else { return false };
+        let Some(images) = self.mesh_map_images(texture_set, map) else { return false };
+
+        crate::mesh_map_sampler::MeshMapSampler::new(self, "resource.update", texture_set, map, &images).is_ok_and(|sampler| sampler.matches(current))
     }
 }
 
@@ -220,14 +220,54 @@ fn compare_with_file(
     }
 
     // A newer time alone is not a change: the file may have been saved again unchanged
-    let status = match crate::resource_cmds::read_resource_file("resource.status", path, crate::resource_cmds::MAX_BYTES as u64) {
-        Ok(bytes) if bytes == **stored => ResourceStatus::UpToDate,
-        Ok(_) => ResourceStatus::Outdated,
+    let status = match file_matches(path, stored) {
+        Ok(true) => ResourceStatus::UpToDate,
+        Ok(false) => ResourceStatus::Outdated,
         Err(error) => return (ResourceStatus::Missing, Some(error.to_string())),
     };
-    let bytes = std::sync::Arc::downgrade(stored);
-    checks.insert(name.to_string(), crate::resource_check::ResourceCheck { path: source.path.clone(), size, modified_ms, bytes, status });
+    if modified_ms == 0 {
+        // An unknown time cannot establish that the next check sees the same file contents
+        checks.remove(name);
+    } else {
+        let bytes = std::sync::Arc::downgrade(stored);
+        checks.insert(name.to_string(), crate::resource_check::ResourceCheck { path: source.path.clone(), size, modified_ms, bytes, status });
+    }
+
     (status, None)
+}
+
+/// Compare without allocating a second copy of the resource. Read to the checked end to detect I/O errors and growth.
+#[cfg(not(target_arch = "wasm32"))]
+fn file_matches(path: &std::path::Path, stored: &[u8]) -> Result<bool> {
+    use std::io::{ErrorKind, Read};
+
+    const CMD: &str = "resource.status";
+    const CHUNK_BYTES: usize = 32 * 1024;
+    let read_error = |error| bad(CMD, format!("cannot read {}: {error}", path.display()));
+    let too_large = || bad(CMD, format!("{} is too large (limit {} bytes)", path.display(), crate::resource_cmds::MAX_BYTES));
+    let mut file = crate::resource_cmds::open_resource_file(CMD, path)?;
+    let len = file.metadata().map_err(read_error)?.len();
+    if len > crate::resource_cmds::MAX_BYTES as u64 {
+        return Err(too_large());
+    }
+
+    let mut chunk = [0; CHUNK_BYTES];
+    let mut equal = len == stored.len() as u64;
+    for start in (0..len as usize).step_by(CHUNK_BYTES) {
+        let end = (start + CHUNK_BYTES).min(len as usize);
+        let part = &mut chunk[..end - start];
+        match file.read_exact(part) {
+            Ok(()) => equal = equal && stored.get(start..end) == Some(part),
+            Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(false),
+            Err(error) => return Err(read_error(error)),
+        }
+    }
+
+    if file.read(&mut [0]).map_err(read_error)? > 0 {
+        return Err(too_large());
+    }
+
+    Ok(equal)
 }
 
 /// A file's modification time in milliseconds since the Unix epoch (0 when the system has none)
@@ -285,37 +325,43 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad(CMD, "`names` must be an array of resource names")),
     };
 
-    // Every name is checked before any file is read
-    for name in &names {
-        if !s.doc.resources.contains_key(name) {
-            return Err(bad(CMD, format!("no resource `{name}`")));
-        }
-        if !s.doc.project.resource_sources.contains_key(name) {
-            return Err(bad(CMD, format!("`{name}` has no source file: relink it to a file first")));
-        }
-    }
-
-    // A file that cannot be read fails alone; the others still update
-    let (mut files, mut failed) = (Vec::new(), Vec::new());
+    // Validate the complete selection before opening files
+    let mut selected = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for name in names {
-        let Some(previous) = s.doc.project.resource_sources.get(&name).cloned() else { continue };
-        match crate::reloaded_file::ReloadedFile::read(CMD, name.clone(), &previous.path) {
-            // Unchanged contents need no undo step
-            Ok(file) if s.doc.resources.get(&name).is_some_and(|stored| **stored == file.bytes) => {}
-            Ok(mut file) => {
-                file.source.mesh_map = previous.mesh_map;
-                files.push(file);
-            }
-            Err(error) => failed.push(json!({"name": name, "error": error.to_string()})),
+        let bytes = s.doc.resources.get(&name).ok_or_else(|| bad(CMD, format!("no resource `{name}`")))?;
+        let Some(source) = s.doc.project.resource_sources.get(&name) else {
+            let reason = if s.images.contains_key(&name) {
+                format!("`{name}` has no source file: relink it to a file first")
+            } else {
+                format!("`{name}` has no source file: only image resources can be relinked")
+            };
+            return Err(bad(CMD, reason));
+        };
+
+        if seen.insert(name.clone()) {
+            let decoded = s.images.contains_key(&name);
+            selected.push((name, source.clone(), bytes.clone(), decoded));
         }
     }
 
-    if files.is_empty() && !failed.is_empty() {
+    let mut failed = Vec::new();
+    let files = selected.into_iter().filter_map(|(name, source, stored, decoded)| {
+        match crate::reloaded_file::ReloadedFile::read_changed(CMD, &name, &source, &stored, decoded) {
+            Ok(file) => file,
+            Err(error) => {
+                failed.push(json!({"name": name, "error": error.to_string()}));
+                None
+            }
+        }
+    });
+    let updated = s.install_reloaded("Update resources", files)?;
+
+    if updated.is_empty() && !failed.is_empty() {
         let reasons: Vec<&str> = failed.iter().filter_map(|failure| failure["error"].as_str()).collect();
         return Err(bad(CMD, format!("nothing was updated: {}", reasons.join("; "))));
     }
 
-    let updated = s.install_reloaded("Update resources", files)?;
     Ok(json!({"updated": updated, "failed": failed}))
 }
 
@@ -333,7 +379,7 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     let mut file = crate::reloaded_file::ReloadedFile::read(CMD, name.clone(), path)?;
     file.source.mesh_map = s.doc.project.resource_sources.get(&name).and_then(|source| source.mesh_map);
     let path = file.source.path.clone();
-    s.install_reloaded("Relink resource", vec![file])?;
+    s.install_reloaded("Relink resource", std::iter::once(file))?;
 
     Ok(json!({"name": name, "path": path}))
 }
