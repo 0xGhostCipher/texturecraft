@@ -40,6 +40,26 @@ fn the_opt_in_survives_save_and_reopen() {
     assert_eq!(display.ior, IOR);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_older_save_cannot_clear_ior_specular_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ior.tcraft");
+
+    for params in [json!({"iorSpecular": false}), json!({"ior": 2.0}), json!({"specGloss": true})] {
+        let mut session = session();
+        opt_in(&mut session);
+        let save = session.save_task(path.to_str().unwrap(), true);
+
+        execute(&mut session, "display.set", &params).unwrap();
+        save.run(None).unwrap().apply(&mut session);
+
+        assert!(session.modified, "the archive predates the edit {params}");
+        let archived = texturecraft_engine::file_cmds::open_path(path.to_str().unwrap()).unwrap();
+        assert_ne!(archived.doc.project.display, session.doc.project.display);
+    }
+}
+
 #[test]
 fn a_project_saved_before_the_setting_opens_with_it_off() {
     let mut session = session();

@@ -2,7 +2,7 @@
 
 use egui::{RichText, Ui, vec2};
 use egui_phosphor::regular as ic;
-use texturecraft_engine::core::project::DisplaySettings;
+use texturecraft_engine::core::project::{DisplaySettings, MAX_INDEX_OF_REFRACTION, MIN_INDEX_OF_REFRACTION};
 
 use crate::TextureCraftApp;
 use crate::i18n::tr;
@@ -52,7 +52,7 @@ const SHADER_MODEL_COMBO_WIDTH: f32 = 260.0;
 const SCATTER_SWATCH_WIDTH: f32 = 44.0;
 
 /// Index of refraction slider range: air to well past diamond (2.42)
-const INDEX_OF_REFRACTION_RANGE: std::ops::RangeInclusive<f32> = 1.0..=3.0;
+const INDEX_OF_REFRACTION_RANGE: std::ops::RangeInclusive<f32> = MIN_INDEX_OF_REFRACTION..=MAX_INDEX_OF_REFRACTION;
 
 /// Values the reference's panel shows for controls TextureCraft lacks
 const SCATTER_ANISOTROPY_SHOWN: f32 = 0.1;
@@ -80,6 +80,7 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         app.session.doc.project.display = display;
         app.session.mark_modified();
     }
+
     if ior_specular != app.session.doc.project.display.ior_specular {
         app.run("display.set", serde_json::json!({"iorSpecular": ior_specular}));
     }
@@ -153,9 +154,20 @@ fn shader_parameters(ui: &mut Ui, display: &mut DisplaySettings, ior_specular: &
         slider(ui, tr("Index of refraction"), &mut display.ior, INDEX_OF_REFRACTION_RANGE, 2).on_hover_text(tr(
             "Controls how strongly transmissive surfaces bend light. When the checkbox below is on, it also controls dielectric reflectance.",
         ));
-        ui.add_enabled(!display.spec_gloss, egui::Checkbox::new(ior_specular, tr("Use IOR for specular reflection")))
-            .on_hover_text(tr("Uses the index of refraction for dielectric reflectance at normal incidence. Specular level adjusts its strength."))
-            .on_disabled_hover_text(tr("Specular Glossiness uses the Specular color channel for reflectance."));
+
+        ui.add_enabled_ui(!display.spec_gloss, |ui| {
+            let widgets = &mut ui.visuals_mut().widgets;
+            widgets.inactive.bg_stroke.color = tokens.text_dim;
+            widgets.hovered.bg_stroke.color = tokens.text;
+            widgets.active.bg_stroke.color = tokens.text_strong;
+
+            ui.checkbox(ior_specular, tr("Use IOR for specular reflection"))
+                .on_hover_text(tr(
+                    "Uses the index of refraction for dielectric reflectance at normal incidence. Specular level adjusts the surface reflection.",
+                ))
+                .on_disabled_hover_text(tr("Specular Glossiness uses the Specular color channel for reflectance."));
+        });
+
         unavailable::checkbox(ui, false, tr("Enable specular color"));
     });
     section(ui, "shader_transmission", tr("Transmission"), true, |ui| {

@@ -430,6 +430,9 @@ const UV_CHECKER_FINE_CELLS: f32 = 256.0;
 // Offset alpha dithering between accumulated frames
 const DITHER_FRAME_STEP: vec2<f32> = vec2<f32>(17.0, 59.0);
 
+// Lit single-channel views keep the legacy specular level multiplier
+const LEGACY_DIELECTRIC_F0_SCALE: f32 = 0.08;
+
 fn shade_mesh(i: VOut, front: bool) -> Shaded {
     var n_geo = normalize(i.nrm);
     if (!front) {
@@ -548,7 +551,7 @@ fn shade_mesh(i: VOut, front: bool) -> Shaded {
     let rough = clamp(orm.g, SPECULAR_ROUGHNESS_FLOOR, 1.0);
     let metal = orm.b;
     let nov = clamp(abs(dot(n, v)), GRAZING_COSINE_FLOOR, 1.0);
-    let dielectric_f0_scale = select(g.refr.w, 0.08, solo_lit);
+    let dielectric_f0_scale = select(g.refr.w, LEGACY_DIELECTRIC_F0_SCALE, solo_lit);
     var f0 = mix(vec3<f32>(dielectric_f0_scale * orm.a), albedo, metal);
     var diffuse_col = albedo * (1.0 - metal);
     if (g.material.x > 0.5 && !solo_lit) {

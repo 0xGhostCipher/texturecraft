@@ -316,7 +316,7 @@ pub struct DisplaySettings {
     pub scatter_color: [f32; 3],
     /// Subsurface scattering mean free path as a fraction of the mesh's bounding radius.
     pub scatter_radius: f32,
-    /// Index of refraction of transmissive surfaces (where the Transmission channel is painted).
+    /// Index of refraction for transmission and, when enabled, dielectric reflectance.
     pub ior: f32,
     /// Use IOR to determine dielectric reflectance at normal incidence in Metallic/Roughness.
     pub ior_specular: bool,
@@ -386,6 +386,10 @@ pub const ENV_RESOURCE_PREFIX: &str = "resource:";
 /// Original dielectric F0 multiplier for the Specular Level channel.
 pub const LEGACY_DIELECTRIC_F0_SCALE: f32 = 0.08;
 
+/// Project limits for the index of refraction.
+pub const MIN_INDEX_OF_REFRACTION: f32 = 1.0;
+pub const MAX_INDEX_OF_REFRACTION: f32 = 3.0;
+
 impl DisplaySettings {
     /// The image resource used as the environment, if any.
     pub fn environment_resource(&self) -> Option<&str> {
@@ -394,14 +398,19 @@ impl DisplaySettings {
 
     /// Multiplier for Specular Level in the Metallic/Roughness model.
     pub fn dielectric_f0_scale(&self) -> f32 {
-        if self.ior_specular && !self.spec_gloss && self.ior.is_finite() {
-            let ior = self.ior.clamp(1.0, 3.0);
-            let fresnel = (ior - 1.0) / (ior + 1.0);
-            // Specular Level 0.5 represents OpenPBR's default specular weight of 1.
-            2.0 * fresnel * fresnel
-        } else {
-            LEGACY_DIELECTRIC_F0_SCALE
+        if !self.ior_specular || self.spec_gloss || !self.ior.is_finite() {
+            return LEGACY_DIELECTRIC_F0_SCALE;
         }
+
+        const AIR_INDEX_OF_REFRACTION: f32 = 1.0;
+        // Specular Level 0.5 corresponds to OpenPBR specular weight 1
+        const SPECULAR_LEVEL_TO_WEIGHT_SCALE: f32 = 2.0;
+        let ior = self.ior.clamp(MIN_INDEX_OF_REFRACTION, MAX_INDEX_OF_REFRACTION);
+        let contrast = ior - AIR_INDEX_OF_REFRACTION;
+        let index_sum = ior + AIR_INDEX_OF_REFRACTION;
+
+        // Square before dividing so IOR 1.5 rounds to the legacy multiplier
+        SPECULAR_LEVEL_TO_WEIGHT_SCALE * contrast.powi(2) / index_sum.powi(2)
     }
 }
 
@@ -833,6 +842,28 @@ mod tests {
         let mut p = Project::new("t", "builtin:sphere");
         p.texture_sets.push(TextureSet::new("Body", 0, 512));
         p
+    }
+
+    #[test]
+    fn enabling_ior_at_the_default_preserves_legacy_reflectance() {
+        let mut display = DisplaySettings::default();
+        let legacy = display.dielectric_f0_scale();
+
+        display.ior_specular = true;
+
+        assert_eq!(display.dielectric_f0_scale(), legacy);
+    }
+
+    #[test]
+    fn dielectric_reflectance_clamps_ior_and_falls_back_for_non_finite_values() {
+        let scale_at = |ior| DisplaySettings { ior, ior_specular: true, ..DisplaySettings::default() }.dielectric_f0_scale();
+
+        assert_eq!(scale_at(0.5), scale_at(1.0));
+        assert_eq!(scale_at(1.0), 0.0);
+        assert!(scale_at(1.5) < scale_at(3.0));
+        assert_eq!(scale_at(4.0), scale_at(3.0));
+        assert_eq!(scale_at(f32::NAN), LEGACY_DIELECTRIC_F0_SCALE);
+        assert_eq!(scale_at(f32::INFINITY), LEGACY_DIELECTRIC_F0_SCALE);
     }
 
     #[test]

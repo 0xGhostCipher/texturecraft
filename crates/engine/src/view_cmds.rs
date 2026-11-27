@@ -1,7 +1,7 @@
 //! Edit, viewport and display commands.
 
 use serde_json::{Value, json};
-use texturecraft_core::project::ENVIRONMENTS;
+use texturecraft_core::project::{ENVIRONMENTS, MAX_INDEX_OF_REFRACTION, MIN_INDEX_OF_REFRACTION};
 use texturecraft_core::{BakedMap, Channel, EffectKind, EnvAlignment, Filter, Project, ShadowMode, ToneMapping};
 
 use crate::commands::{CommandSpec, always, bad, boolp, can_redo, can_undo, color_param, f32p, strp, u64p, vec3};
@@ -314,7 +314,8 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
     let scatter_color = color_param("display.set", p, "scatterColor")?;
     let (environment_before, rotation_before) = (s.doc.project.display.environment.clone(), s.doc.project.display.env_rotation);
     let settings = &mut s.doc.project.display;
-    let (old_ior, old_ior_specular, old_spec_gloss) = (settings.ior, settings.ior_specular, settings.spec_gloss);
+    let (ior_before, ior_specular_before, spec_gloss_before) = (settings.ior, settings.ior_specular, settings.spec_gloss);
+
     if let Some(picked) = environment {
         settings.environment = picked;
     }
@@ -330,7 +331,7 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
         ("sharpen", &mut settings.sharpen, 0.0, 1.0),
         ("grain", &mut settings.grain, 0.0, 1.0),
         ("scatterRadius", &mut settings.scatter_radius, 0.0, 1.0),
-        ("ior", &mut settings.ior, 1.0, 3.0),
+        ("ior", &mut settings.ior, MIN_INDEX_OF_REFRACTION, MAX_INDEX_OF_REFRACTION),
         ("shadowOpacity", &mut settings.shadow_opacity, 0.0, 1.0),
     ] {
         if let Some(value) = f32p(p, key) {
@@ -378,8 +379,9 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
 
-    let settings = &s.doc.project.display;
-    s.modified |= settings.ior_specular != old_ior_specular || (settings.ior_specular && (settings.ior != old_ior || settings.spec_gloss != old_spec_gloss));
+    let saved_settings_changed =
+        settings.ior_specular != ior_specular_before || (settings.ior_specular && (settings.ior != ior_before || settings.spec_gloss != spec_gloss_before));
+
     // The field of view applies to the view only when set (a saved camera keeps its own)
     if f32p(p, "fov").is_some() {
         s.camera.fov = s.doc.project.display.fov;
@@ -392,7 +394,12 @@ fn display(s: &mut Session, p: &Value) -> Result<Value> {
             cache.invalidate_all();
         }
     }
-    s.revision = s.revision.wrapping_add(1);
+    if saved_settings_changed {
+        s.mark_modified();
+    } else {
+        s.revision = s.revision.wrapping_add(1);
+    }
+
     Ok(serde_json::to_value(&s.doc.project.display).unwrap_or(Value::Null))
 }
 

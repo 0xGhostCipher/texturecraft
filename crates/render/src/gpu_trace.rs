@@ -349,8 +349,8 @@ impl GpuTracer {
         };
         let same_geometry = self.geometry.as_ref().is_some_and(|g| Arc::ptr_eq(&g.mesh, &scene.mesh) && g.tri_set == scene.tri_set);
         if !same_geometry {
-            let nodes: Vec<(Vec3, Vec3, u32, u32)> = scene.bvh.nodes().collect();
-            if bvh_depth(&nodes).is_none_or(|d| d >= STACK) {
+            let depth = bvh_depth(&scene.bvh.nodes().collect::<Vec<_>>());
+            if depth.is_none_or(|depth| depth >= STACK) {
                 return Err("the mesh's BVH is too deep for GPU traversal".into());
             }
 
@@ -368,24 +368,23 @@ impl GpuTracer {
             })?);
             self.bind = None;
         }
+
         if !self.env.as_ref().is_some_and(|e| Arc::ptr_eq(&e.image, &scene.env)) {
             let img = &scene.env;
             let (w, h) = (img.width as usize, img.height as usize);
-            let valid = w > 0 && h > 0 && img.data.len() >= w * h && img.width.max(img.height) <= limits.max_texture_dimension_2d;
-            let (tw, th, rgba): (u32, u32, Vec<[f32; 4]>) =
-                if valid { (img.width, img.height, img.data.iter().take(w * h).map(|c| [c[0], c[1], c[2], 1.0]).collect()) } else { (1, 1, vec![[0.0; 4]]) };
-            let mut cdf = Vec::new();
-            if let Some(l) = scene.light.as_ref().filter(|l| valid && l.width == w && l.height == h) {
-                cdf.extend_from_slice(&l.rows);
-                cdf.extend_from_slice(&l.cols);
-                cdf.extend_from_slice(&l.prob);
-            }
-            fits("environment table", cdf.len() * 4)?;
-            let light = !cdf.is_empty();
-            if !light {
-                cdf.push(0.0);
-            }
+            let valid = w > 0 && h > 0 && img.width.max(img.height) <= limits.max_texture_dimension_2d && img.data.len() >= w * h;
+            let sampler = scene.light.as_ref().filter(|table| valid && table.width == w && table.height == h);
+
+            // The shader binds one zero when importance sampling is disabled
+            let parts = sampler.map_or([&[0.0][..], &[], &[]], |table| [table.rows.as_slice(), table.cols.as_slice(), table.prob.as_slice()]);
+            fits("environment table", parts.iter().map(|part| std::mem::size_of_val(*part)).sum())?;
+
             let env = scoped(device, "GPU path tracing: environment upload", || {
+                let (tw, th, rgba): (u32, u32, Vec<[f32; 4]>) = if valid {
+                    (img.width, img.height, img.data.iter().take(w * h).map(|c| [c[0], c[1], c[2], 1.0]).collect())
+                } else {
+                    (1, 1, vec![[0.0; 4]])
+                };
                 let tex = device.create_texture_with_data(
                     queue,
                     &wgpu::TextureDescriptor {
@@ -401,16 +400,19 @@ impl GpuTracer {
                     wgpu::util::TextureDataOrder::LayerMajor,
                     bytemuck::cast_slice(&rgba),
                 );
+                drop(rgba);
+
                 EnvGpu {
                     image: scene.env.clone(),
                     view: tex.create_view(&Default::default()),
-                    cdf: buffer(device, "tc_trace_cdf", bytemuck::cast_slice(&cdf)),
-                    light,
+                    cdf: buffer(device, "tc_trace_cdf", bytemuck::cast_slice(&parts.concat())),
+                    light: sampler.is_some(),
                 }
             })?;
             self.env = Some(env);
             self.bind = None;
         }
+
         self.scene = Some(SceneConst {
             spec_gloss: scene.spec_gloss,
             eps: scene.eps,
