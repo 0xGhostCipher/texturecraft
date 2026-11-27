@@ -655,6 +655,26 @@ mod tests {
     }
 
     #[test]
+    fn renaming_an_image_a_generator_reads_as_its_grunge_moves_the_grunge_with_it() {
+        use texturecraft_core::{Effect, EffectKind, Generator, GeneratorKind};
+
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let png = texturecraft_formats::gray16_png(1, 1, [0.5].into_iter()).unwrap();
+        let grunge = session.import_resource_bytes("grunge.png", png).unwrap();
+        crate::execute(&mut session, "layer.add.image", &json!({"name": grunge})).unwrap();
+        let layer_id = session.selected_layer().unwrap();
+        let generator = Generator { grunge: Some(Source::image(grunge.clone())), ..Generator::new(GeneratorKind::EdgeWear) };
+        let effect_id = session.doc.project.alloc_id();
+        session.doc.project.layers.get_mut(&layer_id).unwrap().content_effects.push(Effect::new(effect_id, EffectKind::Generator(generator)));
+
+        let renamed = crate::execute(&mut session, "resource.rename", &json!({"name": grunge, "to": "worn"})).unwrap()["name"].as_str().unwrap().to_string();
+
+        let EffectKind::Generator(generator) = &session.doc.project.layers[&layer_id].content_effects[0].kind else { panic!("the effect stays a generator") };
+        assert_ne!(renamed, grunge);
+        assert_eq!(generator.grunge, Some(Source::image(renamed)), "the generator's grunge follows the rename");
+    }
+
+    #[test]
     fn reloading_reads_the_file_again_and_undo_restores_the_pixels() {
         let mut session = crate::sample_session(128, 32).unwrap();
         let path = std::env::temp_dir().join(format!("texturecraft-reload-resource-{}.png", std::process::id()));

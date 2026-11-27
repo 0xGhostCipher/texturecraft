@@ -1294,6 +1294,17 @@ impl Generator {
         self.inputs.values().chain(self.texture.as_ref().and_then(|texture| texture.source.as_ref())).chain(self.grunge.as_ref()).chain(micro)
     }
 
+    /// [`Generator::sources`], to rename the images they read
+    pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut Source> {
+        let grayscale = match self.controls.as_deref_mut() {
+            Some(KindControls::Grayscale(grayscale)) if self.kind == GeneratorKind::GrayscaleConversion => grayscale.source.as_mut(),
+            _ => None,
+        };
+        let micro = self.micro.iter_mut().flat_map(|micro| micro.sources_mut()).chain(grayscale);
+        let texture = self.texture.as_mut().and_then(|texture| texture.source.as_mut());
+        self.inputs.values_mut().chain(texture).chain(self.grunge.as_mut()).chain(micro)
+    }
+
     /// The micro details as saved, when the generator computes with them: with a slot switched on, except a micro detail saved before Micro Details on a generator still on the earlier model, which [`Generator::earlier_micro`] reads (bring them into range before use: saved files are not trusted)
     pub fn micro_in_use(&self) -> Option<&MicroDetails> {
         self.micro.as_deref().filter(|micro| micro.in_use(self.kind) && !(micro.earlier && self.on_earlier_model()))
@@ -2360,7 +2371,7 @@ impl EffectKind {
         match self {
             EffectKind::Fill { source, .. } => source.images_mut(),
             EffectKind::Material(fill) => fill.images_mut().collect(),
-            EffectKind::Generator(generator) => generator.inputs.values_mut().flat_map(Source::images_mut).collect(),
+            EffectKind::Generator(generator) => generator.sources_mut().flat_map(Source::images_mut).collect(),
             EffectKind::ColorSelection(selection) => selection.id_map.iter_mut().collect(),
             _ => Vec::new(),
         }
