@@ -125,7 +125,10 @@ impl BakeTask {
 }
 
 fn bake_error(error: texturecraft_bake::BakeError) -> EngineError {
-    EngineError::Other(format!("bake failed: {error}"))
+    match error {
+        texturecraft_bake::BakeError::Cancelled => EngineError::BakeCancelled,
+        error => EngineError::Other(format!("bake failed: {error}")),
+    }
 }
 
 #[cfg(test)]

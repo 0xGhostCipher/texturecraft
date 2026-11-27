@@ -15,13 +15,14 @@ pub struct BakeReport {
 }
 
 impl BakeReport {
-    pub fn started(now: f64) -> Self {
-        BakeReport { started_at_seconds: now, ..Default::default() }
+    pub fn started(now_seconds: f64) -> Self {
+        BakeReport { started_at_seconds: now_seconds, ..Default::default() }
     }
 
     /// The toast text, the Log line and whether the toast is an error (some set failed)
-    pub fn summary(&self, now: f64) -> (String, String, bool) {
-        let time = duration_text((now - self.started_at_seconds).max(0.0));
+    pub fn summary(&self, now_seconds: f64) -> (String, String, bool) {
+        let time = duration_text((now_seconds - self.started_at_seconds).max(0.0));
+
         let line = if self.failed_set_count == 0 {
             format!("Bake finished: {} maps in {time}", self.map_count)
         } else {
@@ -37,6 +38,7 @@ impl BakeReport {
                 tr("Failures are listed in the Log.")
             )
         };
+
         (text, line, self.failed_set_count > 0)
     }
 }

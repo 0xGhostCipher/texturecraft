@@ -42,6 +42,7 @@ fn a_settings_change_rebakes_only_the_auto_rebake_map_without_a_toast() {
     super::step_until(&mut harness, "the end of the rebake", |app| app.bake.is_none());
 
     let app = harness.state();
+    assert!(app.session.doc.project.texture_sets[0].bake_sources.contains_key(&BakedMap::Position), "the rebake records what it read");
     assert!(app.session.bake_changes(0, BakedMap::Position).is_empty(), "{:?}", app.session.bake_changes(0, BakedMap::Position));
     assert!(std::sync::Arc::ptr_eq(&app.session.baked(0).unwrap().maps[&BakedMap::Id], &id_before), "the ID map was not baked again");
     let rows: Vec<_> = app.session.bake_log.maps.iter().map(|row| (row.map, row.state.clone())).collect();

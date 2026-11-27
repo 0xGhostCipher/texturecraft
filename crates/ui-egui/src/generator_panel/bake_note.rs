@@ -45,6 +45,7 @@ pub(super) fn bake_notes(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_
 fn note(app: &mut TextureCraftApp, ui: &mut Ui, (texture_set, map): (usize, BakedMap), changes: &[BakeChange]) {
     let tokens = Tokens::get(ui.ctx());
     let name = tr(baked_map_label(map));
+
     let (glyph, text, title) = match changes.is_empty() {
         true => (ic::WARNING, trf("{map} map not baked", &[("map", &name)]), tr("Not baked")),
         false => (ic::CLOCK, trf("{map} map out of date", &[("map", &name)]), tr("Out of date")),
@@ -61,6 +62,7 @@ fn note(app: &mut TextureCraftApp, ui: &mut Ui, (texture_set, map): (usize, Bake
             ui.label(RichText::new(reason).size(TOOLTIP_TEXT_SIZE).color(tokens.text_dim));
         }
     });
+
     let bake = ui
         .with_layout(Layout::right_to_left(Align::Center), |ui| {
             let button = egui::Button::new(tr("Bake")).stroke(Stroke::new(1.0, tokens.button_border)).min_size(vec2(0.0, BUTTON_HEIGHT));
@@ -97,5 +99,6 @@ fn bake_map(app: &mut TextureCraftApp, texture_set: usize, map: BakedMap) {
         after.maps.set_enabled(map, true);
         app.run("bake.settings", json!({ "ts": texture_set, "patch": settings_patch(&before, &after) }));
     }
+
     app.start_bake(vec![texture_set]);
 }

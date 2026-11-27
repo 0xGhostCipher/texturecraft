@@ -623,6 +623,7 @@ impl Session {
 
             for name in old_names.iter().filter(|name| !used_names.contains(name)) {
                 session.doc.resources.remove(name);
+                session.doc.project.resource_sources.remove(name);
             }
 
             Ok(names)

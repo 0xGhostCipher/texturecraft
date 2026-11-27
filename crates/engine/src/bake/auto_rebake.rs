@@ -22,7 +22,10 @@ fn set_auto_rebake(session: &mut Session, params: &Value) -> Result<Value> {
     const COMMAND: &str = "bake.autoRebake";
     let texture_set = match params.get("ts") {
         None => session.ts(),
-        Some(_) => u64p(params, "ts").map(|index| index as usize).filter(|index| *index < session.set_count()).ok_or_else(|| bad(COMMAND, "invalid `ts`"))?,
+        Some(_) => u64p(params, "ts")
+            .and_then(|index| usize::try_from(index).ok())
+            .filter(|index| *index < session.set_count())
+            .ok_or_else(|| bad(COMMAND, "invalid `ts`"))?,
     };
     let map = match params.get("map") {
         Some(Value::Null) => None,
@@ -36,6 +39,7 @@ fn set_auto_rebake(session: &mut Session, params: &Value) -> Result<Value> {
             Ok(())
         })?;
     }
+
     Ok(json!({ "ts": texture_set, "autoRebake": map.map(BakedMap::id) }))
 }
 
@@ -52,10 +56,13 @@ impl Session {
         .collect()
     }
 
-    /// The maps an auto-rebake of `map` bakes: that map alone, or with every checked map once the output size changed (storing a new size drops the old maps)
+    /// Bake the selected map alone, or include every checked map if the atlas changed size
     pub fn auto_rebake_maps(&self, texture_set: usize, map: BakedMap) -> Vec<BakedMap> {
         let Ok(set) = self.doc.project.texture_set(texture_set) else { return vec![map] };
-        let (width, height) = set.bake.common.output_size();
+
+        let (tile_width, tile_height) = set.bake.common.output_size();
+        let (columns, rows) = set.tile_grid().map_or((1, 1), |grid| (grid.cols, grid.rows));
+        let (width, height) = (tile_width * columns, tile_height * rows);
         let stored = self.doc.baked.get(&texture_set);
         let resized = stored.is_some_and(|stored| stored.resolution != width || stored.maps.keys().any(|baked| stored.height(*baked) != height));
         match resized {

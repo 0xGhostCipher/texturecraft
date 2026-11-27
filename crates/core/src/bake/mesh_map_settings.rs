@@ -37,6 +37,11 @@ impl Default for MeshMapSettings {
 }
 
 impl MeshMapSettings {
+    /// Whether this map reads the source mesh's material colors, independently of its enabled flag.
+    pub fn reads_material_colors(&self, map: BakedMap) -> bool {
+        map == BakedMap::Opacity || (map == BakedMap::Id && self.id.parameters.source == super::IdColorSource::MaterialColor)
+    }
+
     pub fn is_enabled(&self, map: BakedMap) -> bool {
         match map {
             BakedMap::Normal => self.normal.is_enabled,

@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::json;
 use texturecraft_engine::bake::Progress;
-use texturecraft_engine::core::{BakeChange, BakedMap, CageType};
+use texturecraft_engine::core::{BakeChange, BakedMap, CageType, IdColorSource, MeshMatchMode};
+use texturecraft_engine::formats::MeshFile;
 use texturecraft_engine::geom::primitives;
 use texturecraft_engine::{Session, execute};
 
@@ -70,6 +71,58 @@ fn adding_a_high_poly_puts_the_maps_out_of_date() {
     session.add_high_poly_bytes("detail_high.obj", b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n".to_vec()).unwrap();
 
     assert_eq!(changes(&session), [BakeChange::HighPoly]);
+}
+
+#[test]
+fn replacing_low_poly_vertex_colors_marks_the_id_map_out_of_date() {
+    let triangle = |color: &str| format!("o Painted\nv 0 0 0 {color}\nv 1 0 0 {color}\nv 0 1 0 {color}\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n");
+    let name = "painted.obj";
+    let mut session = Session::from_mesh_bytes_with_uvs(name, triangle("1 0 0").as_bytes(), 128, "painted", None, false).unwrap();
+    session.doc.project.texture_sets[0].bake.maps.id.parameters.source = IdColorSource::VertexColor;
+    execute(&mut session, "bake.run", &json!({ "resolution": 32, "maps": ["id"], "dilation": 0 })).unwrap();
+    let previous = session.baked(0).unwrap().maps[&BakedMap::Id].clone();
+
+    let replacement = MeshFile { name: name.into(), bytes: triangle("0 1 0").into_bytes(), warnings: Vec::new() };
+    session.reimport_mesh(Some(replacement), false).unwrap();
+
+    assert_eq!(session.bake_changes(0, BakedMap::Id), [BakeChange::LowPoly]);
+    execute(&mut session, "bake.run", &json!({})).unwrap();
+    assert_ne!(session.baked(0).unwrap().maps[&BakedMap::Id], previous);
+    assert!(session.bake_changes(0, BakedMap::Id).is_empty());
+}
+
+#[test]
+fn reimporting_a_quad_as_triangles_invalidates_its_tangent_frame() {
+    let corners = "v 0 0 0\nv 1 0 0\nv 1 1 0.6\nv 0 1 0\nvt 0 0.1\nvt 1 0\nvt 0.9 1\nvt 0.3 0.8\nvn 0 0 1\n";
+    let quad = format!("{corners}f 1/1/1 2/2/1 3/3/1 4/4/1\n");
+    let triangles = format!("{corners}f 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n");
+    let mut session = Session::from_mesh_bytes("surface.obj", quad.as_bytes(), 128, "surface").unwrap();
+    execute(&mut session, "bake.run", &json!({ "resolution": 32, "maps": ["normal"], "dilation": 0 })).unwrap();
+    let previous = session.mesh.clone();
+
+    let replacement = MeshFile { name: "surface.obj".into(), bytes: triangles.into_bytes(), warnings: Vec::new() };
+    session.reimport_mesh(Some(replacement), false).unwrap();
+
+    assert_eq!(session.mesh.indices, previous.indices);
+    assert_ne!(session.mesh.tangents, previous.tangents);
+    assert_eq!(session.bake_changes(0, BakedMap::Normal), [BakeChange::LowPoly]);
+}
+
+#[test]
+fn renaming_a_low_poly_part_invalidates_its_by_name_bake() {
+    let triangle = |part: &str, height: f32| format!("o {part}\nv 0 0 {height}\nv 1 0 {height}\nv 0 1 {height}\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n");
+    let name = "parts.obj";
+    let mut session = Session::from_mesh_bytes_with_uvs(name, triangle("Body_low", 0.0).as_bytes(), 128, "parts", None, false).unwrap();
+    session.add_high_poly_bytes("detail.obj", triangle("Body_high", 0.05).into_bytes()).unwrap();
+    session.doc.project.texture_sets[0].bake.high_poly.match_mode = MeshMatchMode::ByMeshName;
+    execute(&mut session, "bake.run", &json!({ "resolution": 32, "maps": ["position"], "dilation": 0 })).unwrap();
+    assert!(session.bake_name_pairs(0).unwrap().unwrap().iter().any(|pair| !pair.unpaired()));
+
+    let replacement = MeshFile { name: name.into(), bytes: triangle("Trim_low", 0.0).into_bytes(), warnings: Vec::new() };
+    session.reimport_mesh(Some(replacement), false).unwrap();
+
+    assert!(session.bake_name_pairs(0).unwrap().unwrap().iter().all(|pair| pair.unpaired()));
+    assert_eq!(changes(&session), [BakeChange::LowPoly]);
 }
 
 #[test]

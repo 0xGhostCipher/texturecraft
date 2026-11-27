@@ -329,6 +329,7 @@ impl Dock {
         let columns_width = BAKERS_COLUMN_WIDTH + gutter_width + SETTINGS_COLUMN_WIDTH;
         let root = split(Axis::X, SplitSize::FixedFirst(columns_width), columns_over_log, tabs(&[Panel::Viewport]));
         let workspace = Workspace::from_parts(Layout::new(Some(root), Vec::new()), hidden, painting.floated().to_vec());
+
         Dock { workspace, raise: None, replaced_unreadable: false }
     }
 
@@ -418,6 +419,7 @@ impl LiveDock {
         if let Some(shown) = self.shown.as_ref().filter(|shown| ***shown == *workspace) {
             return Arc::clone(shown);
         }
+
         let shown = Arc::new(workspace.clone());
         self.shown = Some(Arc::clone(&shown));
         shown
@@ -490,11 +492,13 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     let context = ui.ctx().clone();
     refresh_specs(app);
     let shown = app.docks.shown(&app.ui.dock.workspace);
-    // The specs leave the app while its panels borrow it, and come back with their revision
+
+    // Move the specs out so the dock can borrow the app to draw panels
     let specs = std::mem::take(&mut app.docks.specs);
     let hand_over = app.docks.continue_move.take();
     let raise = app.ui.dock.raise.take();
-    // Panels split around the viewport, floating title bars only move windows, and each closable tab has its close button
+
+    // Keep drag targets on the dock so a floating title bar only moves its window
     let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false).tab_close_buttons(true);
     let (output, focused_windows) = {
         let tokens = Tokens::get(&context);
@@ -509,6 +513,7 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
         let output = area.show(ui);
         (output, panels.focused_windows)
     };
+
     app.docks.specs = specs;
     app.docks.floating_windows.clear();
     app.docks.floating_windows.extend(output.windows.iter().map(|(_, viewport)| *viewport));
@@ -524,6 +529,7 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
     #[cfg(target_arch = "wasm32")]
     let _ = focused_windows;
+
     if let Some(error) = &output.error {
         log::warn!("docking: {:?}", error.error);
     }
@@ -770,6 +776,7 @@ mod tests {
         assert!(dock.is_visible(Panel::CommonSettings) && !dock.is_visible(Panel::MeshMapSettings));
 
         let back: Dock = serde_json::from_str(&serde_json::to_string(&dock).unwrap()).unwrap();
+
         assert_eq!(back, dock);
     }
 

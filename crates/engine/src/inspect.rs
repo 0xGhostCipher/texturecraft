@@ -264,8 +264,10 @@ pub fn texture_set(session: &Session, index: usize) -> Value {
             })
         })
         .collect();
+
     let out_of_date: std::collections::BTreeMap<_, Vec<_>> =
         session.out_of_date_maps(index).into_iter().map(|(map, changes)| (map.id(), changes.iter().map(|change| change.id()).collect())).collect();
+
     json!({
         "index": index,
         "name": texture_set.name,

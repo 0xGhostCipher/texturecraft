@@ -19,6 +19,7 @@ fn bake_run_lists_every_checked_map_of_the_set_as_baked() {
     let set_name = &session.doc.project.texture_sets[0].name;
     let rows = &session.bake_log.maps;
     let maps: BTreeSet<BakedMap> = rows.iter().map(|row| row.map).collect();
+
     assert_eq!(maps, BTreeSet::from([BakedMap::Position, BakedMap::Opacity]));
     assert!(rows.iter().all(|row| row.state == BakeMapState::Baked && &row.set_name == set_name), "{rows:?}");
     assert!(!session.bake_log.is_running());
@@ -39,6 +40,7 @@ fn a_canceled_bake_keeps_the_finished_sets_and_cancels_the_rest() {
     log.set_finished(0);
     log.set_started(1);
     log.map_baked(1, BakedMap::Normal);
+
     let baking: Vec<_> = log.maps.iter().filter(|row| row.state == BakeMapState::Baking).map(|row| (row.texture_set, row.map)).collect();
     assert_eq!(baking, [(1, BakedMap::Curvature)], "the next map of the running set is the one in progress");
 
@@ -57,6 +59,7 @@ fn bake_log_reports_each_map_with_its_state_and_a_failures_reason() {
     execute(&mut session, "bake.run", &json!({ "resolution": 64, "maps": ["opacity", "position"], "dilation": 0 })).unwrap();
 
     let log = execute(&mut session, "bake.log", &json!({})).unwrap();
+
     assert_eq!(log["running"], false);
     let maps: BTreeSet<&str> = log["maps"].as_array().unwrap().iter().map(|row| row["map"].as_str().unwrap()).collect();
     assert_eq!(maps, BTreeSet::from(["opacity", "position"]));
@@ -64,6 +67,7 @@ fn bake_log_reports_each_map_with_its_state_and_a_failures_reason() {
 
     session.bake_log.set_failed(0, "The high poly file could not be read.");
     let log = execute(&mut session, "bake.log", &json!({})).unwrap();
+
     assert!(log["maps"].as_array().unwrap().iter().all(|row| row["state"] == "failed" && row["reason"] == "The high poly file could not be read."), "{log}");
 }
 
@@ -90,8 +94,10 @@ fn a_set_that_fails_before_its_high_polys_are_ready_marks_them_failed_and_a_canc
     let state = |log: &BakeLog, set: usize| log.highs.iter().find(|high| high.texture_set == set).map(|high| high.state.clone());
 
     log.set_started(0);
+
     assert_eq!(state(log, 0), Some(BakeHighState::Loading));
     assert!(log.is_loading_high_polys());
+
     log.set_failed(0, "The cage file could not be read.");
     log.set_started(1);
     log.cancel(Some(1));
@@ -110,6 +116,7 @@ fn a_bake_matching_by_name_lists_its_pairs_and_only_the_high_parts_no_set_pairs_
         .add_high_poly_bytes("high.obj", b"o Box_high\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no Extra_high\nv 2 0 0\nv 3 0 0\nv 2 1 0\nf 4 5 6\n".to_vec())
         .unwrap();
     session.begin_bake_log(&[0, 1]);
+
     assert_eq!(session.bake_log.matching, None, "matching \"Always\" lists no pairs");
 
     for set in &mut session.doc.project.texture_sets {
@@ -138,6 +145,7 @@ fn a_high_part_counts_as_unused_only_when_no_set_of_the_bake_matches_always() {
         .add_high_poly_bytes("high.obj", b"o Box_high\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no Extra_high\nv 2 0 0\nv 3 0 0\nv 2 1 0\nf 4 5 6\n".to_vec())
         .unwrap();
     session.doc.project.texture_sets[0].bake.high_poly.match_mode = MeshMatchMode::ByMeshName;
+
     session.begin_bake_log(&[0, 1]);
 
     let matching = session.bake_log.matching.clone().unwrap();

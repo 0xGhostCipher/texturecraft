@@ -239,6 +239,7 @@ fn edit_settings(
     if let (Some(fields), Some(Value::Object(reset))) = (patch.as_object_mut(), reset) {
         fields.extend(reset);
     }
+
     app.run("bake.settings", json!({ "ts": texture_sets, "patch": patch, "merge": merge }));
     true
 }

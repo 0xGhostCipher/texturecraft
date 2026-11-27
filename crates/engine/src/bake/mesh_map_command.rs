@@ -160,8 +160,7 @@ impl Session {
         }
 
         // Read from the maps that bake, so a map baked alone while unchecked still gets the colours
-        let needs_low_color = settings.maps.opacity.is_enabled
-            || (settings.maps.id.is_enabled && settings.maps.id.parameters.source == texturecraft_core::IdColorSource::MaterialColor);
+        let needs_low_color = settings.maps.enabled().any(|map| settings.maps.reads_material_colors(map));
         let low_base_color = if needs_low_color && (settings.high_poly.use_low_as_high || self.doc.bake_meshes.high.is_empty()) {
             self.doc
                 .bake_meshes
@@ -189,7 +188,8 @@ impl Session {
         let previous_maps = if excluded_tiles.is_empty() { Default::default() } else { self.doc.baked.get(&texture_set).cloned().unwrap_or_default() };
 
         let tracer = chosen_tracer(GPU_TRACER.get(), GPU_RAYTRACING.load(Ordering::Relaxed));
-        let sources = settings.maps.enabled().map(|map| Ok((map, self.bake_source(texture_set, map)?))).collect::<Result<_>>()?;
+        let sources = self.task_bake_sources(set, settings.maps.enabled());
+
         Ok(BakeTask {
             low_base_color,
             ts: texture_set,
@@ -301,7 +301,9 @@ impl Session {
     ) -> Result<()> {
         let stored: Vec<BakedMap> = maps.keys().copied().collect();
         let entry = self.doc.baked.entry(texture_set).or_default();
-        if entry.resolution != resolution || entry.maps.keys().any(|map| entry.height(*map) != height) {
+        let size_changed = entry.resolution != resolution || entry.maps.keys().any(|map| entry.height(*map) != height);
+        crate::meshmap_cmds::detach_imported_sources(&mut self.doc.project, texture_set, |map| size_changed || maps.contains_key(&map));
+        if size_changed {
             entry.maps.clear();
         }
 

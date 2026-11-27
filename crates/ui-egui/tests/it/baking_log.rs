@@ -33,11 +33,11 @@ fn run_to_the_end(harness: &mut Harness<'static, TextureCraftApp>) {
 }
 
 /// Bake sets 0 and 1, where set 1 has no tile left to bake, so its bake fails
-fn bake_with_set_1_failing(harness: &mut Harness<'static, TextureCraftApp>, set_1_maps: &[BakedMap]) {
+fn bake_with_set_1_failing(harness: &mut Harness<'static, TextureCraftApp>, failed_set_maps: &[BakedMap]) {
     let set = &mut harness.state_mut().session.doc.project.texture_sets[1];
     set.uv_tiles = vec![1001];
     set.bake_excluded_tiles.insert(1001);
-    set.bake.maps.select(set_1_maps.iter().copied());
+    set.bake.maps.select(failed_set_maps.iter().copied());
 
     harness.state_mut().start_bake(vec![0, 1]);
     run_to_the_end(harness);
@@ -66,6 +66,7 @@ fn a_failed_rows_reason_is_read_without_hovering() {
     let app = harness.state();
     let row = app.session.bake_log.maps.iter().find(|row| row.texture_set == 1).unwrap();
     let BakeMapState::Failed(reason) = &row.state else { panic!("set 1's bake failed: {:?}", row.state) };
+
     let label = format!("{} ID, Not baked", row.set_name);
     let node = harness.get_by_label(&label);
     assert_eq!(node.accesskit_node().description().as_deref(), Some(reason.as_str()), "the row's node carries its tooltip's reason");
@@ -87,6 +88,7 @@ fn a_one_map_bake_lists_only_that_map() {
 fn a_canceled_bake_keeps_the_maps_it_finished_and_warns_only_on_the_rest() {
     let mut harness = harness();
     let before = harness.state().session.baked(0).cloned().unwrap_or_default();
+
     harness.state_mut().start_bake(vec![0, 1]);
 
     // Leaving Bake mode closes the preview; the bake and the maps it finishes go on
@@ -105,7 +107,7 @@ fn a_canceled_bake_keeps_the_maps_it_finished_and_warns_only_on_the_rest() {
         assert_eq!(state(app, 1, map), Some(BakeMapState::Canceled), "set 1 was still queued, so its {map:?} warns");
     }
 
-    // A map the worker sent before the cancel is kept too, so whether set 0's Position finished depends on timing
+    // The worker may have queued Position before cancellation
     let row = state(app, 0, BakedMap::Position);
     assert!(matches!(row, Some(BakeMapState::Baked | BakeMapState::Canceled)), "set 0's Position is ticked or, unfinished, warns: {row:?}");
     let after = app.session.baked(0).cloned().unwrap_or_default();
@@ -128,6 +130,7 @@ fn a_failed_maps_arrow_opens_its_settings() {
     bake_with_set_1_failing(&mut harness, &[BakedMap::Id, BakedMap::Position]);
     harness.state_mut().ui.dock.focus(Panel::CommonSettings);
     harness.run_steps(3);
+
     assert_eq!(harness.state().session.ts(), 0);
     assert!(harness.query_by_label("Normalization Scale").is_none(), "Position's settings are not shown yet");
 
@@ -171,6 +174,7 @@ fn the_issues_filter_keeps_only_the_maps_with_a_problem() {
 fn the_issues_filter_says_so_when_nothing_went_wrong() {
     let mut harness = harness();
     let set_name = log_a_bake(&mut harness, BakeMapState::Baked);
+
     harness.get_by_label("Show only rows with an issue").click();
     harness.run_steps(3);
 
@@ -180,6 +184,7 @@ fn the_issues_filter_says_so_when_nothing_went_wrong() {
 
     harness.get_by_label("Show only rows with an issue").click();
     harness.run_steps(3);
+
     harness.get_by_label(&format!("{set_name} ID, Baked"));
     assert!(harness.query_by_label("Every map so far baked without a problem.").is_none(), "off again: every row is back");
 }
@@ -193,6 +198,7 @@ fn the_high_poly_tab_lists_each_sets_high_poly_files_under_a_row_that_folds() {
 
     harness.get_by_label("High Poly Parameters").click();
     harness.run_steps(3);
+
     let set_name = harness.state().session.doc.project.texture_sets[0].name.clone();
     harness.get_by_label("ball_high.obj, Loaded");
     let set_row = format!("{set_name}, High poly files");
@@ -200,6 +206,7 @@ fn the_high_poly_tab_lists_each_sets_high_poly_files_under_a_row_that_folds() {
 
     harness.get_by_label(&set_row).click();
     harness.run_steps(3);
+
     assert!(harness.query_by_label("ball_high.obj, Loaded").is_none(), "a folded set hides its files");
     assert_eq!(harness.get_by_label(&set_row).accesskit_node().data().is_expanded(), Some(false), "the row says it is folded");
 }
@@ -244,8 +251,10 @@ fn the_matching_tab_lists_the_pairs_and_its_filter_keeps_the_parts_with_no_partn
 #[test]
 fn the_matching_tab_says_when_no_set_matched_by_name() {
     let mut harness = harness();
+
     harness.get_by_label("Matching by Name").click();
     harness.run_steps(3);
+
     assert!(harness.query_by_label("Set Match to By Mesh Name to pair parts by name.").is_none(), "nothing baked yet: nothing to say");
 
     log_a_bake(&mut harness, BakeMapState::Baked);
@@ -264,6 +273,7 @@ fn on_a_narrow_dock_the_tabs_scroll_clear_of_the_issues_filter() {
         .build_eframe(|context| TextureCraftApp::new(context, texturecraft_engine::sample_session(256, 64).unwrap()));
     harness.state_mut().ui.mode = Mode::Baking;
     harness.run_steps(4);
+
     let filter = harness.get_by_label("Show only rows with an issue").rect();
     let strip_start = harness.get_by_role_and_label(Role::Tab, "Baking Process").rect().left();
     let last_tab = harness.get_by_role_and_label(Role::Tab, "Matching by Name").rect();
@@ -295,6 +305,7 @@ fn a_matching_name_cut_short_shows_in_full_on_hover() {
     harness.state_mut().session.bake_log.matching = Some(BakeLogMatching { low_suffix: "_low".into(), high_suffix: "_high".into(), pairs: vec![pair] });
     harness.get_by_label("Matching by Name").click();
     harness.run_steps(3);
+
     let label = format!("{LONG_NAME}, Strap_high");
     let row = harness.get_by_label(&label).rect();
     assert_eq!(harness.query_all_by_label(&label).count(), 1, "no tooltip before hovering");

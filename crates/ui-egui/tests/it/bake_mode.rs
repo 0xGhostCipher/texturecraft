@@ -703,7 +703,7 @@ fn a_click_on_the_middle_of_an_out_of_date_row_selects_its_map_and_bakes_nothing
     use serde_json::json;
     use texturecraft_engine::execute;
 
-    // Two sets show every hover icon (sync, Auto-rebake, bolt, eye) and the changed settings add the out-of-date clock
+    // Use two sets so the row shows all hover icons alongside the out-of-date clock
     let mut harness = harness(None);
     execute(&mut harness.state_mut().session, "bake.settings", &json!({ "dilation": 4 })).unwrap();
     harness.state_mut().ui.dock.focus(Panel::CommonSettings);
@@ -711,6 +711,7 @@ fn a_click_on_the_middle_of_an_out_of_date_row_selects_its_map_and_bakes_nothing
     harness.get_by_label("Out of date: Ambient Occlusion");
 
     select_map(&mut harness, "Ambient Occlusion");
+
     assert!(harness.state().bake_progress().is_none(), "the click landed on the row, not its Bake Only icon");
     assert!(harness.state().ui.dock.is_visible(Panel::MeshMapSettings), "selecting a map fronts its settings");
     harness.get_by_label("Attenuation");
@@ -730,10 +731,12 @@ fn a_baked_maps_row_shows_out_of_date_once_its_settings_change() {
         .build_eframe(|context| TextureCraftApp::new(context, session));
     harness.state_mut().ui.mode = Mode::Baking;
     harness.run_steps(4);
+
     assert!(harness.query_by_label("Out of date: Position").is_none(), "just baked");
 
     execute(&mut harness.state_mut().session, "bake.settings", &json!({ "dilation": 4 })).unwrap();
     harness.run_steps(3);
+
     let description = harness.get_by_label("Out of date: Position").accesskit_node().description();
     assert!(description.is_some_and(|reasons| !reasons.is_empty()), "what changed is read without hovering");
     assert!(harness.query_by_label("Out of date: Normal").is_none(), "never baked: not out of date");
@@ -748,6 +751,7 @@ fn dragging_secondary_rays_is_one_undo_step() {
 
     let track = harness.get_by_role_and_label(Role::Slider, "Secondary Rays").rect();
     let at = |share: f32| egui::pos2(track.left() + track.width() * share, track.center().y);
+
     harness.drag_at(at(0.2));
     harness.run_steps(crate::DRAG_STEP_FRAMES);
     for step in 1..=3 {

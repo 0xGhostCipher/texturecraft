@@ -95,6 +95,7 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
     let drag_from: Option<Pos2> = ui.data(|data| data.get_temp(drag_from_id));
     let texture_set = app.session.ts();
     let out_of_date = app.session.out_of_date_maps(texture_set);
+
     for map in BakedMap::ALL {
         let changes = out_of_date.get(&map).map_or(&[][..], Vec::as_slice);
         match ui.push_id(map, |ui| row(app, ui, (map, changes), settings, map == selected, &mut check_drag, drag_from)).inner {
@@ -103,8 +104,8 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
                 app.ui.dock.focus(Panel::MeshMapSettings);
             }
             Some(RowClick::AutoRebake) => {
-                let map = if auto_rebake_map(app, texture_set) == Some(map) { Value::Null } else { json!(map.id()) };
-                app.run("bake.autoRebake", json!({ "ts": texture_set, "map": map }));
+                let selection = if auto_rebake_map(app, texture_set) == Some(map) { Value::Null } else { json!(map.id()) };
+                app.run("bake.autoRebake", json!({ "ts": texture_set, "map": selection }));
             }
             None => {}
         }
@@ -117,7 +118,7 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
         if let (Some(value), true) = (check_drag, is_held) {
             data.insert_temp(check_drag_id, value);
 
-            // A pointer back from outside the window starts a new line, so rows it never crossed stay as they were
+            // Break the drag line when the pointer leaves the window
             if let Some(pointer) = pointer {
                 data.insert_temp(drag_from_id, pointer);
             } else {
@@ -280,7 +281,7 @@ fn row(
         ui.painter().rect_filled(rect, CornerRadius::same(ROW_RADIUS), tokens.row_hover.gamma_multiply(HOVER_FACE_OPACITY));
     }
 
-    // Added after the row's own response, so the check and icons take the clicks over it
+    // Register the checkbox after the row so it gets first chance at clicks
     let check = Rect::from_center_size(pos2(rect.left() + ROW_INSET + CHECK_SIZE / 2.0, rect.center().y), vec2(CHECK_SIZE, CHECK_SIZE));
     let checkbox = ui.interact(check.expand(CHECK_HIT_AIR), ui.scope_id().with("include"), Sense::click()).on_hover_text(tr("Include in Bake"));
     checkbox.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, settings.maps.is_enabled(map), name));
@@ -290,9 +291,10 @@ fn row(
     } else if checkbox.clicked() && check_drag.is_none() {
         settings.maps.set_enabled(map, !settings.maps.is_enabled(map));
     }
-    paint_check(ui.painter(), &tokens, check, Some(settings.maps.is_enabled(map)), checkbox.hovered());
 
+    paint_check(ui.painter(), &tokens, check, Some(settings.maps.is_enabled(map)), checkbox.hovered());
     crate::property_sheet::paint_keyboard_focus(ui, &checkbox, &tokens);
+
     let texture = app.bake_map_thumbnails.texture(ui.ctx(), &app.session, app.session.ts(), map);
     let thumbnail_rect = Rect::from_min_size(pos2(check.right() + THUMBNAIL_AIR, rect.center().y - THUMBNAIL_SIZE / 2.0), vec2(THUMBNAIL_SIZE, THUMBNAIL_SIZE));
     thumbnail(ui, thumbnail_rect, texture.as_ref());
@@ -302,7 +304,6 @@ fn row(
         out_of_date_mark(ui, thumbnail_rect, name, changes);
     }
 
-    // From the right: sync (with several sets), Auto-rebake, bolt, eye; Auto-rebake alone stays while on
     let focus_in_row = || {
         ui.memory(|memory| memory.focused())
             .and_then(|id| ui.ctx().read_response(id))
@@ -310,11 +311,14 @@ fn row(
     };
     let is_active = is_selected || hovered || focus_in_row();
     let is_auto_rebake = auto_rebake_map(app, texture_set) == Some(map);
+
+    // Reserve Auto-rebake's slot before placing the hover-only icons
     let mut icons_left = rect.right();
     let mut next_icon = || icon_slot(&mut icons_left, rect.center().y);
     let sync_slot = several_sets.then(&mut next_icon);
     let toggle = next_icon();
     let mut toggled = false;
+
     if is_active {
         if let Some(slot) = sync_slot {
             let shares = settings.sync.shares(BakeSyncGroup::Map(map));
@@ -325,6 +329,7 @@ fn row(
                 SetPicker::open(app, &sync, SetPickerPurpose::Sync(BakeSyncGroup::Map(map)));
             }
         }
+
         toggled = auto_rebake_toggle(ui, toggle, name, is_auto_rebake).clicked();
         let baking = app.bake_progress().is_some();
         let bolt = next_icon();
@@ -333,6 +338,7 @@ fn row(
             let active = app.session.ts();
             app.start_bake_of(vec![active], Some(map));
         }
+
         let shown = app.session.view == ViewMode::MeshMap(map);
         let look = if shown { GlyphLook::Pressed } else { GlyphLook::Plain };
         if glyph_button(ui, next_icon(), icon::EYE, &trf("Show {map} in the Viewport", &[("map", &name)]), look).clicked() {
@@ -477,8 +483,10 @@ fn header_button(ui: &mut Ui, glyph: &str, text: &str) -> egui::Response {
     let icon = ui.painter().layout_no_wrap(glyph.to_owned(), FontId::proportional(ROW_GLYPH_SIZE), tokens.text);
     let words = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(NAME_SIZE), tokens.text);
     let width = 2.0 * HEADER_BUTTON_PADDING + icon.size().x + HEADER_GLYPH_GAP + words.size().x;
+
     let (rect, response) = ui.allocate_exact_size(vec2(width, HEADER_BUTTON_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, text));
+
     let fill = if response.hovered() { tokens.row_hover } else { tokens.button };
     ui.painter().rect(rect, CornerRadius::same(ROW_RADIUS), fill, Stroke::new(1.0, tokens.button_border), egui::StrokeKind::Inside);
     let x = rect.left() + HEADER_BUTTON_PADDING;
@@ -497,6 +505,7 @@ fn out_of_date_mark(ui: &mut Ui, thumbnail: Rect, name: &str, changes: &[BakeCha
     response.widget_info(|| WidgetInfo::labeled(Role::Label, true, &label));
     let reasons: Vec<&str> = changes.iter().map(|change| tr(bake_change_reason(*change))).collect();
     ui.ctx().accesskit_node_builder(response.id, |node| node.set_description(reasons.join(" ")));
+
     let badge = thumbnail.right_bottom() - vec2(CLOCK_BADGE_RADIUS, CLOCK_BADGE_RADIUS) * 0.5;
     ui.painter().circle_filled(badge, CLOCK_BADGE_RADIUS, tokens.panel);
     ui.painter().text(badge, Align2::CENTER_CENTER, icon::CLOCK, FontId::proportional(CLOCK_BADGE_RADIUS * 2.0), tokens.warning);

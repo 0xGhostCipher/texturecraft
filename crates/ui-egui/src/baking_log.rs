@@ -91,6 +91,7 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
         matching_not_enabled(ui);
         return;
     }
+
     if issues_only && issue_count == 0 {
         no_issues(ui, tab);
         return;

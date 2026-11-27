@@ -61,11 +61,13 @@ fn set(session: &mut Session, parameters: &Value, target: BakePaintTarget) -> Re
         None => BakePaintMap::constant(number(parameters, "value", 1.0, 0.0, 1.0)?),
     };
     map.validate().map_err(|error| bad("bake.paint", error.to_string()))?;
+
     session.edit("Set Bake Paint Map", |session| {
         session.doc.bake_paint.insert((texture_set, target), Arc::new(map));
         Ok(())
     })?;
     session.note_bake_paint(texture_set, None);
+
     Ok(super::meshes_json(session))
 }
 
@@ -78,27 +80,29 @@ fn clear(session: &mut Session, parameters: &Value, target: BakePaintTarget) -> 
         })?;
         session.note_bake_paint(texture_set, None);
     }
+
     Ok(super::meshes_json(session))
 }
 
 /// Most UV points one `bake.paint` call takes
-const MAX_POINTS: usize = 100_000;
+const MAX_STROKE_POINTS: usize = 100_000;
 /// Brush radius in UV units: the default, and the smallest that still paints
 const DEFAULT_RADIUS: f32 = 0.03;
 const MIN_RADIUS: f32 = 0.00001;
 /// Brush hardness when a call gives none: halfway between a soft and a hard edge
 const DEFAULT_HARDNESS: f32 = 0.5;
 /// Side of a new paint map in texels: the default, and the range a call may ask for
-const DEFAULT_PAINT_SIZE: u64 = 1024;
-const PAINT_SIZES: std::ops::RangeInclusive<u64> = 16..=4096;
+const DEFAULT_PAINT_SIZE_TEXELS: u64 = 1024;
+const PAINT_SIZE_RANGE_TEXELS: std::ops::RangeInclusive<u64> = 16..=4096;
 
 fn paint(session: &mut Session, parameters: &Value, target: BakePaintTarget) -> Result<Value> {
     let texture_set = texture_set(session, parameters)?;
     let points = parameters
         .get("points")
         .and_then(Value::as_array)
-        .filter(|points| !points.is_empty() && points.len() <= MAX_POINTS)
-        .ok_or_else(|| bad("bake.paint", format!("points must contain 1 to {MAX_POINTS} UV coordinates")))?;
+        .filter(|points| !points.is_empty() && points.len() <= MAX_STROKE_POINTS)
+        .ok_or_else(|| bad("bake.paint", format!("points must contain 1 to {MAX_STROKE_POINTS} UV coordinates")))?;
+
     let points = points
         .iter()
         .map(|point| {
@@ -115,11 +119,11 @@ fn paint(session: &mut Session, parameters: &Value, target: BakePaintTarget) -> 
     let hardness = number(parameters, "hardness", DEFAULT_HARDNESS, 0.0, 1.0)?;
     let strength = number(parameters, "strength", 1.0, 0.0, 1.0)?;
     let size = match parameters.get("size") {
-        None => DEFAULT_PAINT_SIZE,
+        None => DEFAULT_PAINT_SIZE_TEXELS,
         Some(_) => u64p(parameters, "size").ok_or_else(|| bad("bake.paint", "size must be an integer"))?,
     };
-    if !PAINT_SIZES.contains(&size) {
-        return Err(bad("bake.paint", format!("size must be between {} and {}", PAINT_SIZES.start(), PAINT_SIZES.end())));
+    if !PAINT_SIZE_RANGE_TEXELS.contains(&size) {
+        return Err(bad("bake.paint", format!("size must be between {} and {}", PAINT_SIZE_RANGE_TEXELS.start(), PAINT_SIZE_RANGE_TEXELS.end())));
     }
 
     let default = match target {
@@ -146,12 +150,14 @@ fn paint(session: &mut Session, parameters: &Value, target: BakePaintTarget) -> 
         Arc::make_mut(map).paint(&points, radius, value, hardness, strength).map_err(|error| bad("bake.paint", error.to_string()))
     })?;
 
-    // The dabs reach `radius` from each point, and the paint map's bilinear sampling one of its texels further
+    // Bilinear sampling extends each dab's reach by one paint texel
     let paint_texel = session.doc.bake_paint.get(&(texture_set, target)).map_or(0.0, |map| 1.0 / map.width.min(map.height).max(1) as f32);
     let reach = Vec2::splat(radius + paint_texel);
-    let low = points.iter().fold(Vec2::INFINITY, |low, point| low.min(*point)) - reach;
-    let high = points.iter().fold(Vec2::NEG_INFINITY, |high, point| high.max(*point)) + reach;
-    session.note_bake_paint(texture_set, Some((low, high)));
+    let uv_min = points.iter().fold(Vec2::INFINITY, |min, point| min.min(*point)) - reach;
+    let uv_max = points.iter().fold(Vec2::NEG_INFINITY, |max, point| max.max(*point)) + reach;
+
+    session.note_bake_paint(texture_set, Some((uv_min, uv_max)));
+
     Ok(super::meshes_json(session))
 }
 

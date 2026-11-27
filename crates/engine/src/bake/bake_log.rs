@@ -77,6 +77,7 @@ impl BakeLog {
         for row in self.maps.iter_mut().filter(|row| row.texture_set == set) {
             row.state = BakeMapState::Failed(reason.to_owned());
         }
+
         // A file that loaded is not what failed
         for row in self.highs.iter_mut().filter(|row| row.texture_set == set && row.state.is_pending()) {
             row.state = BakeHighState::Failed(reason.to_owned());
@@ -156,9 +157,11 @@ impl Session {
         let mut every_high_used = false;
         for &set in sets {
             let Ok(texture_set) = self.doc.project.texture_set(set) else { continue };
+
             let settings = &texture_set.bake.high_poly;
             every_high_used |= !settings.use_low_as_high && settings.match_mode == MeshMatchMode::Always;
             let Ok(Some(pairs)) = self.bake_name_pairs(set) else { continue };
+
             let matching = matching.get_or_insert_with(|| BakeLogMatching {
                 low_suffix: settings.low_suffix.clone(),
                 high_suffix: settings.high_suffix.clone(),

@@ -61,6 +61,7 @@ impl Session {
     pub fn bake_painted_task(&self, texture_set: usize, map: BakedMap) -> Result<crate::BakeTask> {
         let mut task = self.bake_task_for(texture_set, &self.auto_rebake_maps(texture_set, map))?;
         let Some(region) = self.doc.painted_regions.get(&texture_set) else { return Ok(task) };
+
         let (width, height) = task.settings.common.output_size();
         let stored =
             self.doc.baked.get(&texture_set).filter(|stored| stored.resolution == width && stored.height(map) == height && stored.maps.contains_key(&map));

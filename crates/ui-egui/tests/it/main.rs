@@ -86,6 +86,7 @@ mod rail;
 mod reference_order;
 mod rename_anchor;
 mod reset_ui;
+mod resources_updater;
 mod sample_project;
 mod settings_window;
 mod shelf_click;
@@ -196,12 +197,13 @@ fn assert_list_leaves_the_wheel_and_closes(harness: &mut Harness<'_, TextureCraf
     assert!(!egui::Popup::is_any_open(&harness.ctx), "a click outside closes the list");
 }
 
-/// Most frames [`step_until`] waits, and its pause between them for background work
+/// Maximum frames to wait for a test condition
 const STEP_UNTIL_FRAMES: usize = 4000;
+/// Time to yield to background workers between frames
 const STEP_UNTIL_PAUSE: std::time::Duration = std::time::Duration::from_millis(2);
 
 /// Step frames until `done` holds, up to a generous limit
-fn step_until(harness: &mut Harness<'_, TextureCraftApp>, what: &str, done: impl Fn(&TextureCraftApp) -> bool) {
+fn step_until(harness: &mut Harness<'_, TextureCraftApp>, expected_event: &str, done: impl Fn(&TextureCraftApp) -> bool) {
     for _ in 0..STEP_UNTIL_FRAMES {
         harness.run_steps(1);
         if done(harness.state()) {
@@ -210,7 +212,7 @@ fn step_until(harness: &mut Harness<'_, TextureCraftApp>, what: &str, done: impl
 
         std::thread::sleep(STEP_UNTIL_PAUSE);
     }
-    panic!("{what} did not happen");
+    panic!("{expected_event} did not happen");
 }
 
 /// Presses and releases the primary button at `at` without moving, as a pointer click does

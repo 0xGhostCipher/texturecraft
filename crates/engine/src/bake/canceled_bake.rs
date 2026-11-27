@@ -17,6 +17,7 @@ impl Session {
         painted_stroke: u64,
     ) -> Result<Vec<BakedMap>> {
         let Some(height) = finished.maps.keys().next().map(|map| finished.height(*map)) else { return Ok(Vec::new()) };
+
         let resized = self.doc.baked.get(&texture_set).is_some_and(|stored| {
             !stored.maps.is_empty() && (stored.resolution != finished.resolution || stored.maps.keys().any(|map| stored.height(*map) != height))
         });
@@ -31,6 +32,7 @@ impl Session {
         self.edit("Bake mesh maps", |session| {
             session.store_bake_maps(texture_set, finished.resolution, height, finished.maps, Some((&kept_sources, painted_stroke)))
         })?;
+
         // Named like the Texture Set List and the progress footer, which count sets from 1
         let name = self.doc.project.texture_sets.get(texture_set).map_or_else(|| format!("{}", texture_set + 1), |set| set.name.clone());
         self.log.info("Baker", format!("Kept {} baked maps of texture set {name} from the canceled bake", kept.len()));

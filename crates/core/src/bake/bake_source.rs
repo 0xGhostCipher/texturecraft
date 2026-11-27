@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 pub struct BakeSource {
     /// The low poly's geometry
     pub low_poly: u64,
+    /// The embedded mesh file when this map reads its material colors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_material_file: Option<u64>,
     /// The high poly files, in list order (0: none, the set bakes from the low poly)
     pub high_poly: u64,
     /// The cage file (0: none)
@@ -20,8 +23,15 @@ pub struct BakeSource {
 impl BakeSource {
     /// What differs in `current` from this record, in [`BakeChange`] order (empty: up to date)
     pub fn changes(&self, current: &BakeSource) -> Vec<BakeChange> {
+        // Switching color source is already reported under high poly or map settings
+        let material_changed = match (self.low_material_file, current.low_material_file) {
+            (Some(previous), Some(now)) => previous != now,
+            (None, None) => false,
+            _ => self.high_poly == current.high_poly && self.map_settings == current.map_settings,
+        };
+
         [
-            (self.low_poly != current.low_poly, BakeChange::LowPoly),
+            (self.low_poly != current.low_poly || material_changed, BakeChange::LowPoly),
             (self.high_poly != current.high_poly, BakeChange::HighPoly),
             (self.cage != current.cage, BakeChange::Cage),
             (self.settings != current.settings, BakeChange::Settings),

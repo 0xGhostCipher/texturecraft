@@ -72,13 +72,14 @@ fn a_job_on_the_current_mesh_keeps_running() {
 
 #[test]
 fn a_cancel_keeps_the_maps_the_worker_sent_before_any_frame_took_them() {
-    let (mut harness, _progress, (_result_sender, map_sender)) = running_job(|current| current);
+    let (mut harness, _progress, (result_sender, map_sender)) = running_job(|current| current);
     let data = Arc::new(vec![0.5; 64 * 64]);
     let normal_before = harness.state().session.baked(0).and_then(|baked| baked.maps.get(&BakedMap::Normal).cloned());
     assert!(normal_before.is_some(), "the sample's Normal map is baked before the job");
     for (index, map) in [BakedMap::Curvature, BakedMap::AmbientOcclusion].into_iter().enumerate() {
         map_sender.send(StreamedMap { map, index, total: 2, resolution: 64, height: 64, data: data.clone() }).unwrap();
     }
+    result_sender.send(Err(texturecraft_engine::EngineError::BakeCancelled)).unwrap();
 
     harness.state_mut().cancel_bake();
     let baked = harness.state().session.baked(0).unwrap();
@@ -87,4 +88,19 @@ fn a_cancel_keeps_the_maps_the_worker_sent_before_any_frame_took_them() {
     }
     let normal = baked.maps.get(&BakedMap::Normal);
     assert!(normal.zip(normal_before.as_ref()).is_some_and(|(now, before)| Arc::ptr_eq(now, before)), "a map the worker never sent keeps the one baked before");
+}
+
+#[test]
+fn a_cancel_does_not_keep_maps_from_a_worker_that_already_failed() {
+    let (mut harness, _progress, (result_sender, map_sender)) = running_job(|current| current);
+    let map = BakedMap::Normal;
+    let before = harness.state().session.baked(0).unwrap().maps[&map].clone();
+    let data = Arc::new(vec![0.5; 64 * 64 * map.components()]);
+    map_sender.send(StreamedMap { map, index: 0, total: 2, resolution: 64, height: 64, data }).unwrap();
+    result_sender.send(Err(texturecraft_engine::EngineError::Other("the second map failed".into()))).unwrap();
+
+    harness.state_mut().cancel_bake();
+
+    let after = &harness.state().session.baked(0).unwrap().maps[&map];
+    assert!(Arc::ptr_eq(&before, after), "the failed set leaves the previous bake in place");
 }

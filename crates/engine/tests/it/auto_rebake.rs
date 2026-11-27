@@ -83,6 +83,22 @@ fn a_new_output_size_rebakes_every_checked_map_so_none_is_lost() {
 }
 
 #[test]
+fn an_unchanged_uv_atlas_size_rebakes_only_the_auto_rebake_map() {
+    let mut session = Session::new_project("t", primitives::udim_plane(), "builtin:udim_plane", None, 128).unwrap();
+    execute(&mut session, "bake.run", &json!({ "resolution": 64, "maps": ["position", "id"], "dilation": 0 })).unwrap();
+    let id_before = session.baked(0).unwrap().maps[&BakedMap::Id].clone();
+    execute(&mut session, "bake.autoRebake", &json!({ "map": "position" })).unwrap();
+    execute(&mut session, "bake.settings", &json!({ "positionMode": "boundingBox" })).unwrap();
+
+    let maps = session.auto_rebake_maps(0, BakedMap::Position);
+    let output = session.bake_task_for(0, &maps).unwrap().run_streaming(&Progress::new(), &mut |_| {}).unwrap();
+    session.apply_streamed_bake(0, output).unwrap();
+
+    let id_after = &session.baked(0).unwrap().maps[&BakedMap::Id];
+    assert!(std::sync::Arc::ptr_eq(&id_before, id_after), "an unchanged atlas size leaves the other map alone");
+}
+
+#[test]
 fn a_skew_stroke_rebakes_only_its_box_and_the_box_matches_a_whole_bake() {
     let mut session = super::bake::leaning_session(true);
     execute(&mut session, "bake.run", &json!({ "maps": ["position"], "dilation": 2 })).unwrap();

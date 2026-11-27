@@ -157,16 +157,18 @@ impl Session {
 
     /// [`Session::mesh_obj_with_mtl`], optionally replacing normals on the exported copy only.
     pub fn mesh_obj_with_mtl_and_normals(&mut self, stem: &str, recompute_normals: bool) -> Result<(Vec<u8>, texturecraft_formats::NamedFiles)> {
-        // shortcut: UV-tiled sets get no maps (the OBJ keeps the mesh's UDIM UVs and an MTL map is
-        // one image); their tiles export through Export textures with `$udim` names.
+        // OBJ keeps UDIM UVs, while each MTL map can hold only one image
+        // Export tiled textures separately with `$udim` names
         let mut mesh = self.source_mesh();
         if recompute_normals {
             mesh.compute_smooth_normals();
         }
-        // A mesh without materials has one implicit material (and texture set).
+
+        // A mesh without materials has one implicit material and texture set
         if mesh.materials.is_empty() {
             mesh.materials.push("default".into());
         }
+
         let files = self.material_files(texturecraft_formats::usd_export_options(), false, mesh.materials.len())?;
         texturecraft_formats::obj_with_mtl(&mesh, &self.doc.project.name, stem, &files).map_err(fe)
     }
@@ -182,10 +184,11 @@ impl Session {
     pub fn mesh_glb_bytes_with_normals(&mut self, recompute_normals: bool) -> Result<Vec<u8>> {
         let files = self.material_files(texturecraft_formats::glb_export_options(), true, self.mesh.materials.len())?;
         let textures: Vec<_> = files.into_iter().map(texturecraft_formats::GlbTextures::from_files).collect();
-        let mut mesh = self.mesh.as_ref().clone();
+        let mut mesh = Cow::Borrowed(self.mesh.as_ref());
         if recompute_normals {
-            mesh.compute_smooth_normals();
+            mesh.to_mut().compute_smooth_normals();
         }
+
         texturecraft_formats::glb_bytes(&mesh, &self.doc.project.name, &textures).map_err(fe)
     }
 
@@ -198,10 +201,11 @@ impl Session {
     /// [`Session::mesh_usd`], optionally replacing normals on the exported copy only.
     pub fn mesh_usd_with_normals(&mut self, format: texturecraft_formats::UsdFormat, recompute_normals: bool) -> Result<texturecraft_formats::UsdExport> {
         let files = self.material_files(texturecraft_formats::usd_export_options(), true, self.mesh.materials.len())?;
-        let mut mesh = self.mesh.as_ref().clone();
+        let mut mesh = Cow::Borrowed(self.mesh.as_ref());
         if recompute_normals {
-            mesh.compute_smooth_normals();
+            mesh.to_mut().compute_smooth_normals();
         }
+
         texturecraft_formats::usd_bytes(&mesh, &self.doc.project.name, &files, format).map_err(fe)
     }
 
@@ -741,8 +745,10 @@ impl Session {
 
         next.modified = true;
         next.project_id = self.project_id;
-        // The painted boxes moved with the document, and a bake tells a newer stroke by this count
+
+        // Keep the stroke counter aligned with the painted regions in the cloned document
         next.painted_strokes = self.painted_strokes;
+
         let preserved = preserve_strokes.then(|| crate::preserve::preserve_strokes(self, &mut next));
 
         // Keep the stored source in the current session until reimport succeeds
@@ -751,6 +757,7 @@ impl Session {
         }
 
         self.switch_to(next);
+
         Ok(preserved.map_or(Value::Null, |n| json!({ "preserved": n })))
     }
 }
@@ -1257,6 +1264,7 @@ impl Session {
             None => "obj".into(),
         };
         let path = if ext_of(path) == ext { path.to_string() } else { format!("{path}.{ext}") };
+
         let (bytes, textures) = match (ext.as_str(), texturecraft_formats::UsdFormat::from_ext(&ext)) {
             ("glb", _) => (self.mesh_glb_bytes_with_normals(recompute_normals)?, Vec::new()),
             (_, Some(format)) => {
@@ -1265,6 +1273,7 @@ impl Session {
             }
             _ => self.mesh_obj_with_mtl_and_normals(std::path::Path::new(&path).file_stem().and_then(|s| s.to_str()).unwrap_or("mesh"), recompute_normals)?,
         };
+
         Ok(MeshExport { path, bytes, textures })
     }
 }
@@ -1466,11 +1475,13 @@ f 1/1 2/2 3/3
         let dir = std::env::temp_dir().join(format!("tc_export_recompute_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+
         for (format, suffix) in [("obj", "obj"), ("glb", "glb"), ("usda", "usda")] {
             let path = dir.join(format!("cube-{format}.{suffix}"));
             let reply = crate::execute(&mut s, "file.exportMesh", &json!({"path": path, "recomputeNormals": true})).unwrap();
             let bytes = std::fs::read(reply["path"].as_str().unwrap()).unwrap();
             let back = texturecraft_formats::import_mesh_bytes(&format!("cube.{suffix}"), &bytes).unwrap().mesh;
+
             assert_eq!(back.normals.len(), expected.normals.len(), "{format}: one normal per exported vertex");
             for (position, actual) in back.positions.iter().zip(&back.normals) {
                 let wanted = expected
@@ -1482,8 +1493,10 @@ f 1/1 2/2 3/3
                 assert!((*actual - wanted).length() < 1e-4, "{format}: actual {actual:?}, wanted {wanted:?}");
             }
         }
+
         assert!(s.source.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the source project is unchanged");
         assert!(s.mesh.normals.iter().all(|n| *n == texturecraft_geom::glam::Vec3::Y), "the render project is unchanged");
+
         let stored_path = dir.join("stored.obj");
         let stored = crate::execute(&mut s, "file.exportMesh", &json!({"path": stored_path})).unwrap();
         let stored = std::fs::read(stored["path"].as_str().unwrap()).unwrap();
@@ -1496,7 +1509,7 @@ f 1/1 2/2 3/3
     fn recomputed_normals_weld_uv_seams_in_exported_mesh() {
         use texturecraft_geom::glam::Vec3;
 
-        // Two triangles meet along 0--2, but their UV island split duplicates that edge as 3--4.
+        // The UV seam duplicates edge 0–2 at vertices 3 and 4
         let positions = vec![Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::ZERO, Vec3::Y, Vec3::new(-1.0, 0.0, 1.0)];
         let mesh = Mesh::from_parts(
             positions,
@@ -1507,8 +1520,10 @@ f 1/1 2/2 3/3
         )
         .unwrap();
         let mut s = Session::new_project("seam", mesh, "builtin:seam", None, 128).unwrap();
+
         let bytes = s.mesh_glb_bytes_with_normals(true).unwrap();
         let back = texturecraft_formats::import_mesh_bytes("seam.glb", &bytes).unwrap().mesh;
+
         for point in [Vec3::ZERO, Vec3::Y] {
             let normals: Vec<_> = back.positions.iter().zip(&back.normals).filter_map(|(position, normal)| (*position == point).then_some(*normal)).collect();
             assert!(normals.len() >= 2, "{point:?}: the UV seam must still have two exported vertices");
@@ -1654,7 +1669,7 @@ f 1/1 2/2 3/3
         let a = dir.join("a.obj");
         std::fs::write(&a, "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n").unwrap();
 
-        // Same triangle count, other vertices
+        // Keep the triangle count fixed while changing the geometry
         let b = dir.join("b.obj");
         std::fs::write(&b, "v 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n").unwrap();
         let mut s = Session::from_mesh_bytes("a.obj", &std::fs::read(&a).unwrap(), 128, "a").unwrap();

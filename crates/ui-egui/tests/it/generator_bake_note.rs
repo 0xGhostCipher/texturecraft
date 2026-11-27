@@ -50,11 +50,13 @@ fn the_note_shows_while_the_curvature_map_is_missing_or_out_of_date_only() {
 
     execute(&mut harness.state_mut().session, "bake.run", &json!({ "maps": ["curvature"] })).unwrap();
     harness.run_steps(3);
+
     assert!(harness.query_by_label("Curvature map not baked").is_none(), "baked: no note");
     assert!(harness.query_by_label("Curvature map out of date").is_none(), "baked: no note");
 
     execute(&mut harness.state_mut().session, "bake.settings", &json!({ "dilation": 4 })).unwrap();
     harness.run_steps(3);
+
     harness.get_by_label("Curvature map out of date");
 }
 
@@ -65,8 +67,10 @@ fn the_notes_bake_button_turns_the_map_on_and_bakes_it_in_the_background() {
 
     harness.get_by_label("Bake").click();
     harness.run_steps(1);
+
     assert!(harness.state().session.doc.project.texture_sets[0].bake.maps.is_enabled(BakedMap::Curvature), "turned on");
     assert!(harness.state().bake.is_some(), "a background bake started");
+
     run_to_the_end(&mut harness);
 
     assert!(harness.state().session.baked(0).is_some_and(|baked| baked.maps.contains_key(&BakedMap::Curvature)));

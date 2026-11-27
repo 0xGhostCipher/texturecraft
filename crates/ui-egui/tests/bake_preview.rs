@@ -80,8 +80,10 @@ fn cancelling_before_a_map_finishes_restores_the_view_and_leaves_the_document_al
     harness.run_steps(1);
 
     assert!(harness.state().session.bake_preview_active());
+
     let (at, viewport) = (texturecraft_engine::geom::glam::Vec2::new(5.0, 5.0), texturecraft_engine::geom::glam::Vec2::new(100.0, 100.0));
     assert!(harness.state_mut().session.begin_stroke(at, viewport, 1.0).is_err(), "painting is paused");
+
     harness.state_mut().cancel_bake();
     harness.run_steps(2);
 
@@ -154,6 +156,7 @@ fn a_ready_result_waits_for_the_map_stream_to_close() {
 
     assert!(harness.state().bake.is_some(), "an open map stream can still deliver a map");
     assert_eq!(harness.state().session.doc.baked, before);
+
     for map in finished_maps {
         map_sender.send(map).unwrap();
     }
@@ -167,6 +170,7 @@ fn a_ready_result_waits_for_the_map_stream_to_close() {
         assert!(harness.state().session.bake_preview_baked(0).unwrap().maps.contains_key(&map));
         assert_eq!(harness.state().session.doc.baked, before);
     }
+
     harness.run_steps(1);
 
     assert!(harness.state().bake.is_none());
