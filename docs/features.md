@@ -304,8 +304,10 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   channel to a text file with each entry's recorded UTC time, severity and source. The desktop app asks
   for a destination, and the browser downloads the file.
 - A **History** panel: click any step to go back to it, or forward again to an undone one.
-- **10 languages:** English, French, German, Spanish, Portuguese, Italian, Japanese, Chinese,
-  Korean and Arabic, switchable live.
+- **11 languages:** English, French, German, Spanish, Portuguese, Italian, Russian, Japanese,
+  Chinese, Korean and Arabic, switchable live. A build without the shared craft-i18n catalogs
+  offers English only, and Japanese, Chinese, Korean and Arabic can be picked only where a font
+  for their script is available (craft-fonts or the system's); otherwise they show greyed out.
 - **In the browser:** the same app compiled to WebAssembly, on WebGPU or WebGL2, with touch
   navigation and project open, save and download.
 
