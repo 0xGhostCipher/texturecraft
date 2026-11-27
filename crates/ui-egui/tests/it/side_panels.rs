@@ -24,7 +24,10 @@ const TOOLTIP_FRAMES: usize = 30;
 
 fn app() -> Harness<'static, TextureCraftApp> {
     let session = texturecraft_engine::sample_session(256, 64).unwrap();
-    let mut harness = Harness::builder().with_size(WINDOW_SIZE).build_eframe(|cc| TextureCraftApp::new(cc, session));
+    let mut harness = Harness::builder()
+        .with_size(WINDOW_SIZE)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     harness.state_mut().ui.prefs.language = "en".into();
     harness.run_steps(STARTUP_FRAMES);
     harness
@@ -52,7 +55,7 @@ fn button_left_of_rail<'h>(harness: &'h Harness<'_, TextureCraftApp>, label: &st
 }
 
 fn is_floating(harness: &Harness<'_, TextureCraftApp>, panel: Panel) -> bool {
-    harness.state().ui.dock.workspace().layout.floating.iter().any(|window| window.contains(&panel))
+    harness.state().ui.dock.workspace().layout().floating.iter().any(|window| window.contains(&panel))
 }
 
 /// Hover the control labelled `label` until its tooltip shows, and tell whether that says it is not available yet
@@ -83,7 +86,7 @@ fn undock_floats_the_panel_dock_returns_it_to_the_rail_and_the_float_persists() 
     let saved = serde_json::to_value(&harness.state().ui).unwrap();
     let restored: UiState = serde_json::from_value(saved).unwrap();
     assert_eq!(restored.dock, harness.state().ui.dock);
-    assert!(restored.dock.workspace().layout.floating.iter().any(|window| window.contains(&Panel::History)));
+    assert!(restored.dock.workspace().layout().floating.iter().any(|window| window.contains(&Panel::History)));
 
     button_left_of_rail(&harness, "Dock").click();
     harness.run_steps(SETTLE_FRAMES);
@@ -172,6 +175,31 @@ fn export_mesh_asks_the_options_then_the_file() {
     assert!(harness.query_by_label("Mesh Export Options").is_none(), "Export closes the options");
     assert!(file.exists(), "the mesh went to the picked file");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn recompute_normals_is_an_enabled_keyboard_operable_checkbox() {
+    let mut harness = app();
+    let context = harness.ctx.clone();
+    texturecraft_ui_egui::menus::invoke(harness.state_mut(), &context, "file.exportMesh");
+    harness.run_steps(SETTLE_FRAMES);
+    let checkbox = harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals");
+    assert!(!checkbox.accesskit_node().is_disabled(), "the option is really available");
+    assert!(!is_on(&checkbox), "stored normals are kept until the user opts in");
+    assert!(!harness.state().ui.mesh_recompute_normals);
+
+    checkbox.focus();
+    harness.key_press(egui::Key::Space);
+    harness.run_steps(SETTLE_FRAMES);
+    assert!(harness.state().ui.mesh_recompute_normals, "Space changes the setting used by export");
+    let checkbox = harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals");
+    assert!(is_on(&checkbox), "the accessibility tree reports the checked state");
+    assert_eq!(checkbox.accesskit_node().label().as_deref(), Some("Recompute vertex normals"));
+
+    checkbox.click();
+    harness.run_steps(SETTLE_FRAMES);
+    assert!(!harness.state().ui.mesh_recompute_normals, "a pointer click turns it back off");
+    assert!(!is_on(&harness.get_by_role_and_label(Role::CheckBox, "Recompute vertex normals")));
 }
 
 /// Whether the Log lists `line` (the status bar under it repeats the last message)
