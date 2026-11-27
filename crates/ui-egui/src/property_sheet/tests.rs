@@ -1042,6 +1042,26 @@ fn a_reopened_editor_starts_a_new_undo_step_after_a_hidden_release() {
     assert_eq!(edit(Some(owner), true), Some(false), "a separate press starts an undo step after reopening");
 }
 
+/// Editing one editor after another, a press at a time, keeps the record of the latest press only (it kept one per editor ever dragged)
+#[test]
+fn the_editors_of_earlier_presses_are_forgotten() {
+    const EDITOR_COUNT: usize = 12;
+    let context = egui::Context::default();
+    let button =
+        |pressed| egui::Event::PointerButton { pos: egui::Pos2::ZERO, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+
+    for editor in 0..EDITOR_COUNT {
+        let owner = egui::Id::unique(("distinct editor", editor));
+        for pressed in [true, false] {
+            let input = egui::RawInput { events: vec![button(pressed)], ..Default::default() };
+            context.run_ui(input, |ui| _ = crate::widgets::press_edit(ui, owner, pressed)).textures_delta.clear();
+        }
+    }
+
+    let kept = context.data(|data| data.count::<crate::press_edit::PressEdit>());
+    assert!(kept < 2, "{kept} editor records kept after {EDITOR_COUNT} presses");
+}
+
 /// A floating panel in its own OS window runs a pass of its own between two frames of the main window: the drag stays one undo step
 #[test]
 fn a_drag_stays_one_undo_step_while_another_window_draws() {

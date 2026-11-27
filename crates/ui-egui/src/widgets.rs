@@ -41,6 +41,12 @@ pub(crate) fn press_edit(ui: &Ui, id: egui::Id, changed: bool) -> Option<bool> {
             Some(start) => {
                 let continuing = previous.is_some_and(|previous| previous.press == start);
                 if changed || continuing {
+                    // Only the latest press's editors can merge, so its first change forgets every editor of the older ones
+                    let latest_press = egui::Id::unique("pointer edit press");
+                    if data.get_temp::<u64>(latest_press) != Some(start) {
+                        data.remove_by_type::<PressEdit>();
+                        data.insert_temp(latest_press, start);
+                    }
                     data.insert_temp(id, PressEdit { press: start, frame });
                 }
                 continuing
