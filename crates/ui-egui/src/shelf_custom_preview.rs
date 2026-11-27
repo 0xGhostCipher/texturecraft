@@ -30,6 +30,7 @@ pub(crate) fn file_for<'a>(previews: &'a [ShelfCustomPreview], entry: &ShelfEntr
 }
 
 /// Shows `file` on the tile of the asset with identity `kind` and `id`, replacing an earlier pick
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn set(previews: &mut Vec<ShelfCustomPreview>, kind: String, id: String, file: PathBuf) {
     previews.retain(|preview| preview.kind != kind || preview.id != id);
     previews.push(ShelfCustomPreview { kind, id, file });

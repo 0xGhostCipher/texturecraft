@@ -34,24 +34,6 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             rename
         ),
-        cmd!(
-            "resource.reload",
-            "Reload resource",
-            [],
-            None,
-            "{name} — read the image again from the file it was imported from in this session",
-            always,
-            reload
-        ),
-        cmd!(
-            "resource.update",
-            "Update resources used in project",
-            [],
-            None,
-            "{} — read again every image imported from a file in this session whose file changed (one undo step); returns {updated: [names], failed: [{name, error}]}",
-            always,
-            update
-        ),
         cmd!("file.removeUnused", "Remove unused resources...", ["File"], None, "{}", always, remove_unused),
         cmd!(
             "layer.add.image",
@@ -71,6 +53,30 @@ pub(crate) const EXR_SIGNATURE: &[u8] = &[0x76, 0x2f, 0x31, 0x01];
 
 pub(crate) fn decoded(d: texturecraft_formats::DecodedImage) -> Arc<ImageRes> {
     Arc::new(ImageRes::new(d.width, d.height, d.rgba, d.srgb))
+}
+
+/// Disambiguate a sanitized resource name without losing its archive key on save.
+pub(crate) fn unique_resource_name(base: String, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(&base) {
+        return base;
+    }
+
+    let (stem, extension) = base.rfind('.').map_or((base.as_str(), ""), |start| base.split_at(start));
+    let mut index = 2;
+    loop {
+        let discriminator = format!("{index}_");
+        let available = MAX_RESOURCE_NAME_LEN - discriminator.len();
+
+        // An unusually long extension must leave room for the name itself
+        let (stem, extension) = if extension.len() < available { (stem, extension) } else { (base.as_str(), "") };
+        let stem = &stem[..stem.len().min(available - extension.len())];
+        let name = format!("{discriminator}{stem}{extension}");
+        if !taken(&name) {
+            return name;
+        }
+
+        index += 1;
+    }
 }
 
 impl Session {
@@ -107,38 +113,12 @@ impl Session {
             base.insert_str(0, &prefix);
         }
 
-        let (stem, extension) = base.rfind('.').map_or((base.as_str(), ""), |extension_start| base.split_at(extension_start));
-        let mut name = base.clone();
-        let mut duplicate_index = 2;
-        while self.doc.resources.contains_key(&name) || crate::fill_alpha::library_alpha_of(&name).is_some() {
-            let discriminator = format!("{duplicate_index}_");
-            let available = MAX_RESOURCE_NAME_LEN - discriminator.len();
-
-            // Leave room for a stem even for names that end in an unusually long extension
-            let (stem, extension) = if extension.len() < available { (stem, extension) } else { (base.as_str(), "") };
-            let stem = stem.get(..stem.len().min(available - extension.len())).unwrap_or(stem);
-            name = format!("{discriminator}{stem}{extension}");
-            duplicate_index += 1;
-        }
+        let name = unique_resource_name(base, |name| self.doc.resources.contains_key(name) || crate::fill_alpha::library_alpha_of(name).is_some());
 
         self.doc.resources.insert(name.clone(), Arc::new(bytes));
         self.images.insert(name.clone(), decoded(image));
+
         Ok(name)
-    }
-
-    /// The file image resource `name` was imported from in this session (what `resource.reload` reads again)
-    pub fn resource_source(&self, name: &str) -> Option<&std::path::Path> {
-        let bytes = self.doc.resources.get(name)?;
-        self.resource_sources.iter().rev().find(|(source, _)| std::ptr::eq(source.as_ptr(), Arc::as_ptr(bytes))).map(|(_, path)| path.as_path())
-    }
-
-    /// Remembers that image resource `name`, with the bytes it holds now, came from the file at `path`
-    #[cfg(not(target_arch = "wasm32"))]
-    fn remember_resource_source(&mut self, name: &str, path: &std::path::Path) {
-        self.resource_sources.retain(|(source, _)| source.strong_count() > 0);
-        if let Some(bytes) = self.doc.resources.get(name) {
-            self.resource_sources.push((Arc::downgrade(bytes), path.to_path_buf()));
-        }
     }
 
     /// Decode resources that are not decoded yet and forget removed ones (after undo, redo, load).
@@ -188,6 +168,16 @@ impl Session {
         self.drop_missing_image_view();
     }
 
+    /// Undo and redo restore resource bytes under the same name (the Resources Updater replaces
+    /// them in place): the pixels decoded from the bytes `other` held are stale
+    pub(crate) fn forget_replaced_images(&mut self, other: &crate::Document) {
+        for (name, bytes) in &self.doc.resources {
+            if other.resources.get(name).is_some_and(|previous| !Arc::ptr_eq(previous, bytes)) {
+                self.images.remove(name);
+            }
+        }
+    }
+
     /// The "Other..." view cannot show an image that is gone (removed or renamed): the material comes back
     pub(crate) fn drop_missing_image_view(&mut self) {
         if self.view == crate::ViewMode::Image && !self.view_image.as_ref().is_some_and(|name| self.images.contains_key(name)) {
@@ -214,9 +204,16 @@ fn list(s: &Session) -> Value {
 #[cfg(not(target_arch = "wasm32"))]
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = strp(p, "path").ok_or_else(|| bad("resource.import", "`path` is required"))?;
+    let prefix = strp(p, "prefix").unwrap_or("");
+
+    let source = crate::resource_update_cmds::file_source(path);
     let bytes = read_image_file("resource.import", path, MAX_BYTES as u64)?;
-    let name = s.import_resource_bytes_prefixed(strp(p, "prefix").unwrap_or(""), path, bytes)?;
-    s.remember_resource_source(&name, std::path::Path::new(path));
+
+    let name = s.edit("Import resource", |session| {
+        let name = session.add_image_resource_prefixed(prefix, path, bytes, texturecraft_formats::MAX_RESOURCE_TEXELS)?;
+        session.doc.project.resource_sources.insert(name.clone(), source);
+        Ok(name)
+    })?;
     Ok(json!({ "name": name }))
 }
 
@@ -298,6 +295,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
 
     s.edit("Remove resource", |s| {
         s.doc.resources.remove(&name);
+        s.doc.project.resource_sources.remove(&name);
         Ok(())
     })?;
     s.sync_images();
@@ -350,6 +348,10 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit("Rename resource", |s| {
         let bytes = s.doc.resources.remove(&name).ok_or_else(|| bad(command, format!("no resource `{name}`")))?;
         s.doc.resources.insert(to.clone(), bytes);
+        // The Resources Updater keeps following the file the image came from
+        if let Some(source) = s.doc.project.resource_sources.remove(&name) {
+            s.doc.project.resource_sources.insert(to.clone(), source);
+        }
         rename_references(&mut s.doc.project, &name, &to);
 
         // Refuse rather than leave a reference this rename does not know about pointing at nothing
@@ -400,102 +402,6 @@ fn rename_references(project: &mut texturecraft_core::Project, from: &str, to: &
     }
 }
 
-/// Reads image resource `name` again from the file this session imported it from (one undo step)
-#[cfg(not(target_arch = "wasm32"))]
-fn reload(s: &mut Session, p: &Value) -> Result<Value> {
-    let command = "resource.reload";
-    let name = strp(p, "name").ok_or_else(|| bad(command, "`name` is required"))?.to_string();
-    if !s.doc.resources.contains_key(&name) {
-        return Err(bad(command, format!("no resource `{name}`")));
-    }
-
-    let path = s
-        .resource_source(&name)
-        .map(std::path::Path::to_path_buf)
-        .ok_or_else(|| bad(command, format!("`{name}` was imported before this session: no file to reload from")))?;
-    let (bytes, image) = read_source(command, &path)?;
-    s.edit("Reload resource", |s| {
-        s.doc.resources.insert(name.clone(), Arc::new(bytes));
-        Ok(())
-    })?;
-
-    s.remember_resource_source(&name, &path);
-    s.show_reloaded(name.clone(), image);
-    Ok(json!({ "name": name }))
-}
-
-/// Reads again, in one undo step, every image whose source file no longer holds the bytes the project has; nothing changed adds no step
-#[cfg(not(target_arch = "wasm32"))]
-fn update(s: &mut Session, _: &Value) -> Result<Value> {
-    let command = "resource.update";
-    let mut changed = Vec::new();
-    let mut failed = Vec::new();
-    for (name, held) in &s.doc.resources {
-        let Some(path) = s.resource_source(name) else { continue };
-        // Only a file whose bytes changed is decoded
-        let read = read_resource_file(command, path, MAX_BYTES as u64)
-            .and_then(|bytes| if bytes == **held { Ok(None) } else { decode_source(command, path, &bytes).map(|image| Some((bytes, image))) });
-        match read {
-            Ok(None) => {}
-            Ok(Some((bytes, image))) => changed.push((name.clone(), path.to_path_buf(), bytes, image)),
-            Err(error) => failed.push(json!({ "name": name, "error": error.to_string() })),
-        }
-    }
-
-    if !changed.is_empty() {
-        s.edit("Update resources", |s| {
-            for (name, _, bytes, _) in &mut changed {
-                s.doc.resources.insert(name.clone(), Arc::new(std::mem::take(bytes)));
-            }
-            Ok(())
-        })?;
-    }
-
-    let updated: Vec<String> = changed.iter().map(|(name, _, _, _)| name.clone()).collect();
-    for (name, path, _, image) in changed {
-        s.remember_resource_source(&name, &path);
-        s.show_reloaded(name, image);
-    }
-    Ok(json!({ "updated": updated, "failed": failed }))
-}
-
-/// The bytes of the image file at `path` and its decoded pixels
-#[cfg(not(target_arch = "wasm32"))]
-fn read_source(command: &str, path: &std::path::Path) -> Result<(Vec<u8>, texturecraft_formats::DecodedImage)> {
-    let bytes = read_resource_file(command, path, MAX_BYTES as u64)?;
-    let image = decode_source(command, path, &bytes)?;
-    Ok((bytes, image))
-}
-
-/// The pixels of `bytes` read from the image file at `path`
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_source(command: &str, path: &std::path::Path, bytes: &[u8]) -> Result<texturecraft_formats::DecodedImage> {
-    texturecraft_formats::decode_image_within(bytes, texturecraft_formats::MAX_RESOURCE_TEXELS)
-        .map_err(|error| bad(command, format!("{}: {error}", path.display())))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Session {
-    /// Shows the pixels of image `name` read again from its file, still a saved brush picture when it matches one
-    fn show_reloaded(&mut self, name: String, image: texturecraft_formats::DecodedImage) {
-        self.library_alphas.remove(&name);
-        if crate::fill_alpha::matches_saved_picture(&name, &image) {
-            self.library_alphas.insert(name.clone());
-        }
-        self.images.insert(name, decoded(image));
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn reload(_: &mut Session, _: &Value) -> Result<Value> {
-    Err(bad("resource.reload", "file paths are not available in the browser"))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn update(_: &mut Session, _: &Value) -> Result<Value> {
-    Err(bad("resource.update", "file paths are not available in the browser"))
-}
-
 /// Every image resource a layer, mask effect, stored path or the environment of `project` uses
 fn project_images(project: &texturecraft_core::Project) -> Vec<String> {
     let mut used = Vec::new();
@@ -514,16 +420,21 @@ fn images_in_use(s: &Session) -> Vec<String> {
     used.extend(s.tool.stencil.as_ref().map(|st| st.image.clone()));
     used.extend(s.tool.brush.alpha_image.clone());
     used.extend(s.tool.mask_image.clone());
+    used.extend(s.doc.project.resource_sources.iter().filter_map(|(name, source)| {
+        let slot = source.mesh_map?;
+        s.doc.baked.get(&slot.texture_set).is_some_and(|baked| baked.maps.contains_key(&slot.map)).then(|| name.clone())
+    }));
     used
 }
 
-/// Drop resources no layer, mask effect, the brush alpha, the projection stencil, the mask brush or the environment uses (one undo step)
+/// Drop resources unused by layers, mesh maps, paint tools or the environment (one undo step)
 fn remove_unused(s: &mut Session, _: &Value) -> Result<Value> {
     let used = images_in_use(s);
     let unused: Vec<String> = s.doc.resources.keys().filter(|k| !used.contains(k)).cloned().collect();
     if !unused.is_empty() {
         s.edit("Remove unused resources", |s| {
             s.doc.resources.retain(|k, _| !unused.contains(k));
+            s.doc.project.resource_sources.retain(|k, _| !unused.contains(k));
             Ok(())
         })?;
         s.sync_images();
@@ -619,6 +530,21 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_image_keeps_following_its_file() {
+        let path = std::env::temp_dir().join(format!("texturecraft-rename-source-{}.png", std::process::id()));
+        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.25].into_iter()).unwrap()).unwrap();
+        let mut session = crate::sample_session(128, 32).unwrap();
+        let name = crate::execute(&mut session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
+
+        let renamed = crate::execute(&mut session, "resource.rename", &json!({"name": name, "to": "stone"})).unwrap()["name"].as_str().unwrap().to_string();
+        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.75].into_iter()).unwrap()).unwrap();
+        let updated = crate::execute(&mut session, "resource.update", &json!({"names": [renamed]})).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(updated["updated"], json!([renamed]), "the renamed image reads its changed file again: {updated}");
+    }
+
+    #[test]
     fn renaming_a_linked_materials_package_moves_a_material_effects_link_with_it() {
         use std::collections::BTreeMap;
         use texturecraft_core::{Effect, EffectKind, MaterialLink};
@@ -672,97 +598,6 @@ mod tests {
         let EffectKind::Generator(generator) = &session.doc.project.layers[&layer_id].content_effects[0].kind else { panic!("the effect stays a generator") };
         assert_ne!(renamed, grunge);
         assert_eq!(generator.grunge, Some(Source::image(renamed)), "the generator's grunge follows the rename");
-    }
-
-    #[test]
-    fn reloading_reads_the_file_again_and_undo_restores_the_pixels() {
-        let mut session = crate::sample_session(128, 32).unwrap();
-        let path = std::env::temp_dir().join(format!("texturecraft-reload-resource-{}.png", std::process::id()));
-        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.2].into_iter()).unwrap()).unwrap();
-        let name = crate::execute(&mut session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
-        let before = session.images[&name].rgba.clone();
-        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.8].into_iter()).unwrap()).unwrap();
-
-        crate::execute(&mut session, "resource.reload", &json!({"name": name})).unwrap();
-        let reloaded = session.images[&name].rgba.clone();
-        session.undo().unwrap();
-
-        assert_ne!(reloaded, before, "reload decodes the file's new pixels");
-        assert_eq!(session.images[&name].rgba, before, "undo shows the old pixels again");
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn a_new_image_under_a_removed_ones_name_does_not_reload_its_file() {
-        let mut session = crate::sample_session(128, 32).unwrap();
-        let path = std::env::temp_dir().join(format!("texturecraft-reused-name-{}.png", std::process::id()));
-        std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.2].into_iter()).unwrap()).unwrap();
-        let name = crate::execute(&mut session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
-        crate::execute(&mut session, "resource.remove", &json!({"name": name})).unwrap();
-
-        let reused = session.import_resource_bytes(&name, texturecraft_formats::gray16_png(1, 1, [0.6].into_iter()).unwrap()).unwrap();
-        std::fs::remove_file(path).unwrap();
-
-        assert_eq!(reused, name, "the name is free again");
-        assert!(session.resource_source(&reused).is_none(), "the new image has no file to reload from");
-    }
-
-    #[test]
-    fn undo_gives_an_image_back_its_own_file_after_another_file_took_its_name() {
-        let mut session = crate::sample_session(128, 32).unwrap();
-        let folder = |side: &str| std::env::temp_dir().join(format!("texturecraft-own-file-{side}-{}", std::process::id()));
-        let import = |session: &mut Session, side: &str, value: f32| {
-            std::fs::create_dir_all(folder(side)).unwrap();
-            let path = folder(side).join("photo.png");
-            std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [value].into_iter()).unwrap()).unwrap();
-            let name = crate::execute(session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
-            (path, name)
-        };
-        let (first_path, first) = import(&mut session, "first", 0.2);
-        crate::execute(&mut session, "resource.remove", &json!({"name": first})).unwrap();
-        let (second_path, second) = import(&mut session, "second", 0.6);
-
-        // One undo takes back the second import, the next the removal
-        session.undo().unwrap();
-        session.undo().unwrap();
-        let source = session.resource_source(&first).map(std::path::Path::to_path_buf);
-        for side in ["first", "second"] {
-            std::fs::remove_dir_all(folder(side)).unwrap();
-        }
-
-        assert_eq!(second, first, "the second file takes the removed image's name");
-        assert_ne!(first_path, second_path);
-        assert_eq!(source, Some(first_path), "the image the undo brings back reloads from its own file");
-    }
-
-    #[test]
-    fn updating_reads_only_changed_files_in_one_undo_step() {
-        let mut session = crate::sample_session(128, 32).unwrap();
-        let import = |session: &mut Session, label: &str, value: f32| {
-            let path = std::env::temp_dir().join(format!("texturecraft-update-{label}-{}.png", std::process::id()));
-            std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [value].into_iter()).unwrap()).unwrap();
-            let name = crate::execute(session, "resource.import", &json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
-            (path, name)
-        };
-        let (edited_path, edited) = import(&mut session, "edited", 0.2);
-        let (kept_path, kept) = import(&mut session, "kept", 0.4);
-        let unchanged = crate::execute(&mut session, "resource.update", &json!({})).unwrap();
-        let steps = session.history_labels().len();
-        let before = session.images[&edited].rgba.clone();
-        std::fs::write(&edited_path, texturecraft_formats::gray16_png(1, 1, [0.8].into_iter()).unwrap()).unwrap();
-
-        let result = crate::execute(&mut session, "resource.update", &json!({})).unwrap();
-        let updated = session.images[&edited].rgba.clone();
-        let steps_after = session.history_labels().len();
-        session.undo().unwrap();
-
-        assert_eq!(unchanged["updated"], json!([]), "files that didn't change aren't read in again");
-        assert_eq!(result["updated"], json!([edited]), "only the changed file is read again, not `{kept}`");
-        assert_ne!(updated, before, "the changed file's new pixels show");
-        assert_eq!(steps_after, steps + 1, "one undo step for the update");
-        assert_eq!(session.images[&edited].rgba, before, "undo shows the old pixels again");
-        std::fs::remove_file(edited_path).unwrap();
-        std::fs::remove_file(kept_path).unwrap();
     }
 
     #[test]

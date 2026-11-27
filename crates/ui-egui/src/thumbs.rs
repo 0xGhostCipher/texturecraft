@@ -320,6 +320,7 @@ impl Thumbs {
     }
 
     /// Load the picture at `file` again next time: the user picked it anew, maybe after changing it
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn forget_custom_preview(&mut self, file: &Path) {
         self.custom_previews.remove(file);
     }

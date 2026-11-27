@@ -40,7 +40,7 @@ const SKIP_MISMATCH: &str = n_("Skip assets when their parameters mismatch");
 pub struct ShelfUpdates {
     /// Read the user's saved assets again
     pub assets: bool,
-    /// Read the images the project imported from files in this session again when a file changed
+    /// Read the project's images again from the files they were imported from when a file changed
     pub resources: bool,
     pub minutes: u32,
 }
@@ -100,16 +100,18 @@ pub(crate) fn refresh_assets(app: &mut TextureCraftApp) {
     app.thumbs.forget_saved_files();
 }
 
-/// Reads the project's changed image files again; a file that can't be read says why once, until it reads again
+/// Reads the project's changed image files again; a file that is gone or can't be read says why once, until it reads again
 fn update_resources(app: &mut TextureCraftApp, ctx: &Context) {
-    let Some(result) = app.run("resource.update", json!({})) else { return };
+    let Some(status) = app.run("resource.status", json!({})) else { return };
+    let rows = status["resources"].as_array().cloned().unwrap_or_default();
+    let mut failures: Vec<(String, String)> =
+        rows.iter().filter(|row| row["status"] == "missing").map(|row| (text(&row["name"]), text(&row["error"]))).collect();
+    if status["outdated"].as_u64().is_some_and(|outdated| outdated > 0)
+        && let Some(result) = app.run("resource.update", json!({}))
+    {
+        failures.extend(result["failed"].as_array().into_iter().flatten().map(|failure| (text(&failure["name"]), text(&failure["error"]))));
+    }
 
-    let failures: Vec<(String, String)> = result["failed"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|failure| (failure["name"].as_str().unwrap_or_default().to_owned(), failure["error"].as_str().unwrap_or_default().to_owned()))
-        .collect();
     let reported_id = reported_failures_id(app.session.project_id);
     let mut reported: Vec<String> = ctx.data(|data| data.get_temp(reported_id)).unwrap_or_default();
     reported.retain(|name| failures.iter().any(|(failed, _)| failed == name));
@@ -120,6 +122,23 @@ fn update_resources(app: &mut TextureCraftApp, ctx: &Context) {
         }
     }
     ctx.data_mut(|data| data.insert_temp(reported_id, reported));
+}
+
+/// Reads the files of `names` (every changed image when None) again through the Resources Updater, which says what happened
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn update_from_files(app: &mut TextureCraftApp, names: Option<Vec<String>>) {
+    crate::resources_updater::update(app, names);
+}
+
+/// The browser reads no files: the command's refusal says so
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn update_from_files(app: &mut TextureCraftApp, names: Option<Vec<String>>) {
+    app.run("resource.update", names.map_or_else(|| json!({}), |names| json!({ "names": names })));
+}
+
+/// A string field of a command's result, empty when it has none
+fn text(value: &serde_json::Value) -> String {
+    value.as_str().unwrap_or_default().to_owned()
 }
 
 /// The files of project `project_id` whose failure to read was already shown (ctx temp data)
@@ -164,7 +183,7 @@ fn popup(app: &mut TextureCraftApp, ui: &mut Ui) {
                 sheet.toggle(tr("Resources used in project"), &mut updates.resources);
                 sheet.beside_info(
                     INFO_COLUMN,
-                    tr("Every few minutes, reads again the images this project imported from files in this session whose files changed. Each update is one undo step."),
+                    tr("Every few minutes, reads again the images whose files changed since this project imported them. Each update is one undo step."),
                 );
 
                 let mut minutes = [NumberField {
@@ -207,6 +226,6 @@ fn popup(app: &mut TextureCraftApp, ui: &mut Ui) {
         refresh_assets(app);
     }
     if add_button(ui, tr("Update resources used in project")) {
-        update_resources(app, ui.ctx());
+        update_from_files(app, None);
     }
 }

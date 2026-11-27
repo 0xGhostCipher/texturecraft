@@ -96,14 +96,14 @@ pub(crate) fn show(app: &mut TextureCraftApp, response: &Response, entry: &Shelf
 
         match entry {
             ShelfEntry::Image(name) => {
-                let reloadable = app.session.resource_source(name).is_some();
+                let reloadable = app.session.doc.project.resource_sources.contains_key(name);
                 let reload = row(ui, width, tr("Reload"), reloadable, &tokens);
                 if reload.clicked() {
-                    app.run("resource.reload", json!({"name": name}));
+                    crate::shelf_updates::update_from_files(app, Some(vec![name.clone()]));
                     ui.close();
                 }
                 if !reloadable {
-                    reload.on_hover_text(tr("Imported before this session: no file to reload from"));
+                    reload.on_hover_text(tr("Not imported from a file: no file to reload from"));
                 }
                 if row(ui, width, tr("Delete"), true, &tokens).clicked() {
                     app.run("resource.remove", json!({"name": name}));
@@ -364,7 +364,7 @@ fn show_in_folder_label() -> &'static str {
 fn show_in(app: &mut TextureCraftApp, ui: &mut Ui, width: f32, entry: &ShelfEntry, tokens: &Tokens) {
     let file = match entry {
         ShelfEntry::SavedBrush { name, .. } => app.session.brush_presets.file_for(name),
-        ShelfEntry::Image(name) => app.session.resource_source(name).map(std::path::Path::to_path_buf),
+        ShelfEntry::Image(name) => app.session.doc.project.resource_sources.get(name).map(|source| std::path::PathBuf::from(&source.path)),
         _ => None,
     };
     let folder = file.as_deref().and_then(std::path::Path::parent).filter(|folder| folder.is_dir()).map(std::path::Path::to_path_buf);

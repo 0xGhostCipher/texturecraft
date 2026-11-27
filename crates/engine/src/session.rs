@@ -33,6 +33,9 @@ pub struct Document {
     pub resources: BTreeMap<String, Arc<Vec<u8>>>,
     /// High-definition meshes and cage for baking (saved inside the project)
     pub bake_meshes: crate::BakeMeshes,
+    /// Skew and cage paint bounds since each set's last Auto-rebake. Undo restores the bounds
+    /// with their maps. The project file omits these bounds.
+    pub(crate) painted_regions: BTreeMap<usize, crate::bake::PaintedRegion>,
 }
 
 /// Derived per-texture-set data (rebuilt when the mesh or resolution changes).
@@ -425,9 +428,15 @@ pub struct Session {
     pub project_id: u64,
     /// The mesh with its own UVs (`mesh` maps UV-tiled sets into their atlas).
     pub(crate) source: Arc<Mesh>,
+    /// Fingerprint of the bake inputs in `source`, computed on first use
+    pub(crate) low_poly_fingerprint: std::sync::OnceLock<u64>,
+    /// Fingerprint of the packed mesh file, computed only for bakes that read its material colors.
+    pub(crate) low_material_file_fingerprint: std::sync::OnceLock<u64>,
+    /// Skew and cage strokes so far
+    pub(crate) painted_strokes: u64,
     pub bvh: Arc<Bvh>,
     /// Original mesh file (saved inside the project); None for built-in meshes.
-    pub mesh_source: Option<(String, Vec<u8>)>,
+    pub mesh_source: Option<(String, Arc<Vec<u8>>)>,
     pub caches: Vec<SetCache>,
     pub(crate) undo: Vec<(String, Document)>,
     pub(crate) redo: Vec<(String, Document)>,
@@ -451,6 +460,8 @@ pub struct Session {
     pub solo: Option<crate::Solo>,
     /// The live bake preview while the app bakes (see [`crate::bake_preview`]).
     pub bake_preview: Option<crate::bake_preview::BakePreview>,
+    /// The latest bake, map by map (the Baking Log)
+    pub bake_log: crate::bake::BakeLog,
     /// Viewport size (pixels) used by scripted strokes.
     pub viewport: Vec2,
     pub(crate) stroke: Option<ActiveStroke>,
@@ -462,8 +473,9 @@ pub struct Session {
     pub images: texturecraft_compose::ImageStore,
     /// Resource names whose decoded pixels match a library alpha.
     pub(crate) library_alphas: BTreeSet<String>,
-    /// The file each image resource imported in this session came from, for Reload (not saved). Kept by the resource's bytes, so undo, redo and renames keep each file with its own image
-    pub(crate) resource_sources: Vec<(std::sync::Weak<Vec<u8>>, std::path::PathBuf)>,
+    /// Resources whose file was read for the Resources Updater, by name: the verdict stays while the file's size and time do
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) resource_checks: std::collections::HashMap<String, crate::resource_check::ResourceCheck>,
     /// Temporary texel mask limiting paint strokes (not saved, not in the history).
     pub quick_mask: crate::quick_mask::QuickMask,
     /// A path sublayer is being repainted from its paths (the only way to paint into one).
@@ -480,6 +492,9 @@ pub struct Session {
     /// (see [`crate::commands::check_enabled`]).
     pub project_open: bool,
     pub modified: bool,
+    /// Edits to saved data, independent of viewport and tool changes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) save_revision: u64,
     /// Bumps on every document change.
     pub revision: u64,
     /// Messages for the UI (status bar / toasts).
@@ -524,9 +539,12 @@ impl Session {
             mesh_id: next_mesh_id(),
             project_id: next_mesh_id(),
             source,
+            low_poly_fingerprint: Default::default(),
+            low_material_file_fingerprint: Default::default(),
+            painted_strokes: 0,
             mesh,
             bvh: Arc::new(bvh),
-            mesh_source,
+            mesh_source: mesh_source.map(|(extension, bytes)| (extension, Arc::new(bytes))),
             caches,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -542,13 +560,15 @@ impl Session {
             view_image: None,
             solo: None,
             bake_preview: None,
+            bake_log: Default::default(),
             viewport: Vec2::new(1280.0, 800.0),
             stroke: None,
             clipboard: None,
             blending_clipboard: None,
             images: Default::default(),
             library_alphas: BTreeSet::new(),
-            resource_sources: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            resource_checks: std::collections::HashMap::new(),
             quick_mask: Default::default(),
             painting_paths: false,
             path_cache: None,
@@ -557,6 +577,8 @@ impl Session {
             path: None,
             project_open: true,
             modified: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            save_revision: 0,
             revision: 1,
             log: crate::log::SessionLog::new(),
             log_id: next_mesh_id(),
@@ -586,6 +608,10 @@ impl Session {
     pub fn switch_to(&mut self, mut next: Session) {
         // Invalidate caches even when both projects were loaded with the same revision
         next.revision = self.revision.wrapping_add(1);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            next.save_revision = self.save_revision.wrapping_add(1);
+        }
 
         next.viewport = self.viewport;
         next.export_presets = std::mem::take(&mut self.export_presets);
@@ -638,6 +664,7 @@ impl Session {
                 pixels: PixelStore::default(),
                 baked: BTreeMap::new(),
                 resources: BTreeMap::new(),
+                painted_regions: Default::default(),
             },
             mesh,
             mesh_source,
@@ -738,8 +765,7 @@ impl Session {
             self.path_steps = Default::default();
         }
 
-        self.modified = true;
-        self.revision = self.revision.wrapping_add(1);
+        self.mark_modified();
         if !(merge && self.undo.last().is_some_and(|(l, _)| l == label)) {
             self.undo.push((label.to_string(), before));
         }
@@ -750,8 +776,7 @@ impl Session {
 
     /// A change from `other` to the current document that is not an undo step (a path preview)
     pub(crate) fn changed_without_history(&mut self, other: &Document) {
-        self.modified = true;
-        self.revision = self.revision.wrapping_add(1);
+        self.mark_modified();
         self.invalidate_changed(other);
     }
 
@@ -877,11 +902,20 @@ impl Session {
 
     /// Mark the document changed and every texture set dirty.
     pub fn touched(&mut self) {
-        self.modified = true;
-        self.revision = self.revision.wrapping_add(1);
+        self.mark_modified();
         self.sync_caches();
         for c in &mut self.caches {
             c.invalidate_all();
+        }
+    }
+
+    /// Mark saved data changed without invalidating the texture sets.
+    pub fn mark_modified(&mut self) {
+        self.modified = true;
+        self.revision = self.revision.wrapping_add(1);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.save_revision = self.save_revision.wrapping_add(1);
         }
     }
 
@@ -967,6 +1001,7 @@ impl Session {
         let (label, restored) = self.undo.pop().ok_or_else(|| EngineError::Other("nothing to undo".into()))?;
         let current = std::mem::replace(&mut self.doc, restored);
         self.after_history(&current);
+        self.forget_replaced_images(&current);
         self.redo.push((label.clone(), current));
         self.sync_images();
         Ok(label)
@@ -987,26 +1022,21 @@ impl Session {
         let (label, restored) = self.redo.pop().ok_or_else(|| EngineError::Other("nothing to redo".into()))?;
         let current = std::mem::replace(&mut self.doc, restored);
         self.after_history(&current);
+        self.forget_replaced_images(&current);
         self.undo.push((label.clone(), current));
         self.sync_images();
         Ok(label)
     }
 
     fn after_history(&mut self, other: &Document) {
-        // A resource whose bytes the step changed (a reload) decodes again
-        self.images.retain(|name, _| match (other.resources.get(name), self.doc.resources.get(name)) {
-            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-            _ => true,
-        });
         self.follow_renamed_resources(other);
 
         // Pending operations may still hold layer IDs from the discarded snapshot
         self.doc.project.next_id = self.doc.project.next_id.max(other.project.next_id);
-        self.modified = true;
+        self.mark_modified();
 
         // Layers picked together belong to the stack they were picked in
         self.multi.clear();
-        self.revision = self.revision.wrapping_add(1);
         self.invalidate_changed(other);
 
         // An undone add or duplicate takes the selected effect away

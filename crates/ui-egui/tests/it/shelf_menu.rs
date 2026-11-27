@@ -142,7 +142,7 @@ fn a_project_image_menu_renames_it_keeping_its_star_and_greys_reload_without_a_f
     pick_from_menu(&mut harness, &name, "Add to favorites");
 
     right_click(&mut harness, &name);
-    assert!(harness.get_by_label("Reload").accesskit_node().is_disabled(), "an image without a file from this session can't reload");
+    assert!(harness.get_by_label("Reload").accesskit_node().is_disabled(), "an image not imported from a file can't reload");
     type_name(&mut harness, "stone");
     harness.key_press(Key::Enter);
     harness.run_steps(3);
