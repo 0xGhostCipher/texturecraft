@@ -93,6 +93,7 @@ impl TitleBar {
         if overridden.is_none() && system {
             return TitleBar::System;
         }
+
         match frame {
             Frame::App(layout) => TitleBar::App(layout.clone()),
             Frame::Desktop if overridden.is_some() => TitleBar::System,
@@ -238,15 +239,18 @@ mod tests {
     #[test]
     fn the_override_wins_then_the_setting_then_the_platform() {
         let gnome = Frame::App(Layout::parse("appmenu:close"));
-        // TEXTURECRAFT_TITLEBAR=app / =system, whatever the setting.
+
+        // The environment override wins regardless of the saved setting
         for system in [false, true] {
             assert_eq!(TitleBar::from_choice(&gnome, Some(true), system), TitleBar::App(Layout::parse("appmenu:close")));
             assert_eq!(TitleBar::from_choice(&Frame::Desktop, Some(false), system), TitleBar::System);
         }
-        // The setting brings the system's frame back.
+
+        // The saved setting selects the system frame without an override
         assert_eq!(TitleBar::from_choice(&gnome, None, true), TitleBar::System);
         assert_eq!(TitleBar::from_choice(&Frame::Desktop, None, true), TitleBar::System);
-        // The platform: a compositor that leaves the frame to the app gets the app's.
+
+        // Otherwise the desktop determines who draws the frame
         assert_eq!(TitleBar::from_choice(&gnome, None, false), TitleBar::App(Layout::parse("appmenu:close")));
         let desktop = TitleBar::from_choice(&Frame::Desktop, None, false);
         let expected = if cfg!(windows) {

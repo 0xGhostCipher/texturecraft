@@ -53,6 +53,8 @@ time (nothing is bundled); see [docs/localization-parity.md](docs/localization-p
 | `xcap` | Windows screen pixel capture | https://github.com/nashaofu/xcap | Apache-2.0 |
 | `widestring` | Windows string handling through `xcap` | https://github.com/VoidStarKat/widestring-rs | MIT OR Apache-2.0 |
 | `x11rb` | X11 pointer and pixel capture | https://github.com/psychon/x11rb | MIT OR Apache-2.0 |
+| `x11rb-protocol` | X11 setup and Xauthority for the Linux pen startup probe | https://github.com/psychon/x11rb | MIT OR Apache-2.0 |
+| `rustix` | Linux socket and hostname APIs for the X11 setup probe | https://github.com/bytecodealliance/rustix | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | `zbus` | Wayland desktop color-picker portal | https://github.com/z-galaxy/zbus | MIT |
 
 ## Procedural content (no asset files)

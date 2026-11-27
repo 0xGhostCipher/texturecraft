@@ -48,6 +48,7 @@ fn install_with(ctx: &egui::Context, shell: ShellInfo, windows: Arc<dyn WindowSy
     if let Some(frame) = frame {
         spec = spec.frame(frame);
     }
+
     embed::install(ctx, spec, &ui_fonts()).map(drop).map_err(|error| format!("the UI runtime could not be installed: {error}"))
 }
 

@@ -1,5 +1,8 @@
 //! A pen on a Wayland desktop opens the window through Xwayland (#816).
 //!
+//! Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors for the adapted code.
+//! Licensed under the MIT License or the Apache License, Version 2.0, at your option.
+//!
 //! Wayland compositors give a pen only to clients that bind the tablet protocol (`zwp_tablet_v2`),
 //! which winit 0.30 doesn't (and binding it on winit's connection needs `unsafe`, which this app
 //! forbids). Some compositors (KWin) then send the window nothing from the pen: no cursor, no
@@ -9,13 +12,18 @@
 //! Adapted from PhotoCraft (storytold/photocraft `830316b7`, MIT OR Apache-2.0):
 //! `apps/photocraft/src/tablet.rs` (`display_session`, `pen_needs_xwayland`, `has_pen`, `bit_set`)
 //! and `apps/photocraft/src/linux_libs.rs` (`session_from_env`, `ldconfig_has`, the library
-//! search), reduced to the pen decision. Replace it with a shared craft-libs crate once one exists
-//! (AGENTS.md rule 9).
+//! search), reduced to the pen decision. See the repository's NOTICE for the port.
 
+use std::io::{Read as _, Write as _};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use x11rb_protocol::connect::Connect;
+use x11rb_protocol::xauth::{Family, get_auth};
 
 /// Set (and not `0`) to keep native Wayland with a pen attached
-const NATIVE_WAYLAND_VARIABLE: &str = "TEXTURECRAFT_NATIVE_WAYLAND";
+pub(super) const NATIVE_WAYLAND_VARIABLE: &str = "TEXTURECRAFT_NATIVE_WAYLAND";
 
 /// `BTN_TOOL_PEN` (linux/input-event-codes.h): the key a tablet's stylus, a pen display's or a
 /// pen-enabled touchscreen's pen reports
@@ -30,46 +38,94 @@ const ABS_Y: u32 = 0x01;
 const X11_LIBRARIES: &[&str] =
     &["libX11.so.6", "libX11-xcb.so.1", "libxcb.so.1", "libXcursor.so.1", "libXi.so.6", "libxkbcommon.so.0", "libxkbcommon-x11.so.0"];
 
+// Give local Xwayland time to answer while bounding the wait before falling back to Wayland
+const X11_SETUP_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Whether the window opens through Xwayland: a pen is attached on a Wayland desktop and Xwayland
-/// can run the window (the X11 libraries are installed and the X server answers). Says so on
-/// stderr when it does.
+/// has the required libraries and accepts an X11 client setup.
 pub fn opens_through_xwayland() -> bool {
     let var = |name: &str| std::env::var(name).ok();
     let pen = || std::fs::read_to_string("/proc/bus/input/devices").is_ok_and(|devices| has_pen(&devices));
-    let xwayland_ready = || x11_libraries_available() && var("DISPLAY").is_some_and(|display| x_server_answers(&display));
-    if !pen_needs_xwayland(var, pen, xwayland_ready) {
-        return false;
-    }
-
-    eprintln!("texturecraft: opening the window through Xwayland for the pen ({NATIVE_WAYLAND_VARIABLE}=1 keeps Wayland)");
-    true
+    pen_needs_xwayland(var, pen, |display| x11_libraries_available() && x_server_accepts_setup(display))
 }
 
 /// [`opens_through_xwayland`]'s decision. winit picks Wayland when `WAYLAND_DISPLAY` or
 /// `WAYLAND_SOCKET` is set; Xwayland needs `DISPLAY`. The system probes run only on Wayland.
-fn pen_needs_xwayland(var: impl Fn(&str) -> Option<String>, pen: impl FnOnce() -> bool, xwayland_ready: impl FnOnce() -> bool) -> bool {
+fn pen_needs_xwayland(var: impl Fn(&str) -> Option<String>, pen: impl FnOnce() -> bool, xwayland_ready: impl FnOnce(&str) -> bool) -> bool {
     let set = |name: &str| var(name).is_some_and(|value| !value.is_empty());
     let wayland = set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET");
     let keeps_wayland = var(NATIVE_WAYLAND_VARIABLE).is_some_and(|value| !value.is_empty() && value != "0");
-    wayland && !keeps_wayland && set("DISPLAY") && pen() && xwayland_ready()
+    wayland && !keeps_wayland && var("DISPLAY").filter(|display| !display.is_empty()).is_some_and(|display| pen() && xwayland_ready(&display))
 }
 
-/// Does the X server `display` names accept a connection? winit can't fall back to Wayland once
-/// X11 is chosen, so a `DISPLAY` left over from another session must keep the window on Wayland.
-/// Only a local display is tried, by its socket path or the abstract socket of the same name.
-fn x_server_answers(display: &str) -> bool {
-    use std::os::linux::net::SocketAddrExt as _;
-    use std::os::unix::net::{SocketAddr, UnixStream};
+/// winit commits to its forced backend, so require an accepted X11 setup before forcing X11.
+fn x_server_accepts_setup(display: &str) -> bool {
+    let Some((display_number, screen)) = local_display(display) else {
+        return false;
+    };
 
-    let Some(socket) = local_x_socket(display) else { return false };
-    UnixStream::connect(&socket).is_ok() || SocketAddr::from_abstract_name(socket.as_bytes()).and_then(|address| UnixStream::connect_addr(&address)).is_ok()
+    let Some(socket) = connect_local_x_server(display_number) else {
+        return false;
+    };
+
+    let hostname = rustix::system::uname();
+    let auth_hostname = std::env::var_os("XAUTHLOCALHOSTNAME");
+    let auth_address = auth_hostname.as_ref().map_or(hostname.nodename().to_bytes(), |name| name.as_encoded_bytes());
+    let (auth_name, auth_data) = get_auth(Family::LOCAL, auth_address, display_number).ok().flatten().unwrap_or_default();
+    let (setup, request) = Connect::with_authorization(auth_name, auth_data);
+    exchange_x11_setup(socket, setup, &request, screen)
 }
 
-/// The socket of a local X display (`:0`, `:0.0`, `unix:0`); `None` for a remote one
-fn local_x_socket(display: &str) -> Option<String> {
-    let number = display.strip_prefix(':').or_else(|| display.strip_prefix("unix:"))?;
-    let number: u32 = number.split('.').next()?.parse().ok()?;
-    Some(format!("/tmp/.X11-unix/X{number}"))
+/// Parse the display and screen of a local X server such as `:0`, `:0.0` or `unix:0`.
+fn local_display(display: &str) -> Option<(u16, usize)> {
+    let local = display.strip_prefix(':').or_else(|| display.strip_prefix("unix:"))?;
+    let (display_number, screen) = local.split_once('.').unwrap_or((local, "0"));
+    Some((display_number.parse().ok()?, screen.parse().ok()?))
+}
+
+fn connect_local_x_server(display_number: u16) -> Option<UnixStream> {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType, connect, socket_with};
+
+    let path = format!("/tmp/.X11-unix/X{display_number}");
+
+    // Try the abstract socket first, as Xlib does on Linux
+    [SocketAddrUnix::new_abstract_name(path.as_bytes()), SocketAddrUnix::new(&path)].into_iter().find_map(|address| {
+        let address = address.ok()?;
+
+        // A full Unix socket backlog must not block app startup
+        let socket = UnixStream::from(socket_with(AddressFamily::UNIX, SocketType::STREAM, SocketFlags::NONBLOCK | SocketFlags::CLOEXEC, None).ok()?);
+        connect(&socket, &address).ok()?;
+        socket.set_nonblocking(false).ok()?;
+        Some(socket)
+    })
+}
+
+fn exchange_x11_setup(mut socket: UnixStream, mut setup: Connect, request: &[u8], screen: usize) -> bool {
+    let start = Instant::now();
+    if socket.set_write_timeout(Some(X11_SETUP_TIMEOUT)).is_err() || socket.write_all(request).is_err() {
+        return false;
+    }
+
+    while !setup.buffer().is_empty() {
+        let remaining = X11_SETUP_TIMEOUT.saturating_sub(start.elapsed());
+        if remaining.is_zero() || socket.set_read_timeout(Some(remaining)).is_err() {
+            return false;
+        }
+
+        let Ok(received) = socket.read(setup.buffer()) else {
+            return false;
+        };
+
+        if received == 0 {
+            return false;
+        }
+
+        if setup.advance(received) {
+            break;
+        }
+    }
+
+    setup.into_setup().is_ok_and(|reply| screen < reply.roots.len())
 }
 
 /// Is a pen among the input devices `/proc/bus/input/devices` lists? A pen's `B: KEY=` bitmap has
@@ -118,7 +174,10 @@ fn ldconfig_has(cache: &str, soname: &str) -> bool {
     };
 
     cache.lines().any(|line| {
-        let Some((name, rest)) = line.trim_start().split_once(' ') else { return false };
+        let Some((name, rest)) = line.trim_start().split_once(' ') else {
+            return false;
+        };
+
         let flags = rest.split_once('(').and_then(|(_, after)| after.split_once(')')).map_or("", |(flags, _)| flags);
         name == soname && architecture.is_none_or(|tag| flags.split(',').any(|flag| flag.trim() == tag))
     })
@@ -137,11 +196,11 @@ fn library_dirs(ld_library_path: Option<&str>) -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
-    /// A touchpad (`BTN_TOOL_FINGER`, no pen) and a Wacom pen, from `/proc/bus/input/devices`
+    // Capabilities from /proc/bus/input/devices for a touchpad and a Wacom pen
     const TOUCHPAD: &str = "N: Name=\"SYNA2B33:00 06CB:CE26 Touchpad\"\nB: KEY=e520 10000 0 0 0 0\nB: ABS=2e0800000000003\n";
     const PEN: &str = "N: Name=\"Wacom Intuos Pro M Pen\"\nB: KEY=1c03 0 0 0 0 0\nB: ABS=1000f000003\n";
 
-    /// A uinput keyboard (RustDesk's) claims every key, `BTN_TOOL_PEN` included, with no axes
+    // The uinput keyboard claims the pen key but reports no axes
     const VIRTUAL_KEYBOARD: &str = "N: Name=\"RustDesk UInput Keyboard\"\nB: EV=20013\nB: KEY=ffffffffff 0 7ffffff000301ff 1000f7fffffff 7fe001fffff000f 7ffffffffffffff ffffffff0003fdff 7fff8fff00ff03ff 1ffffffffffff07 ffffffffffffffff ffffffffffefffff fffffffffffffffe\n";
 
     #[test]
@@ -159,13 +218,47 @@ mod tests {
         }
         const WAYLAND: &[(&str, &str)] = &[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0")];
 
-        assert!(pen_needs_xwayland(env(WAYLAND), || true, || true));
-        assert!(!pen_needs_xwayland(env(WAYLAND), || false, || true), "no pen");
-        assert!(!pen_needs_xwayland(env(WAYLAND), || true, || false), "Xwayland can't run the window");
-        assert!(!pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0")]), || true, || true), "no Xwayland");
-        assert!(!pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0"), (NATIVE_WAYLAND_VARIABLE, "1")]), || true, || true), "kept");
-        assert!(pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0"), (NATIVE_WAYLAND_VARIABLE, "0")]), || true, || true));
-        assert!(!pen_needs_xwayland(env(&[("DISPLAY", ":0")]), || panic!("probed off Wayland"), || panic!("probed off Wayland")), "X11 already has the pen");
-        assert_eq!([":1.0", "unix:0", "remote:0"].map(local_x_socket), [Some("/tmp/.X11-unix/X1".into()), Some("/tmp/.X11-unix/X0".into()), None]);
+        assert!(pen_needs_xwayland(env(WAYLAND), || true, |display| display == ":0"));
+        assert!(!pen_needs_xwayland(env(WAYLAND), || false, |_| true), "no pen");
+        assert!(!pen_needs_xwayland(env(WAYLAND), || true, |_| false), "Xwayland can't run the window");
+        assert!(!pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0")]), || true, |_| true), "no Xwayland");
+        assert!(!pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0"), (NATIVE_WAYLAND_VARIABLE, "1")]), || true, |_| true), "kept");
+        assert!(pen_needs_xwayland(env(&[("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0"), (NATIVE_WAYLAND_VARIABLE, "0")]), || true, |_| true));
+        assert!(!pen_needs_xwayland(env(&[("DISPLAY", ":0")]), || panic!("probed off Wayland"), |_| panic!("probed off Wayland")), "X11 already has the pen");
+        assert_eq!([":1.2", "unix:0", "remote:0", ":0.bad"].map(local_display), [Some((1, 2)), Some((0, 0)), None, None]);
+    }
+
+    #[test]
+    fn a_pen_keeps_wayland_when_the_x_server_rejects_setup() -> std::io::Result<()> {
+        use x11rb_protocol::protocol::xproto::{Screen, Setup, SetupFailed};
+        use x11rb_protocol::x11_utils::Serialize as _;
+
+        const REPLY_HEADER_BYTES: usize = 8;
+        const BYTES_PER_X11_WORD: usize = 4;
+        let reason = b"Setup denied".to_vec();
+        let rejected = SetupFailed { protocol_major_version: 11, length: (reason.len() / BYTES_PER_X11_WORD) as u16, reason, ..Default::default() };
+        let mut accepted = Setup { status: 1, protocol_major_version: 11, roots: vec![Screen::default()], ..Default::default() };
+        accepted.length = ((accepted.serialize().len() - REPLY_HEADER_BYTES) / BYTES_PER_X11_WORD) as u16;
+
+        for (reply, screen, selects_xwayland) in [(rejected.serialize(), 0, false), (accepted.serialize(), 1, false), (accepted.serialize(), 0, true)] {
+            let (client, mut server) = UnixStream::pair()?;
+            server.write_all(&reply)?;
+            let (setup, request) = Connect::with_authorization(Vec::new(), Vec::new());
+            let var = |name: &str| match name {
+                "WAYLAND_DISPLAY" => Some("wayland-0".into()),
+                "DISPLAY" => Some(format!(":0.{screen}")),
+                _ => None,
+            };
+
+            let xwayland = pen_needs_xwayland(
+                var,
+                || true,
+                |display| local_display(display).is_some_and(|(_, screen)| exchange_x11_setup(client, setup, &request, screen)),
+            );
+
+            assert_eq!(xwayland, selects_xwayland);
+        }
+
+        Ok(())
     }
 }
