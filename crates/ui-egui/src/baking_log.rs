@@ -3,7 +3,7 @@
 use egui::{Align2, CornerRadius, FontId, Id, Rect, Role, Sense, Stroke, StrokeKind, Ui, WidgetInfo, pos2, vec2};
 use egui_phosphor::regular as ic;
 use serde_json::json;
-use texturecraft_engine::bake::{BakeLog, BakeLogMap, BakeMapState};
+use texturecraft_engine::bake::{BakeLog, BakeLogMap, BakeLogMatching, BakeMapState};
 use texturecraft_engine::core::BakedMap;
 
 use crate::TextureCraftApp;
@@ -71,15 +71,15 @@ pub(crate) fn body(app: &mut TextureCraftApp, ui: &mut Ui) {
     let tokens = Tokens::get(ui.ctx());
     let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), STRIP_HEIGHT), Sense::hover());
     ui.painter().rect_filled(strip, CornerRadius::ZERO, tokens.chrome);
-    if let Some(tab) = tabs(ui, strip, app.ui.baking_log_tab, &app.session.bake_log) {
+
+    // The tabs keep clear of the issues filter at its widest, so picking a tab never moves the edge they scroll under
+    let filter_room = BakingLogTab::ALL.into_iter().map(|tab| filter_width(ui, issue_count(&app.session.bake_log, tab))).fold(0.0, f32::max);
+    let tabs_right = strip.right() - SIDE_PADDING_POINTS + FILTER_OUTDENT - filter_room - TAB_GAP;
+    if let Some(tab) = tabs(ui, strip.with_max_x(tabs_right.max(strip.left())), app.ui.baking_log_tab, &app.session.bake_log) {
         app.ui.baking_log_tab = tab;
     }
     let tab = app.ui.baking_log_tab;
-    let issue_count = match tab {
-        BakingLogTab::BakingProcess => app.session.bake_log.maps.iter().filter(|row| row.state.is_issue()).count(),
-        BakingLogTab::HighPolyParameters => app.session.bake_log.highs.iter().filter(|row| row.state.is_issue()).count(),
-        BakingLogTab::MatchingByName => app.session.bake_log.matching.as_ref().map_or(0, |matching| matching.issue_count()),
-    };
+    let issue_count = issue_count(&app.session.bake_log, tab);
     if issues_filter(ui, strip, issue_count, app.ui.baking_log_issues_only) {
         app.ui.baking_log_issues_only = !app.ui.baking_log_issues_only;
     }
@@ -136,55 +136,91 @@ fn open_map_settings(app: &mut TextureCraftApp, texture_set: usize, map: BakedMa
     app.ui.dock.focus(Panel::MeshMapSettings);
 }
 
-/// The tabs on the `strip` along the panel's top edge, as the Properties section tabs; a tab with work in progress shows dots for its icon
+/// How many rows of `tab` have an issue, for the issues filter's count
+fn issue_count(log: &BakeLog, tab: BakingLogTab) -> usize {
+    match tab {
+        BakingLogTab::BakingProcess => log.maps.iter().filter(|row| row.state.is_issue()).count(),
+        BakingLogTab::HighPolyParameters => log.highs.iter().filter(|row| row.state.is_issue()).count(),
+        BakingLogTab::MatchingByName => log.matching.as_ref().map_or(0, BakeLogMatching::issue_count),
+    }
+}
+
+/// The tabs on the `strip` along the panel's top edge, as the Properties section tabs; they scroll sideways when wider than it
 fn tabs(ui: &mut Ui, strip: Rect, shown: BakingLogTab, log: &BakeLog) -> Option<BakingLogTab> {
     let tokens = Tokens::get(ui.ctx());
-    let mut picked = None;
-    let mut left = strip.left() + SIDE_PADDING_POINTS - FIRST_TAB_OUTDENT;
-    for tab in BakingLogTab::ALL {
-        let name = tr(tab.name());
-        let on = tab == shown;
-        let width = ui.painter().layout_no_wrap(name.to_owned(), semibold(TAB_TEXT_SIZE), tokens.text).size().x + TAB_PADDING;
-        let rect = Rect::from_min_max(pos2(left, strip.top() + TAB_TOP), pos2(left + width, strip.bottom()));
-        let response = ui.interact(rect, ui.scope_id().with(("baking_log_tab", tab)), Sense::click());
-        response.widget_info(|| WidgetInfo::selected(Role::Tab, true, on, name));
-        if response.clicked() {
-            picked = Some(tab);
-        }
+    let names = BakingLogTab::ALL.map(|tab| tr(tab.name()));
+    let widths = names.map(|name| ui.painter().layout_no_wrap(name.to_owned(), semibold(TAB_TEXT_SIZE), tokens.text).size().x + TAB_PADDING);
+    let first_left = SIDE_PADDING_POINTS - FIRST_TAB_OUTDENT;
+    let content_width = first_left + widths.iter().sum::<f32>() + TAB_GAP * (widths.len() - 1) as f32;
 
-        let painter = ui.painter();
-        if on {
-            shown_tab_box(painter, &tokens, rect);
-        }
-        let color = if on || response.hovered() { tokens.text } else { tokens.text_dim };
-        let in_progress = match tab {
-            BakingLogTab::BakingProcess => log.is_running(),
-            BakingLogTab::HighPolyParameters => log.is_loading_high_polys(),
-            BakingLogTab::MatchingByName => false,
-        };
-        let (icon, icon_color) = if in_progress { (ic::DOTS_THREE, tokens.accent) } else { (tab.icon(), color) };
-        let center_y = strip.center().y + TAB_TOP / 2.0;
-        painter.text(pos2(left + TAB_ICON_CENTER, center_y), Align2::CENTER_CENTER, icon, FontId::proportional(TAB_ICON_SIZE), icon_color);
-        let font = if on { semibold(TAB_TEXT_SIZE) } else { FontId::proportional(TAB_TEXT_SIZE) };
-        painter.text(pos2(left + TAB_NAME_LEFT, center_y), Align2::LEFT_CENTER, name, font, color);
-        if response.has_focus() {
-            crate::property_sheet::paint_focus_outline(painter, response.rect, tokens.text_strong);
-        }
+    let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip).id_salt("baking_log_tabs"));
+    egui::ScrollArea::horizontal()
+        .id_salt("baking_log_tabs")
+        .auto_shrink([false, false])
+        .show(&mut strip_ui, |ui| {
+            let (content, _) = ui.allocate_exact_size(vec2(content_width, strip.height()), Sense::hover());
+            let mut picked = None;
+            let mut left = content.left() + first_left;
+            for ((tab, name), width) in BakingLogTab::ALL.into_iter().zip(names).zip(widths) {
+                if tab_button(ui, content, left, width, (tab, name), tab == shown, log) {
+                    picked = Some(tab);
+                }
+                left += width + TAB_GAP;
+            }
+            picked
+        })
+        .inner
+}
 
-        left += width + TAB_GAP;
+/// One tab `width` wide from `left` on the `strip`, scrolled into view when the focus reaches it; dots for its icon while its work runs
+fn tab_button(ui: &mut Ui, strip: Rect, left: f32, width: f32, (tab, name): (BakingLogTab, &str), on: bool, log: &BakeLog) -> bool {
+    let tokens = Tokens::get(ui.ctx());
+    let rect = Rect::from_min_max(pos2(left, strip.top() + TAB_TOP), pos2(left + width, strip.bottom()));
+    let response = ui.interact(rect, ui.scope_id().with(("baking_log_tab", tab)), Sense::click());
+    response.widget_info(|| WidgetInfo::selected(Role::Tab, true, on, name));
+    if response.gained_focus() {
+        response.scroll_to_me(None);
     }
-    picked
+
+    let painter = ui.painter();
+    if on {
+        shown_tab_box(painter, &tokens, rect);
+    }
+    let color = if on || response.hovered() { tokens.text } else { tokens.text_dim };
+    let in_progress = match tab {
+        BakingLogTab::BakingProcess => log.is_running(),
+        BakingLogTab::HighPolyParameters => log.is_loading_high_polys(),
+        BakingLogTab::MatchingByName => false,
+    };
+    let (icon, icon_color) = if in_progress { (ic::DOTS_THREE, tokens.accent) } else { (tab.icon(), color) };
+    let center_y = strip.center().y + TAB_TOP / 2.0;
+    painter.text(pos2(left + TAB_ICON_CENTER, center_y), Align2::CENTER_CENTER, icon, FontId::proportional(TAB_ICON_SIZE), icon_color);
+    let font = if on { semibold(TAB_TEXT_SIZE) } else { FontId::proportional(TAB_TEXT_SIZE) };
+    painter.text(pos2(left + TAB_NAME_LEFT, center_y), Align2::LEFT_CENTER, name, font, color);
+    if response.has_focus() {
+        crate::property_sheet::paint_focus_outline(painter, response.rect, tokens.text_strong);
+    }
+    response.clicked()
+}
+
+/// The issues filter's width when it counts `issue_count` rows
+fn filter_width(ui: &Ui, issue_count: usize) -> f32 {
+    let count_width = if issue_count == 0 {
+        0.0
+    } else {
+        let tokens = Tokens::get(ui.ctx());
+        ui.painter().layout_no_wrap(issue_count.to_string(), semibold(NAME_SIZE), tokens.text).size().x + FILTER_COUNT_GAP
+    };
+    FILTER_BUTTON_WIDTH + count_width
 }
 
 /// The toggle at the `strip`'s right end that keeps only the rows with an issue: a warning glyph and how many there are
 fn issues_filter(ui: &mut Ui, strip: Rect, issue_count: usize, on: bool) -> bool {
     let tokens = Tokens::get(ui.ctx());
     let count = (issue_count > 0).then(|| issue_count.to_string());
-    let count_width =
-        count.as_ref().map_or(0.0, |count| ui.painter().layout_no_wrap(count.clone(), semibold(NAME_SIZE), tokens.text).size().x + FILTER_COUNT_GAP);
     let right = strip.right() - SIDE_PADDING_POINTS + FILTER_OUTDENT;
     let center_y = strip.center().y + FILTER_DROP;
-    let rect = Rect::from_min_max(pos2(right - FILTER_BUTTON_WIDTH - count_width, center_y - FILTER_HEIGHT / 2.0), pos2(right, center_y + FILTER_HEIGHT / 2.0));
+    let rect = Rect::from_min_max(pos2(right - filter_width(ui, issue_count), center_y - FILTER_HEIGHT / 2.0), pos2(right, center_y + FILTER_HEIGHT / 2.0));
 
     let name = match &count {
         Some(count) => trf("{count}, Show only rows with an issue", &[("count", count)]),

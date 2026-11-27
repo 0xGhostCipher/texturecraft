@@ -1,5 +1,6 @@
 //! The Baking Log panel: the latest bake, map by map
 
+use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use texturecraft_engine::bake::{BakeHighState, BakeLogHigh, BakeLogMap, BakeLogMatching, BakeMapState, NamePair};
@@ -250,4 +251,56 @@ fn the_matching_tab_says_when_no_set_matched_by_name() {
     log_a_bake(&mut harness, BakeMapState::Baked);
 
     harness.get_by_label("Set Match to By Mesh Name to pair parts by name.");
+}
+
+#[test]
+fn on_a_narrow_dock_the_tabs_scroll_clear_of_the_issues_filter() {
+    // A window this narrow leaves the docked log less room than its three tabs and the filter take together
+    const NARROW_WINDOW_WIDTH: f32 = 520.0;
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(NARROW_WINDOW_WIDTH, 1000.0))
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|context| TextureCraftApp::new(context, texturecraft_engine::sample_session(256, 64).unwrap()));
+    harness.state_mut().ui.mode = Mode::Baking;
+    harness.run_steps(4);
+    let filter = harness.get_by_label("Show only rows with an issue").rect();
+    let strip_start = harness.get_by_role_and_label(Role::Tab, "Baking Process").rect().left();
+    let last_tab = harness.get_by_role_and_label(Role::Tab, "Matching by Name").rect();
+    assert!(last_tab.right() > filter.left(), "unscrolled, the tabs {last_tab:?} run past the filter {filter:?}, so they must scroll");
+
+    // Frames for the strip's scroll to the focused tab to finish
+    const SCROLL_FRAMES: usize = 30;
+
+    for tab in ["Baking Process", "High Poly Parameters", "Matching by Name"] {
+        harness.get_by_role_and_label(Role::Tab, tab).focus();
+        harness.run_steps(SCROLL_FRAMES);
+
+        let rect = harness.get_by_role_and_label(Role::Tab, tab).rect();
+        assert!(rect.right() <= filter.left(), "the focused {tab} tab {rect:?} ends left of the filter {filter:?}");
+        assert!(rect.left() >= strip_start, "the focused {tab} tab {rect:?} starts inside the log, where the first tab starts unscrolled");
+    }
+}
+
+#[test]
+fn a_matching_name_cut_short_shows_in_full_on_hover() {
+    const LONG_NAME: &str = "Left_shoulder_strap_buckle_with_its_rivets_and_its_stitching_low";
+
+    // Frames past the tooltip delay
+    const TOOLTIP_FRAMES: usize = 60;
+
+    let mut harness = harness();
+    log_a_bake(&mut harness, BakeMapState::Baked);
+    let pair = NamePair { low: Some(LONG_NAME.into()), high: Some("Strap_high".into()) };
+    harness.state_mut().session.bake_log.matching = Some(BakeLogMatching { low_suffix: "_low".into(), high_suffix: "_high".into(), pairs: vec![pair] });
+    harness.get_by_label("Matching by Name").click();
+    harness.run_steps(3);
+    let label = format!("{LONG_NAME}, Strap_high");
+    let row = harness.get_by_label(&label).rect();
+    assert_eq!(harness.query_all_by_label(&label).count(), 1, "no tooltip before hovering");
+
+    harness.hover_at(row.center());
+    harness.run_steps(TOOLTIP_FRAMES);
+
+    assert_eq!(harness.query_all_by_label(&label).count(), 2, "the tooltip carries both names in full");
 }
