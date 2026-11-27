@@ -94,8 +94,10 @@ pub(super) fn show(app: &mut TextureCraftApp, ui: &mut Ui, settings: &mut BakeSe
     let mut check_drag: Option<bool> = ui.data(|data| data.get_temp(check_drag_id));
     let drag_from: Option<Pos2> = ui.data(|data| data.get_temp(drag_from_id));
     let texture_set = app.session.ts();
+    let out_of_date = app.session.out_of_date_maps(texture_set);
     for map in BakedMap::ALL {
-        match ui.push_id(map, |ui| row(app, ui, map, settings, map == selected, &mut check_drag, drag_from)).inner {
+        let changes = out_of_date.get(&map).map_or(&[][..], Vec::as_slice);
+        match ui.push_id(map, |ui| row(app, ui, (map, changes), settings, map == selected, &mut check_drag, drag_from)).inner {
             Some(RowClick::Row) => {
                 app.ui.selected_baked_map = Some(map);
                 app.ui.dock.focus(Panel::MeshMapSettings);
@@ -255,11 +257,11 @@ fn copy_items(app: &mut TextureCraftApp, ui: &mut Ui, opener: &egui::Response, w
     }
 }
 
-/// One baker row: its hover icons end in the Auto-rebake toggle, which stays while on, and an out-of-date map's thumbnail carries a clock (`check_drag`: the state a pressed check gives those the pointer then crosses; `drag_from`: where that drag's pointer was last frame); returns what was clicked, if not the check
+/// One baker row: its hover icons end in the Auto-rebake toggle, which stays while on, and an out-of-date map's thumbnail carries a clock naming its `changes` (`check_drag`: the state a pressed check gives those the pointer then crosses; `drag_from`: where that drag's pointer was last frame); returns what was clicked, if not the check
 fn row(
     app: &mut TextureCraftApp,
     ui: &mut Ui,
-    map: BakedMap,
+    (map, changes): (BakedMap, &[BakeChange]),
     settings: &mut BakeSettings,
     is_selected: bool,
     check_drag: &mut Option<bool>,
@@ -296,9 +298,8 @@ fn row(
     thumbnail(ui, thumbnail_rect, texture.as_ref());
 
     let texture_set = app.session.ts();
-    let changes = app.session.bake_changes(texture_set, map);
     if !changes.is_empty() {
-        out_of_date_mark(ui, thumbnail_rect, name, &changes);
+        out_of_date_mark(ui, thumbnail_rect, name, changes);
     }
 
     // From the right: sync (with several sets), Auto-rebake, bolt, eye; Auto-rebake alone stays while on

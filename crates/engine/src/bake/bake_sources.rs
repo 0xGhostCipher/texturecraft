@@ -9,6 +9,12 @@ use crate::{Result, Session};
 impl Session {
     /// What a bake of `map` on texture set `texture_set` would read now
     pub fn bake_source(&self, texture_set: usize, map: BakedMap) -> Result<BakeSource> {
+        let map_settings = self.doc.project.texture_set(texture_set)?.map_settings_fingerprint(map);
+        Ok(BakeSource { map_settings, ..self.set_bake_source(texture_set)? })
+    }
+
+    /// What a bake of any map of texture set `texture_set` would read now, without the map's own settings (0)
+    fn set_bake_source(&self, texture_set: usize) -> Result<BakeSource> {
         let set = self.doc.project.texture_set(texture_set)?;
         let from_high = !set.bake.high_poly.use_low_as_high && !self.doc.bake_meshes.high.is_empty();
         let high_poly = match from_high {
@@ -18,13 +24,7 @@ impl Session {
         let reads_cage = from_high && set.bake.cage.kind == CageType::CustomFile;
         let cage = self.doc.bake_meshes.cage.as_ref().filter(|_| reads_cage).map_or(0, |cage| cage.fingerprint);
 
-        Ok(BakeSource {
-            low_poly: self.low_poly_fingerprint(),
-            high_poly,
-            cage,
-            settings: set.bake_settings_fingerprint(),
-            map_settings: set.map_settings_fingerprint(map),
-        })
+        Ok(BakeSource { low_poly: self.low_poly_fingerprint(), high_poly, cage, settings: set.bake_settings_fingerprint(), map_settings: 0 })
     }
 
     /// What changed since `map` of texture set `texture_set` was baked; empty when up to date, not baked or without a record
@@ -37,7 +37,13 @@ impl Session {
 
     /// The out-of-date maps of texture set `texture_set`, each with what changed
     pub fn out_of_date_maps(&self, texture_set: usize) -> BTreeMap<BakedMap, Vec<BakeChange>> {
-        BakedMap::ALL.into_iter().map(|map| (map, self.bake_changes(texture_set, map))).filter(|(_, changes)| !changes.is_empty()).collect()
+        let Ok(set) = self.doc.project.texture_set(texture_set) else { return BTreeMap::new() };
+        let mut records = set.bake_sources.iter().filter(|(map, _)| set.baked.contains(map)).peekable();
+
+        // The fingerprints every map of the set shares are taken once
+        let Some(shared) = records.peek().and_then(|_| self.set_bake_source(texture_set).ok()) else { return BTreeMap::new() };
+        let changes = records.map(|(map, record)| (*map, record.changes(&BakeSource { map_settings: set.map_settings_fingerprint(*map), ..shared })));
+        changes.filter(|(_, changes)| !changes.is_empty()).collect()
     }
 
     /// Fingerprint of the low poly's own geometry (computed once per loaded mesh)
