@@ -100,16 +100,22 @@ fn a_canceled_bake_keeps_the_maps_it_finished_and_warns_only_on_the_rest() {
 
     let app = harness.state();
     assert_eq!(state(app, 0, BakedMap::Id), Some(BakeMapState::Baked), "a ticked map keeps its tick");
-    for (set, map) in [(0, BakedMap::Position), (1, BakedMap::Id), (1, BakedMap::Position)] {
-        assert_eq!(state(app, set, map), Some(BakeMapState::Canceled), "set {set}'s unfinished {map:?} warns");
+    for map in [BakedMap::Id, BakedMap::Position] {
+        assert_eq!(state(app, 1, map), Some(BakeMapState::Canceled), "set 1 was still queued, so its {map:?} warns");
     }
+
+    // A map the worker sent before the cancel is kept too, so whether set 0's Position finished depends on timing
+    let row = state(app, 0, BakedMap::Position);
+    assert!(matches!(row, Some(BakeMapState::Baked | BakeMapState::Canceled)), "set 0's Position is ticked or, unfinished, warns: {row:?}");
     let after = app.session.baked(0).cloned().unwrap_or_default();
     let changed = |map: BakedMap| match (before.maps.get(&map), after.maps.get(&map)) {
         (Some(old), Some(new)) => !std::sync::Arc::ptr_eq(old, new),
         (old, new) => old.is_some() != new.is_some(),
     };
-    assert!(changed(BakedMap::Id), "the ticked map is in the document");
-    assert!(!changed(BakedMap::Position), "the unfinished map stays as it was");
+    for map in [BakedMap::Id, BakedMap::Position] {
+        let ticked = state(app, 0, map) == Some(BakeMapState::Baked);
+        assert_eq!(changed(map), ticked, "set 0's {map:?} is in the document exactly when its row is ticked");
+    }
 }
 
 #[test]

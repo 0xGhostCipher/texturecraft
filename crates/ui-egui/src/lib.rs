@@ -973,8 +973,15 @@ impl TextureCraftApp {
         let Some(job) = self.bake.take() else { return };
 
         let mut discarded = None;
-        if let Some(running) = job.current {
+        if let Some(mut running) = job.current {
             running.progress.cancel.store(true, Ordering::Relaxed);
+
+            // The maps the worker sent that no frame has taken yet are finished too
+            while let Ok(map) = running.maps.try_recv() {
+                running.finished.resolution = map.resolution;
+                running.finished.maps.insert(map.map, map.data);
+                self.session.bake_log.map_baked(running.set_index, map.map);
+            }
 
             // Maps baked for a mesh that has since been replaced are never kept
             let same_mesh = job.mesh_id == self.session.mesh_id;

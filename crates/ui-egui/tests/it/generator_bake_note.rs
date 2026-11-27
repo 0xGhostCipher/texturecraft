@@ -11,12 +11,17 @@ use texturecraft_ui_egui::docking::Panel;
 
 /// A plane whose bake makes only the position map, with a curvature generator selected in a fill layer's mask
 fn harness() -> Harness<'static, TextureCraftApp> {
+    harness_with("curvature")
+}
+
+/// A plane whose bake makes only the position map, with a `generator` selected in a fill layer's mask
+fn harness_with(generator: &str) -> Harness<'static, TextureCraftApp> {
     let mesh = primitives::builtin("plane").unwrap();
     let mut session = Session::new_project("t", mesh, "builtin:plane", None, 128).unwrap();
     execute(&mut session, "bake.settings", &json!({ "resolution": 64, "maps": ["position"], "dilation": 0 })).unwrap();
     let layer = execute(&mut session, "layer.add.fill", &json!({ "color": [0.8, 0.3, 0.1] })).unwrap()["layer"].as_u64().unwrap();
     execute(&mut session, "mask.add.black", &json!({})).unwrap();
-    execute(&mut session, "effect.add.generator", &json!({ "generator": "curvature" })).unwrap();
+    execute(&mut session, "effect.add.generator", &json!({ "generator": generator })).unwrap();
     session.view = ViewMode::Mask(LayerId(layer));
     session.update();
 
@@ -66,4 +71,10 @@ fn the_notes_bake_button_turns_the_map_on_and_bakes_it_in_the_background() {
 
     assert!(harness.state().session.baked(0).is_some_and(|baked| baked.maps.contains_key(&BakedMap::Curvature)));
     assert!(harness.query_by_label("Curvature map not baked").is_none(), "baked: no note");
+}
+
+#[test]
+fn rust_runoff_notes_the_occlusion_it_reads_though_no_input_replaces_it() {
+    let harness = harness_with("Dripping Rust");
+    harness.get_by_label("Ambient Occlusion map not baked");
 }

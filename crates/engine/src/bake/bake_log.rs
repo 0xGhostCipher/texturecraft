@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use texturecraft_bake::NamePair;
-use texturecraft_core::{BakedMap, Project};
+use texturecraft_core::{BakedMap, MeshMatchMode, Project};
 
 use super::{BakeHighState, BakeLogHigh, BakeLogMap, BakeLogMatching, BakeMapState, BakeMesh};
 use crate::Session;
@@ -149,13 +149,16 @@ impl Session {
             .collect();
     }
 
-    /// The name pairs of each of `sets` that matches "By Mesh Name"; a high poly part counts as unpaired only when none of them pairs with it
+    /// The name pairs of each of `sets` that matches "By Mesh Name"; a high poly part counts as unpaired only when none of them pairs with it and no set matching "Always" bakes from every part
     fn bake_log_matching(&self, sets: &[usize]) -> Option<BakeLogMatching> {
         let mut matching: Option<BakeLogMatching> = None;
         let (mut paired_highs, mut unpaired_highs) = (HashSet::new(), Vec::new());
+        let mut every_high_used = false;
         for &set in sets {
-            let (Ok(Some(pairs)), Ok(texture_set)) = (self.bake_name_pairs(set), self.doc.project.texture_set(set)) else { continue };
+            let Ok(texture_set) = self.doc.project.texture_set(set) else { continue };
             let settings = &texture_set.bake.high_poly;
+            every_high_used |= !settings.use_low_as_high && settings.match_mode == MeshMatchMode::Always;
+            let Ok(Some(pairs)) = self.bake_name_pairs(set) else { continue };
             let matching = matching.get_or_insert_with(|| BakeLogMatching {
                 low_suffix: settings.low_suffix.clone(),
                 high_suffix: settings.high_suffix.clone(),
@@ -173,7 +176,7 @@ impl Session {
             }
         }
 
-        if let Some(matching) = &mut matching {
+        if let Some(matching) = matching.as_mut().filter(|_| !every_high_used) {
             let unpaired = unpaired_highs.into_iter().filter(|high| !paired_highs.contains(high));
             matching.pairs.extend(unpaired.map(|high| NamePair { low: None, high: Some(high) }));
         }

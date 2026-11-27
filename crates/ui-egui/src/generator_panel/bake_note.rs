@@ -23,7 +23,7 @@ const TOOLTIP_TEXT_SIZE: f32 = 12.0;
 /// The note for each mesh map `generator` reads from the active texture set that is not baked or out of date
 pub(super) fn bake_notes(app: &mut TextureCraftApp, sheet: &mut PropertySheet<'_>, generator: &Generator) {
     let texture_set = app.session.ts();
-    for map in generator.inputs_in_use() {
+    for map in generator.baked_maps_read() {
         if generator.inputs.contains_key(map) {
             continue;
         }

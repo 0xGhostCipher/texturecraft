@@ -130,6 +130,22 @@ fn a_bake_matching_by_name_lists_its_pairs_and_only_the_high_parts_no_set_pairs_
 }
 
 #[test]
+fn a_high_part_counts_as_unused_only_when_no_set_of_the_bake_matches_always() {
+    let obj = "o Box_low\nusemtl Body\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n\
+               o Lid_low\nusemtl Lid\nv 2 0 0\nv 3 0 0\nv 2 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 4/4 5/5 6/6\n";
+    let mut session = Session::from_mesh_bytes("sets.obj", obj.as_bytes(), 128, "sets").unwrap();
+    session
+        .add_high_poly_bytes("high.obj", b"o Box_high\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no Extra_high\nv 2 0 0\nv 3 0 0\nv 2 1 0\nf 4 5 6\n".to_vec())
+        .unwrap();
+    session.doc.project.texture_sets[0].bake.high_poly.match_mode = MeshMatchMode::ByMeshName;
+    session.begin_bake_log(&[0, 1]);
+
+    let matching = session.bake_log.matching.clone().unwrap();
+    assert!(matching.pairs.iter().all(|pair| pair.low.is_some()), "the set matching \"Always\" bakes from Extra_high: {:?}", matching.pairs);
+    assert_eq!(matching.issue_count(), 0);
+}
+
+#[test]
 fn a_canceled_bake_at_a_new_output_size_keeps_none_of_its_maps_so_the_sets_others_stay() {
     let mut session = sample_session(256, 64).unwrap();
     let before = session.baked(0).cloned().unwrap();
