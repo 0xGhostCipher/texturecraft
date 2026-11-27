@@ -297,7 +297,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 - A **History** panel: click any step to go back to it, or forward again to an undone one.
 - **11 languages:** English, French, German, Spanish, Portuguese, Italian, Russian, Japanese,
   Chinese, Korean and Arabic, switchable live. A build without the shared craft-i18n catalogs
-  offers English only.
+  offers English only, and Japanese, Chinese, Korean and Arabic can be picked only where a font
+  for their script is available (craft-fonts or the system's); otherwise they show greyed out.
 - **In the browser:** the same app compiled to WebAssembly, on WebGPU or WebGL2, with touch
   navigation and project open, save and download.
 
