@@ -267,6 +267,13 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
 - **Its own title bar** with the app icon, menus and window buttons on Windows (and on Linux
   desktops that leave the frame to the app, such as GNOME), the macOS traffic lights over the same
   strip, and the system's frame instead with `prefs.system_title_bar` through `ui.set` (for now).
+- **A pen on a Linux Wayland desktop** can move the cursor and paint as a pointer through Xwayland.
+  At launch, TextureCraft uses Xwayland when it detects a pen, finds the X11 libraries and the
+  local X server accepts setup. Otherwise it uses native Wayland. Set
+  `TEXTURECRAFT_NATIVE_WAYLAND=1` to keep native Wayland. The Flatpak grants X11 access only as a
+  fallback when Wayland is unavailable. Linux pen pressure is tracked separately in
+  [#818](https://github.com/storytold/texturecraft/pull/818) and
+  [#816](https://github.com/storytold/texturecraft/issues/816).
 - **Dockable, tabbed and floating panels**, saved layouts, and panels that reopen where you closed
   them. The right bar's panels (Export, Log, Display Settings, Shader Settings, History) pop out
   beside it; *Undock* makes one a floating window, and its *Dock* button puts it back on the bar.
