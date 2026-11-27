@@ -50,9 +50,10 @@ fn the_history_list_fills_a_tall_panel() {
         texturecraft_engine::execute(&mut session, "layer.rename", &json!({"layer": layer.0, "name": format!("Step {step}")})).unwrap();
     }
 
-    let mut harness = Harness::builder().with_size(WINDOW_SIZE).build_eframe(|cc| TextureCraftApp::new(cc, session));
-    // The labels below are English; a first run would speak the system's language
-    harness.state_mut().ui.prefs.language = "en".into();
+    let mut harness = Harness::builder()
+        .with_size(WINDOW_SIZE)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     dock_in_left_column(&mut harness, "History");
     harness.run_steps(STARTUP_FRAMES);
 
@@ -64,8 +65,10 @@ fn the_history_list_fills_a_tall_panel() {
 #[test]
 fn the_log_list_fills_a_tall_panel() {
     let session = texturecraft_engine::sample_session(TEXTURE_RESOLUTION, BAKE_RESOLUTION).unwrap();
-    let mut harness = Harness::builder().with_size(WINDOW_SIZE).build_eframe(|cc| TextureCraftApp::new(cc, session));
-    harness.state_mut().ui.prefs.language = "en".into();
+    let mut harness = Harness::builder()
+        .with_size(WINDOW_SIZE)
+        .with_context_setup(texturecraft_ui_egui::framework::install_headless)
+        .build_eframe(|cc| TextureCraftApp::new(cc, session));
     for line in 0..ROWS {
         harness.state_mut().session.log.push(format!("Log line {line}"));
     }
