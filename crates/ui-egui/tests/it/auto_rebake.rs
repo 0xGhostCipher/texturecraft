@@ -9,6 +9,9 @@ use texturecraft_engine::{Session, execute};
 use texturecraft_ui_egui::TextureCraftApp;
 use texturecraft_ui_egui::state::Mode;
 
+/// Frames far past the half-second settle wait, at the harness's quarter-second step
+const PAST_THE_SETTLE_FRAMES: usize = 60;
+
 /// A plane in Bake mode with its position and ID maps baked and Auto-rebake on for the position map
 fn harness(resolution: u32) -> Harness<'static, TextureCraftApp> {
     let mesh = primitives::builtin("plane").unwrap();
@@ -173,4 +176,24 @@ fn no_rebake_starts_while_the_pointer_is_held_so_a_paused_drag_stays_one_undo_st
 
     harness.drop_at(corner);
     super::step_until(&mut harness, "the rebake after the release", |app| app.bake.is_some());
+}
+
+#[test]
+fn a_rebake_canceled_in_one_project_still_runs_in_the_next_project_opened() {
+    let mut harness = harness(64);
+    change_settings(&mut harness, json!({ "positionMode": "boundingBox" }));
+    super::step_until(&mut harness, "the rebake", |app| app.bake.is_some());
+    harness.state_mut().cancel_bake();
+    harness.run_steps(PAST_THE_SETTLE_FRAMES);
+    assert!(harness.state().bake.is_none(), "a canceled rebake is not tried again in its project");
+
+    // The same project opened again: its out-of-date map reads what the canceled one read
+    let mesh = primitives::builtin("plane").unwrap();
+    let mut next = Session::new_project("t", mesh, "builtin:plane", None, 128).unwrap();
+    execute(&mut next, "bake.run", &json!({ "resolution": 64, "maps": ["position", "id"], "dilation": 0 })).unwrap();
+    execute(&mut next, "bake.autoRebake", &json!({ "map": "position" })).unwrap();
+    execute(&mut next, "bake.settings", &json!({ "positionMode": "boundingBox" })).unwrap();
+    harness.state_mut().session.switch_to(next);
+
+    super::step_until(&mut harness, "the rebake in the opened project", |app| app.bake.is_some());
 }

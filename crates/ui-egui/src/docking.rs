@@ -391,23 +391,29 @@ impl Dock {
     }
 }
 
-/// What the dock area keeps between passes: the workspace it shows and the panels' specs.
+/// What the dock area keeps between passes: the workspace it shows and the panels' specs
 #[derive(Default)]
 pub(crate) struct LiveDock {
     shown: Option<Arc<Workspace>>,
     specs: Tracked<DockSpecs>,
-    /// The panel whose floating window takes over the held press in the next pass, with the grab point inside the window.
+    /// The panel whose floating window takes over the held press in the next pass, with the grab point inside the window
     continue_move: Option<(Panel, egui::Vec2)>,
+    /// The OS windows of the floating panels, as the last pass's dock drew them
+    floating_windows: Vec<ViewportId>,
 }
 
 impl LiveDock {
-    /// Asks the next pass's dock to let the window holding `panel` follow the held pointer from `grab`.
+    /// The OS windows the last pass's dock drew floating panels in
+    pub(crate) fn floating_windows(&self) -> &[ViewportId] {
+        &self.floating_windows
+    }
+
+    /// Asks the next pass's dock to let the window holding `panel` follow the held pointer from `grab`
     pub(crate) fn hand_over(&mut self, panel: Panel, grab: egui::Vec2) {
         self.continue_move = Some((panel, grab));
     }
 
-    /// The `Arc` the dock shows for `workspace`: the last one while the arrangement is the same,
-    /// so an idle pass keeps the workspace's revision and the dock reads no spec.
+    /// The `Arc` the dock shows for `workspace`: the last one while the arrangement is the same, so an idle pass reads no spec
     fn shown(&mut self, workspace: &Workspace) -> Arc<Workspace> {
         if let Some(shown) = self.shown.as_ref().filter(|shown| ***shown == *workspace) {
             return Arc::clone(shown);
@@ -470,7 +476,7 @@ pub(crate) fn input_blocked(app: &TextureCraftApp, context: &egui::Context) -> b
     modal
 }
 
-/// Draw the dock (viewport and panels) into `ui`.
+/// Draw the dock (viewport and panels) into `ui`
 pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     // Rendering keeps disabled panels visible because it shares the painting dock
     let dock_mode = if app.ui.mode == crate::state::Mode::Rendering { crate::state::Mode::Painting } else { app.ui.mode };
@@ -484,12 +490,11 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
     let context = ui.ctx().clone();
     refresh_specs(app);
     let shown = app.docks.shown(&app.ui.dock.workspace);
-    // The specs leave the app while its panels borrow it, and come back with their revision.
+    // The specs leave the app while its panels borrow it, and come back with their revision
     let specs = std::mem::take(&mut app.docks.specs);
     let hand_over = app.docks.continue_move.take();
     let raise = app.ui.dock.raise.take();
-    // Panels arrange in a split tree around the viewport; floating title bars only move windows.
-    // Each closable tab has its close button, as each group header had one for its shown panel.
+    // Panels split around the viewport, floating title bars only move windows, and each closable tab has its close button
     let config = DockConfig::default().new_dock_zones(false).title_bar_docks(false).tab_close_buttons(true);
     let (output, focused_windows) = {
         let tokens = Tokens::get(&context);
@@ -505,6 +510,8 @@ pub fn show(app: &mut TextureCraftApp, ui: &mut Ui) {
         (output, panels.focused_windows)
     };
     app.docks.specs = specs;
+    app.docks.floating_windows.clear();
+    app.docks.floating_windows.extend(output.windows.iter().map(|(_, viewport)| *viewport));
 
     // The popup needs the viewport the dock recorded this frame
     crate::rail_popup::show(app, &context);
