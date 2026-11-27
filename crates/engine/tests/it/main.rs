@@ -46,6 +46,7 @@ mod generator_wear;
 mod gradient_map;
 mod high_poly_missed;
 mod instances;
+mod ior_specular;
 mod layer_multi_select;
 mod mask_clone_smudge;
 mod mask_export;

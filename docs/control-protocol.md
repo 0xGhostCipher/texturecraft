@@ -660,6 +660,10 @@ None is an undo step.
 `display.set` also takes `alignment` (`world` or `camera`: the environment, and the key light with it,
 turns with the camera about the vertical axis), `shadowMode` (`intensive`, `average` or `lightweight`, the
 default: the shadow map's resolution) and `shadowOpacity` (0 to 1, default 1: how dark the shadows are).
+Set `iorSpecular` to true to derive the Metallic Roughness surface reflectance at normal incidence
+from `ior` (clamped to 1–3). Specular Level scales this reflectance in the viewport, both path
+tracers and F0 map export. Path-traced transmission uses its own Fresnel calculation for glass
+interfaces. The setting defaults to false and is saved with the project and its templates.
 
 `viewport.view {mode: "image", image: <image resource>}` shows a project image as it is, stretched over
 the UV square, on the mesh and in the 2D view (the view picker's "Other..."). `display.set {soloUnlit}`
