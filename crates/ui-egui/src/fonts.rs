@@ -279,9 +279,8 @@ mod tests {
         assert_eq!(Script::of_language("ar"), Some(Script::Arabic));
         assert_eq!(Script::of_language("de"), None);
         for l in &crate::i18n::LANGUAGES {
-            // Past the Latin blocks and their diacritics. Cyrillic is already in the
-            // interface font (Inter / Ubuntu-Light), so Russian needs no fallback script.
-            let other_script = l.name.chars().any(|c| c > '\u{036F}' && !('\u{0400}'..='\u{04FF}').contains(&c));
+            // Past the Latin blocks and their diacritics.
+            let other_script = l.name.chars().any(|c| c > '\u{036F}');
             assert_eq!(other_script, Script::of_language(l.code).is_some(), "{}", l.code);
         }
     }

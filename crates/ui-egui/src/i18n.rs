@@ -37,7 +37,7 @@ pub struct Language {
     pub english: &'static str,
 }
 
-const COUNT: usize = 11;
+const COUNT: usize = 10;
 
 pub static LANGUAGES: [Language; COUNT] = [
     Language { code: "en", name: "English", english: "English" },
@@ -50,7 +50,6 @@ pub static LANGUAGES: [Language; COUNT] = [
     Language { code: "zh-Hans", name: "简体中文", english: "Chinese (Simplified)" },
     Language { code: "ko", name: "한국어", english: "Korean" },
     Language { code: "ar", name: "العربية", english: "Arabic" },
-    Language { code: "ru", name: "Русский", english: "Russian" },
 ];
 
 // Rendering and preferences use the UI thread, including independent test harnesses.
