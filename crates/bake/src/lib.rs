@@ -273,10 +273,8 @@ fn bake_prepared(
         if let Some(region) = region {
             for (row_index, row) in gbuffer.tri.chunks_mut(sample_width).enumerate() {
                 let y = (sample_start_y + row_index) / samples_per_axis;
-                for (sample_x, triangle) in row.iter_mut().enumerate() {
-                    if !region.texels.contains(sample_x / samples_per_axis, y) {
-                        *triangle = NO_TRI;
-                    }
+                for outside in region.texels.outside_row(y, samples_per_axis, row.len()) {
+                    row.get_mut(outside).unwrap_or_default().fill(NO_TRI);
                 }
             }
         }
@@ -329,9 +327,12 @@ fn bake_prepared(
             let previous = region.previous.get(map).filter(|previous| previous.len() == pixels.len());
             let previous = previous.ok_or_else(|| BakeError::Invalid(format!("no whole {} map of this size to bake a region of", map.id())))?;
             let components = map.components();
-            for (index, (pixel, kept)) in pixels.chunks_exact_mut(components).zip(previous.chunks_exact(components)).enumerate() {
-                if !region.texels.contains(index % width, index / width) {
-                    pixel.copy_from_slice(kept);
+            let row_len = (width * components).max(1);
+            for (y, (row, kept)) in pixels.chunks_exact_mut(row_len).zip(previous.chunks_exact(row_len)).enumerate() {
+                for outside in region.texels.outside_row(y, components, row_len) {
+                    if let (Some(row), Some(kept)) = (row.get_mut(outside.clone()), kept.get(outside)) {
+                        row.copy_from_slice(kept);
+                    }
                 }
             }
         }
