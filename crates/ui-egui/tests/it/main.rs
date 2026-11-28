@@ -34,6 +34,7 @@ mod export_overrides;
 mod export_progress;
 mod export_reference_texts;
 mod export_settings;
+mod export_shader_parameters;
 mod export_template_guards;
 mod export_usd_asset;
 mod file_dialogs;

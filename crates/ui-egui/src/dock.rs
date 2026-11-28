@@ -1386,7 +1386,7 @@ fn layer_context_menu(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, con
     let layer_id = layer.id.0;
     let keymap = app.ui.keymap.clone();
 
-    // The row menu can act on several selected layers. A thumbnail identifies one layer.
+    // A thumbnail menu always acts on its own layer
     let several = if content_thumbnail { None } else { selection_with(app, layer.id) };
     let run = |app: &mut TextureCraftApp, ui: &mut Ui, label: &str, id: &str, params: Value, enabled: bool| {
         let mut button = egui::Button::new(label);
@@ -1479,7 +1479,7 @@ fn layer_context_menu(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, con
 
 /// Mask management is available from the row and directly from the mask thumbnail.
 fn mask_management_menu(app: &mut TextureCraftApp, ui: &mut Ui, layer: &Layer, mask_thumbnail: bool) {
-    // An instance inherits its source mask until it has its own.
+    // An instance inherits its source mask until it has its own
     let project = &app.session.doc.project;
     let mask = project.layers.get(&project.mask_owner(layer.id)).and_then(|owner| owner.mask.as_ref());
     let (has_mask, mask_on) = (mask.is_some(), mask.is_some_and(|mask| mask.enabled));

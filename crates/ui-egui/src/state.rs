@@ -404,6 +404,9 @@ pub struct ExportUi {
     /// `file.exportTextures`).
     #[serde(default)]
     pub materialx: bool,
+    /// Also write `<project>_shaders.json`: the shader's settings and the texture sets using it (`shaderParameters` of `file.exportTextures`)
+    #[serde(default)]
+    pub shader_parameters: bool,
     /// Texture sets excluded from export.
     pub skip: Vec<usize>,
     /// Per texture set (by index) overrides of the settings above.
@@ -447,6 +450,9 @@ pub struct ExportUi {
     /// Output templates tab: F2 asked to rename the selected preset.
     #[serde(skip)]
     pub rename_key: bool,
+    /// A text field of the window had the keyboard when the last frame ended
+    #[serde(skip)]
+    pub field_had_keyboard: bool,
     /// Output templates tab: the question waiting for an answer (delete, or drop an unsaved edit).
     #[serde(skip)]
     pub ask: Option<crate::export_templates::Ask>,
@@ -478,6 +484,7 @@ impl Default for ExportUi {
             color_space: String::new(),
             usd_asset: false,
             materialx: false,
+            shader_parameters: false,
             skip: Vec::new(),
             sets: Default::default(),
             owner: Vec::new(),
@@ -492,6 +499,7 @@ impl Default for ExportUi {
             pending_drop: None,
             renaming: None,
             rename_key: false,
+            field_had_keyboard: false,
             ask: None,
             opened_with: None,
             job: None,
@@ -503,7 +511,7 @@ impl Default for ExportUi {
 
 /// The LIST OF EXPORTS console's width when the window opens, as in the reference
 fn default_console_width() -> f32 {
-    300.0
+    crate::export_window::CONSOLE_WIDTH
 }
 
 fn default_export_dir() -> String {
