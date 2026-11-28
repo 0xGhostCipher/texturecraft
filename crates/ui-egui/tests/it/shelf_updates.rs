@@ -29,6 +29,13 @@ fn pass_a_minute(harness: &mut Harness<'_, TextureCraftApp>) {
     harness.run_steps(2);
 }
 
+/// Writes `bytes` over the file at `path` with a later time, as a later save would (an equal-size file keeping its time reads as unchanged)
+fn rewrite(path: &std::path::Path, bytes: &[u8]) {
+    std::fs::write(path, bytes).unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+    std::fs::File::options().write(true).open(path).unwrap().set_modified(later).unwrap();
+}
+
 /// A grey one-pixel PNG of `value`
 fn grey_png(value: f32) -> Vec<u8> {
     texturecraft_engine::formats::gray16_png(1, 1, [value].into_iter()).unwrap()
@@ -41,7 +48,7 @@ fn turning_on_project_resources_reads_a_changed_image_file_again_every_minute() 
     std::fs::write(&path, grey_png(0.2)).unwrap();
     let name = harness.state_mut().run("resource.import", json!({"path": path.to_str().unwrap()})).unwrap()["name"].as_str().unwrap().to_string();
     let before = harness.state().session.images[&name].rgba.clone();
-    std::fs::write(&path, grey_png(0.8)).unwrap();
+    rewrite(&path, &grey_png(0.8));
 
     pass_a_minute(&mut harness);
     let while_off = harness.state().session.images[&name].rgba.clone();
@@ -78,7 +85,7 @@ fn an_automatic_update_waits_for_the_stroke_under_way_to_end() {
     let before = harness.state().session.images[&name].rgba.clone();
     harness.get_by_label("Resources used in project").click();
     harness.run_steps(2);
-    std::fs::write(&path, grey_png(0.8)).unwrap();
+    rewrite(&path, &grey_png(0.8));
 
     let steps_before_stroke = harness.state().session.history_labels().len();
     harness.state_mut().session.begin_stroke_uv(texturecraft_engine::geom::glam::Vec2::splat(0.5), 1.0).unwrap();

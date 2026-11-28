@@ -538,6 +538,9 @@ mod tests {
 
         let renamed = crate::execute(&mut session, "resource.rename", &json!({"name": name, "to": "stone"})).unwrap()["name"].as_str().unwrap().to_string();
         std::fs::write(&path, texturecraft_formats::gray16_png(1, 1, [0.75].into_iter()).unwrap()).unwrap();
+        // An equal-size file counts as changed once its time moved, as a later save's does
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
         let updated = crate::execute(&mut session, "resource.update", &json!({"names": [renamed]})).unwrap();
 
         std::fs::remove_file(&path).unwrap();
