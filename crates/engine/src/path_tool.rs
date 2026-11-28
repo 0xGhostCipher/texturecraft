@@ -385,6 +385,21 @@ pub(crate) fn path_images(kind: &EffectKind) -> Vec<String> {
     shapes.iter().filter_map(|shape| read_paint(shape).ok()?.mask_image).collect()
 }
 
+/// Points the stored paths of `kind` that paint with image resource `from` (as mask image or brush alpha) at `to`
+pub(crate) fn rename_path_images(kind: &mut EffectKind, from: &str, to: &str) {
+    let EffectKind::Path(shapes) = kind else { return };
+
+    for shape in shapes {
+        for pointer in ["/mask_image", "/brush/alpha_image"] {
+            if let Some(image) = shape.paint.pointer_mut(pointer)
+                && image.as_str() == Some(from)
+            {
+                *image = serde_json::Value::String(to.to_string());
+            }
+        }
+    }
+}
+
 /// The Path tool state showing a stored path (finite points only, at most [`MAX_PATH_POINTS`])
 fn state_of(shape: &PathShape) -> PathState {
     let points = shape.points.iter().filter(|p| p.iter().all(|v| v.is_finite())).take(MAX_PATH_POINTS).map(|p| Vec3::from_array(*p)).collect();
@@ -925,28 +940,28 @@ impl Session {
     }
 
     /// [`Session::put_path`] recompositing only the tiles it changed, with no undo step: returns the paint report and the document before
-    fn repaint_path(&mut self, eid: LayerId, index: usize, shape: PathShape) -> Result<(Value, Document)> {
+    fn repaint_path(&mut self, effect_id: LayerId, index: usize, shape: PathShape) -> Result<(Value, Document)> {
         let before = self.doc.clone();
-        let painted = match self.put_path(eid, index, shape) {
-            Ok(v) => v,
-            Err(e) => {
+        let painted = match self.put_path(effect_id, index, shape) {
+            Ok(report) => report,
+            Err(error) => {
                 self.doc = before;
-                return Err(e);
+                return Err(error);
             }
         };
 
         // Paths paint into the active set; a sublayer in another set recomposites in full
         let project = &self.doc.project;
-        let set = project.effect(eid).and_then(|(owner, _)| project.locate(owner)).map(|(ts, _, _)| ts);
+        let set = project.effect(effect_id).and_then(|(owner, _)| project.locate(owner)).map(|(ts, _, _)| ts);
         if set == Some(self.ts()) {
             // Content or mask, the sublayer's owner decides which sets redraw
-            let tiles = changed_tiles(&before.pixels, &self.doc.pixels, eid);
-            self.mark_painted(self.ts(), Some(PaintTarget::Layer(eid)), tiles);
+            let tiles = changed_tiles(&before.pixels, &self.doc.pixels, effect_id);
+            self.mark_painted(self.ts(), Some(PaintTarget::Layer(effect_id)), tiles);
         } else {
             self.invalidate_changed(&before);
         }
-        self.revision = self.revision.wrapping_add(1);
-        self.modified = true;
+
+        self.mark_modified();
         Ok((painted, before))
     }
 

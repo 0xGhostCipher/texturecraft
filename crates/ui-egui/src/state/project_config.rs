@@ -7,8 +7,8 @@ pub struct ProjectConfig {
     pub reimport: bool,
     /// Whether painted strokes follow the surface of a newly imported mesh
     pub preserve: bool,
-    /// The project name as typed, when the field was edited
-    pub name: Option<String>,
+    /// The name as typed, or None to leave the current name unvalidated and unchanged
+    pub draft_name: Option<String>,
     /// The selected normal map format when it differs from the project's
     pub normal_format: Option<texturecraft_engine::core::NormalFormat>,
     /// Color management as chosen in the window; nothing is applied (the project stays Legacy)
