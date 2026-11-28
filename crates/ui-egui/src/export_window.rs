@@ -443,7 +443,10 @@ fn start_export(app: &mut TextureCraftApp) {
         .collect();
 
     let preview: Vec<_> = pending.iter().filter_map(|(index, params)| plan_set(app, *index, params)).collect();
-    let error = preview.iter().find_map(|plan| plan.files.as_ref().err().cloned()).or_else(|| name_clash(&preview));
+    let error = preview.iter().find_map(|plan| plan.files.as_ref().err().cloned()).or_else(|| name_clash(&preview)).or_else(|| {
+        let paths = preview.iter().filter_map(|plan| plan.files.as_ref().ok()).flat_map(planned_names);
+        texturecraft_engine::formats::export::validate_export_paths(paths).err().map(|error| trf("Export stopped: {error}", &[("error", &error)]))
+    });
 
     let e = &mut app.ui.export;
     e.tab = 2;
@@ -1505,8 +1508,10 @@ fn tree_files(set: &ExportSetPlan, directory: &str) -> Vec<TreeFile> {
 fn tree_header(ui: &mut Ui, rect: egui::Rect, name: &str, open: bool, id: egui::Id) -> bool {
     let look = ExportLook::get(ui.ctx());
     let response = ui.interact(rect, id, egui::Sense::click());
-    // A folding header, as egui's CollapsingHeader reports one
+
+    // Expose the hand-drawn header as a disclosure control
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::DisclosureTriangle, true, name));
+
     let y = rect.center().y;
     let chevron = if open {
         ic::CARET_DOWN

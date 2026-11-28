@@ -163,8 +163,7 @@ fn a_map_override_sets_its_own_file_type_and_marks_the_set() {
 fn export_writes_a_map_with_its_own_file_type() {
     let mut h = harness();
     let first = plan(&mut h)[0]["map"].as_u64().unwrap() as usize;
-    let dir = std::env::temp_dir().join(format!("tc-export-map-overrides-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = TempDir::new("export-map-overrides");
     let template = h.state().ui.export.preset.clone();
     let mut o = SetExport { maps_template: template, ..SetExport::default() };
     o.maps.insert(first, MapExport { enabled: true, file_type: Some(FileType { format: "targa".into(), bit_depth: 8, dithering: false }), size: None });
@@ -184,10 +183,9 @@ fn export_writes_a_map_with_its_own_file_type() {
         h.run_steps(1);
     }
     h.run_steps(2);
-    let names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let names: Vec<String> = std::fs::read_dir(&*dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
 
     assert_eq!(names.iter().filter(|n| n.ends_with(".tga")).count(), 1, "{names:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

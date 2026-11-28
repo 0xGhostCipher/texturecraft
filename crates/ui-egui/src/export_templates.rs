@@ -1095,33 +1095,46 @@ fn planned_outputs(app: &mut TextureCraftApp, params: &Value) -> Result<Vec<Opti
     let map_count = params.pointer("/preset/maps").and_then(Value::as_array).map_or(0, Vec::len);
     let index = |value: &Value| value.get("map").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok());
 
-    let mut outputs = vec![None; map_count];
+    let mut outputs: Vec<Option<PlannedOutput>> = vec![None; map_count];
+    let tile_files = tr("UV tile files");
     for file in plan.as_array().into_iter().flatten() {
         let Some(name) = file.get("file").and_then(Value::as_str) else { continue };
 
-        let output = PlannedOutput {
-            file: name.to_string(),
-            size: file.get("size").and_then(Value::as_u64).unwrap_or(0),
-            format: file.get("format").and_then(Value::as_str).and_then(FileFormat::from_extension),
-            bit_depth: file.get("bitDepth").and_then(Value::as_u64).and_then(|depth| u8::try_from(depth).ok()).unwrap_or(0),
-            dithering: file.get("dithering").and_then(Value::as_bool).unwrap_or(false),
+        let tiled = file["tile"].is_number();
+        let display_name = if tiled { file["udimPattern"].as_str().unwrap_or(tile_files) } else { name };
+        let mut remember = |entry: &Value, layer_name: Option<&str>| {
+            let Some(slot) = index(entry).and_then(|index| outputs.get_mut(index)) else { return };
+
+            if let Some(previous) = slot {
+                // Some disambiguated or truncated paths have no common tile pattern
+                if tiled && previous.file != display_name && previous.file != tile_files {
+                    previous.file = tile_files.into();
+                }
+                return;
+            }
+
+            *slot = Some(PlannedOutput {
+                file: match layer_name {
+                    Some(layer_name) if !tiled => format!("{name} › {layer_name}"),
+                    _ => display_name.to_owned(),
+                },
+                tiled,
+                size: file.get("size").and_then(Value::as_u64).unwrap_or(0),
+                format: file.get("format").and_then(Value::as_str).and_then(FileFormat::from_extension),
+                bit_depth: file.get("bitDepth").and_then(Value::as_u64).and_then(|depth| u8::try_from(depth).ok()).unwrap_or(0),
+                dithering: file.get("dithering").and_then(Value::as_bool).unwrap_or(false),
+            });
         };
         match file.get("layers").and_then(Value::as_array).filter(|layers| !layers.is_empty()) {
             Some(layers) => {
                 for layer in layers {
-                    let layer_name = layer.get("name").and_then(Value::as_str).unwrap_or_default();
-                    if let Some(slot) = index(layer).and_then(|i| outputs.get_mut(i)) {
-                        *slot = Some(PlannedOutput { file: format!("{name} › {layer_name}"), ..output.clone() });
-                    }
+                    remember(layer, layer.get("name").and_then(Value::as_str));
                 }
             }
-            None => {
-                if let Some(slot) = index(file).and_then(|i| outputs.get_mut(i)) {
-                    *slot = Some(output);
-                }
-            }
+            None => remember(file, None),
         }
     }
+
     Ok(outputs)
 }
 
@@ -1487,13 +1500,16 @@ fn output_preview(ui: &mut Ui, index: usize, map: &MapSpec, planned: Option<&Pla
         return;
     };
 
-    ui.label(RichText::new(&planned.file).color(tokens.text_strong));
+    let title = if planned.tiled { trf("Atlas preview: {file}", &[("file", &planned.file)]) } else { planned.file.clone() };
+    ui.label(RichText::new(title).color(tokens.text_strong));
     if let Some(Some(pictures)) = MapPreviewCache::get(ui.ctx(), index) {
         preview_pictures(ui, map, &pictures);
     }
+
     let file_type = planned.format.map_or("", FileFormat::extension);
     let depth = crate::export_window::depth_label(planned.format, planned.bit_depth, planned.dithering);
-    ui.label(RichText::new(format!("{size} x {size} · {file_type} {depth}", size = planned.size)).color(tokens.text_dim));
+    let details = if planned.tiled { format!("{file_type} {depth}") } else { format!("{size} x {size} · {file_type} {depth}", size = planned.size) };
+    ui.label(RichText::new(details).color(tokens.text_dim));
 }
 
 /// The file's picture with each channel's grey picture, letter and source beside it
@@ -1901,6 +1917,40 @@ mod tests {
         assert!(outputs[0].is_none(), "the disabled map stays disabled in its new position");
         assert_eq!(outputs[2].as_ref().unwrap().size, 128);
         assert_eq!(params["maps"].as_array().unwrap().len(), 2, "the new map and the removed map get no override");
+    }
+
+    #[test]
+    fn tiled_raster_and_psd_previews_describe_the_whole_atlas() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable as _;
+        use texturecraft_engine::Session;
+        use texturecraft_engine::geom::primitives::udim_plane;
+
+        let session = Session::new_project("Tiles", udim_plane(), "builtin:udim_plane", None, 128).unwrap();
+        let mut harness = Harness::builder().with_context_setup(crate::framework::install_headless).build_eframe(|cc| TextureCraftApp::new(cc, session));
+        let app = harness.state_mut();
+        let mut preset = app.session.export_preset("Separate maps").unwrap();
+        preset.maps.truncate(2);
+        preset.maps[0].file = "Raster".into();
+        preset.maps[0].format = FileFormat::Png;
+        preset.maps[1].file = "Group/Layer.$udim".into();
+        preset.maps[1].format = FileFormat::Psd;
+        let mut ambiguous = preset.maps[0].clone();
+        ambiguous.file = "Literal_UDIMTOKEN.$udim".into();
+        preset.maps.push(ambiguous);
+        let params = json!({"ts": 0, "preset": preset});
+
+        let outputs = planned_outputs(app, &params).unwrap();
+        let preview = Harness::builder().with_context_setup(crate::framework::install_headless).build_ui(|ui| {
+            for (index, map) in preset.maps.iter().enumerate() {
+                output_preview(ui, index, map, outputs[index].as_ref());
+            }
+        });
+
+        assert!(preview.query_by_label("Atlas preview: Raster.<UDIM>.png").is_some());
+        assert!(preview.query_by_label_contains("<UDIM>.psd").is_some());
+        assert!(preview.query_by_label("Atlas preview: UV tile files").is_some());
+        assert!(preview.query_by_label_contains("128 x 128").is_none(), "the tile size must not describe the whole atlas");
     }
 
     #[test]

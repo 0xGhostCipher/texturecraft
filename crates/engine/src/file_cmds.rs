@@ -103,7 +103,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "List export outputs",
             [],
             None,
-            "{preset?: name or preset object, ts?, format?, bitDepth?, dithering?, size?, colorSpace?, maps?} → [{ts, map, file, format, bitDepth, dithering, size, sourceSize, warnings, layers: [{map, name}] (a PSD's maps, top first)}] (keeps the first file per case-insensitive name and warns about later duplicates)",
+            "{preset?: name or preset object, ts?, format?, bitDepth?, dithering?, size?, colorSpace?, maps?} → [{ts, map, file, tile: UV tile number or null, udimPattern: file pattern with <UDIM> or null, format, bitDepth, dithering, size, sourceSize, warnings, layers: [{map, name}] (a PSD's maps, top first)}] (keeps the first file per case-insensitive name, warns about later duplicates, and rejects file and folder conflicts)",
             always,
             plan
         ),
@@ -401,7 +401,12 @@ impl Session {
 
         // Keep each winning plan with the options of the job that produced it
         let plans = pending.iter_mut().enumerate().flat_map(|(job, (_, _, plans))| plans.drain(..).map(move |plan| (job, plan)));
-        for (job, plan) in texturecraft_formats::export::keep_first_planned_names(plans) {
+        let plans = texturecraft_formats::export::keep_first_planned_names(plans);
+        if pending.len() > 1 {
+            texturecraft_formats::export::validate_export_paths(plans.iter().map(|(_, plan)| plan.name.as_str())).map_err(fe)?;
+        }
+
+        for (job, plan) in plans {
             pending[job].2.push(plan);
         }
         pending.retain(|(_, _, plans)| !plans.is_empty());
@@ -630,6 +635,8 @@ fn plan(session: &mut Session, params: &Value) -> Result<Value> {
                 "ts": set_index,
                 "map": output.map,
                 "file": output.name,
+                "tile": output.tile,
+                "udimPattern": output.udim_name,
                 "format": output.format.extension(),
                 "bitDepth": output.bit_depth,
                 "dithering": output.dither,

@@ -8,7 +8,7 @@ use super::encoding::Encoding;
 use super::map_renderer::MapRenderer;
 use super::{
     ExportOptions, ExportedFile, FileFormat, PSD_MAX_FILE_BYTES, PSD_RGBA_PLANES, Padding, PlannedFile, PlannedLayer, check_psd_size, psd_size,
-    quantize_integer, quantize_u16,
+    quantize_integer, quantize_u8, quantize_u16,
 };
 use crate::{FormatError, Result};
 
@@ -125,11 +125,11 @@ fn merged_image((width, height): (u32, u32), depth: u8, layers: &[(&str, (u32, u
 
     let mut merged = Vec::new();
     merged.try_reserve_exact(sample_count).map_err(reserve_error)?;
-    let encoding = Encoding { format: FileFormat::Psd, depth, dither: false };
     for y in 0..height as usize {
         merge_row(y, width, layers, &mut merged_row, &mut layer_row);
-        merged.extend(quantize_integer(encoding, width, PSD_RGBA_PLANES, merged_row.iter().copied())?);
+        merged.extend(merged_row.iter().copied().map(quantize_u8));
     }
+
     Ok(PixelData::Rgba8(merged))
 }
 

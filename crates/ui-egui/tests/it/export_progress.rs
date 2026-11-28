@@ -256,6 +256,40 @@ fn texture_sets_writing_the_same_file_name_do_not_start_an_export() {
 }
 
 #[test]
+fn a_texture_set_cannot_export_into_another_sets_psd_file() {
+    use texturecraft_ui_egui::state::SetExport;
+
+    let (mut h, _) = harness("psd-folder-clash");
+    let scratch = tempfile::tempdir().unwrap();
+    let dir = scratch.path().join("textures");
+    let library = tempfile::tempdir().unwrap();
+    let app = h.state_mut();
+    app.ui.export.dir = dir.display().to_string();
+    app.session.load_export_presets(library.path().to_path_buf());
+    let psd = json!({"name": "Layered", "maps": [
+        {"file": "roughness", "format": "Psd", "bit_depth": 8, "channels": [["L", {"Channel": {"channel": "Roughness"}}]]}
+    ]});
+    app.run("export.preset.save", json!({"preset": psd})).unwrap();
+    let plan = app.run("export.plan", json!({"preset": "Layered", "ts": 0})).unwrap();
+    let file_name = plan[0]["file"].as_str().unwrap();
+    let nested = json!({"name": "Nested", "maps": [
+        {"file": format!("{file_name}/detail"), "format": "Png", "bit_depth": 8, "channels": [["L", {"Channel": {"channel": "Roughness"}}]]}
+    ]});
+    app.run("export.preset.save", json!({"preset": nested})).unwrap();
+    app.ui.export.preset = "Layered".into();
+    app.ui.export.sets.insert(1, SetExport { preset: Some("Nested".into()), ..Default::default() });
+    h.run_steps(4);
+
+    click(&mut h, "Export");
+    finish(&mut h);
+
+    assert!(h.state().ui.export.job.is_none());
+    assert_eq!(exports(&h), 0, "the full selection must be checked before starting");
+    assert!(!dir.exists());
+    assert!(console(&h).iter().any(|line| line.contains("folder")), "{:?}", console(&h));
+}
+
+#[test]
 fn opening_another_project_stops_the_export() {
     let (mut h, dir) = harness("project");
     long_export(&mut h, &dir);

@@ -44,9 +44,11 @@ grayscale image (the whole tile atlas for a UV-tiled set).
 `file.exportTextures`, `export.plan`, the automation `textures.export` method and the MCP
 `textures_export` tool accept `maps: [{map, enabled?, format?, bitDepth?, dithering?, size?}]`.
 Each entry overrides that map's export settings. The `map` field is its index in the selected
-template. A map’s `size` in pixels overrides the export size. `enabled: false` suppresses that file while reserving its name. When several texture
-sets produce the same name (ignoring case), programmatic and browser exports keep the first file
-and warn about later duplicates. The desktop export window reports the collision before writing.
+template. A map's `size` in pixels overrides the export size. `enabled: false` leaves out a PSD layer
+or suppresses a raster file while reserving its name. When several texture sets produce the same
+name (ignoring case), programmatic and browser exports keep the first file and warn about later
+duplicates. The desktop export window reports the collision before writing. Texture planning
+rejects a selection that uses the same path as both a file and a folder before rendering.
 
 `shaderParameters: true` writes `<project>_shaders.json` beside the textures with the shader
 model, its settings and the names of the exported texture sets. An array of texture set
@@ -84,11 +86,14 @@ shared by different sets.
 `hdr`, `exr`, `webp`, `psd`) and their extensions. `bitDepth: 32` selects floating point for
 TIFF, EXR and HDR. `dithering: true` dithers 8-bit integer output with an ordered pattern, and
 `export.plan` reports the effective setting and per-file dimensions (`size` and `sourceSize`, both in pixels).
+Tiled files include their UV tile number in `tile` and, when available, their filename template
+with a `<UDIM>` placeholder in `udimPattern`. These fields are null when they do not apply.
 `export.preview` takes the same parameters plus `map` (an index into the template's maps) and
 `side` (the maximum width or height, in pixels, capped at 512). It returns
 `{width, height, channels, pixels}` for the first texture set named by `ts`, or null when the
-set writes no file for that map. HDR previews list RGB without alpha. TIFF previews list RGB
-or RGBA when the encoder stores luminance in three channels. The preview uses 8-bit values,
+set writes no file for that map. For a UV-tiled set the picture shows the atlas. HDR previews
+list RGB without alpha. TIFF and WebP previews list RGB or RGBA when the encoder stores
+luminance in three channels. PSD previews show the output layer's RGBA channels. The preview uses 8-bit values,
 with sRGB colour channels and linear data channels. Texels outside the UV islands use the
 channel defaults.
 `padding: "diffusion"` dilates by

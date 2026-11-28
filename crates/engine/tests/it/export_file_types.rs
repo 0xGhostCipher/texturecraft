@@ -51,6 +51,45 @@ fn in_memory_psd_export_only_renders_the_first_plan_for_each_name() {
 }
 
 #[test]
+fn a_psd_file_and_another_sets_folder_conflict_during_planning() {
+    use texturecraft_engine::core::Channel;
+    use texturecraft_engine::file_cmds::export_options;
+
+    let mut session = texturecraft_engine::sample_session(128, 32).unwrap();
+    let sets = &mut session.doc.project.texture_sets;
+    sets[0].name = "Body".into();
+    sets[0].channels.retain(|(channel, _)| *channel != Channel::Metallic);
+    sets[1].name = "Trim".into();
+    let preset = json!({"name": "Conflicting outputs", "maps": [
+        {"file": "roughness", "format": "Psd", "bit_depth": 8, "channels": [["L", {"Channel": {"channel": "Roughness"}}]]},
+        {"file": "$mesh_Body.psd/detail", "format": "Png", "bit_depth": 8, "channels": [["L", {"Channel": {"channel": "Metallic"}}]]}
+    ]});
+    let dir = tempfile::tempdir().unwrap();
+    let mut params = json!({"preset": preset, "padding": "none", "dir": dir.path()});
+
+    params["ts"] = json!(0);
+    let body = execute(&mut session, "export.plan", &params).unwrap();
+    params["ts"] = json!(1);
+    let trim = execute(&mut session, "export.plan", &params).unwrap();
+    let file = body[0]["file"].as_str().unwrap();
+    let nested_file = trim.as_array().unwrap().iter().find_map(|file| file["file"].as_str().filter(|name| name.contains('/'))).unwrap();
+    assert_eq!(nested_file.split('/').next(), Some(file), "separate plans collide when combined");
+
+    for order in [[0, 1], [1, 0]] {
+        params["ts"] = json!(order);
+        let plan_error = execute(&mut session, "export.plan", &params).unwrap_err();
+        let options = export_options(&session, &params, "export.plan").unwrap();
+        let render_error = session.export_files(&order, &options).unwrap_err();
+        let write_error = execute(&mut session, "file.exportTextures", &params).unwrap_err();
+
+        for error in [plan_error, render_error, write_error] {
+            assert!(error.to_string().contains("folder"), "{error}");
+        }
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+}
+
+#[test]
 fn a_map_size_wins_over_the_export_size_in_the_plan() {
     let mut session = texturecraft_engine::sample_session(256, 64).unwrap();
 
@@ -127,7 +166,8 @@ fn a_psd_warning_outlives_a_reserved_file_that_carried_it() {
         {"file": "first", "format": "Png", "bit_depth": 8, "channels": roughness},
         {"file": "second", "format": "Png", "bit_depth": 8, "channels": roughness},
     ]});
-    // Four 16-bit RGBA layers at 8192 pixels and the merged image pass the 2 GiB PSD limit
+
+    // Four 16-bit RGBA layers at 8192 pixels exceed the 2 GiB PSD limit
     for layer in 0..4 {
         preset["maps"].as_array_mut().unwrap().push(json!({"file": format!("layer{layer}"), "format": "Psd", "bit_depth": 16, "channels": colour}));
     }

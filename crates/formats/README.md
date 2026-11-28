@@ -110,7 +110,8 @@ pub fn preset_to_json(preset: &ExportPreset) -> Result<String>;
   deflate alpha), PGM 8/16 (gray; colour becomes luminance), TGA 8, TIFF 8/16/32f, BMP 8,
   WebP 8 (lossless), PSD 8/16, EXR 16f/32f (`Y`, `YA`, `RGB`, `RGBA`, ZIP), HDR 32f.
   PSD writes one file per texture set or UV tile, with each output map stored as a layer.
-  Smaller maps keep their sizes and align to the top left of the canvas. A `/` in a map
+  For tiled sets, `ExportOptions::atlas` writes one document for the whole set. Smaller maps
+  keep their sizes and align to the top left of the canvas. A `/` in a map
   name creates a layer group inside the PSD. 8-bit files can be dithered
   (`ExportOptions::dither`, an 8×8 ordered pattern). When `ExportOptions::color_space` is unset,
   color maps default to sRGB in integer files and linear Rec.709 in float files. An explicit

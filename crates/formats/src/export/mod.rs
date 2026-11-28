@@ -939,13 +939,24 @@ fn claim_path(files: &mut BTreeSet<String>, dirs: &mut BTreeSet<String>, name: &
     let mut prefix = lower.as_str();
     while let Some((folder, _)) = prefix.rsplit_once('/') {
         if files.contains(folder) {
-            return Err(FormatError::Invalid(format!("\"{name}\" cannot use \"{folder}\" as a folder because another map exports that file")));
+            return Err(FormatError::Invalid(format!("\"{name}\" cannot use \"{folder}\" as a folder because another output exports that file")));
         }
 
         dirs.insert(folder.to_owned());
         prefix = folder;
     }
     files.insert(lower);
+    Ok(())
+}
+
+/// Reject file and folder conflicts across a selection's retained output paths, ignoring case.
+pub fn validate_export_paths<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<()> {
+    let mut files = BTreeSet::new();
+    let mut folders = BTreeSet::new();
+    for name in names {
+        claim_path(&mut files, &mut folders, name)?;
+    }
+
     Ok(())
 }
 
@@ -982,6 +993,10 @@ fn plan_set_outputs(project: &Project, sets: &[usize], mesh_name: &str, opts: &E
     }
 
     let files = keep_first_planned_names(files);
+    if sets.len() > 1 {
+        validate_export_paths(files.iter().map(|(_, file)| file.name.as_str()))?;
+    }
+
     let mut psd_bytes = 0;
     for (index, file) in files.iter().filter(|(_, file)| file.format == FileFormat::Psd) {
         check_psd_batch_within(project.texture_set(*index)?, opts, std::slice::from_ref(file), &mut psd_bytes, budget)?;
@@ -1565,6 +1580,10 @@ fn encode(
     write_raster(&image, codec_format).map_err(|error| encoding_error(&error))
 }
 
+fn quantize_u8(value: f32) -> u8 {
+    (value * f32::from(u8::MAX) + 0.5) as u8
+}
+
 fn quantize_u16(value: f32) -> u16 {
     (value * f32::from(u16::MAX) + 0.5) as u16
 }
@@ -1593,7 +1612,7 @@ fn quantize_integer(encoding: Encoding, width: u32, component_count: usize, samp
         if dither {
             bytes.extend(samples.enumerate().map(|(index, value)| (value * max_sample + threshold(index)).floor().clamp(0.0, max_sample) as u8));
         } else {
-            bytes.extend(samples.map(|value| (value * max_sample + 0.5) as u8));
+            bytes.extend(samples.map(quantize_u8));
         }
     }
 
