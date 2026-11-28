@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use texturecraft_engine::core::PROJECT_EXT;
 use texturecraft_engine::formats::export::sanitize_file_stem;
 
@@ -12,20 +13,35 @@ use crate::{TextureCraftApp, user_dir};
 const SUFFIX_DIGITS: usize = 16;
 
 /// Between a copy's stem and its suffix, so a user's own file named like `report-20240115` is not taken for a copy
-const COPY_MARK: &str = "-copy-";
+const COPY_MARK: &str = "copy";
 
 /// The longest stem kept, so the suffix and the temporary files of a save still fit a file name
 const MAX_STEM_CHARS: usize = 170;
 
 impl TextureCraftApp {
-    /// A project just opened from an autosave copy becomes an unsaved one: the project the copy came from
-    /// autosaves there again, so work saved into it would be lost
-    pub(crate) fn detach_autosave_copy(&mut self) {
-        let folder = absolute(&user_dir("autosave"));
-        if self.session.path.as_deref().is_some_and(|path| is_copy_in(&absolute(Path::new(path)), &folder)) {
-            self.session.path = None;
-            self.session.modified = true;
+    /// Detach a recovered project because the original can overwrite its autosave copy.
+    pub(crate) fn detach_autosave_copy(&mut self) -> bool {
+        let Some(path) = self.session.path.as_deref() else {
+            return false;
+        };
+
+        if !is_copy_in(Path::new(path), &user_dir("autosave")) {
+            return false;
         }
+
+        self.session.path = None;
+        self.session.modified = true;
+        true
+    }
+
+    /// Keep the engine's open reply consistent with the desktop session.
+    pub(crate) fn recover_file_open(&mut self, command: &str, mut result: Value) -> Value {
+        if command == "file.open" && self.detach_autosave_copy() {
+            result["path"] = Value::Null;
+            result["modified"] = Value::Bool(true);
+        }
+
+        result
     }
 
     /// The open project's autosave file in `folder`. A saved project's copy is named after its file and stays the
@@ -52,7 +68,7 @@ impl TextureCraftApp {
 
 fn file_name(stem: &str, suffix: u64) -> String {
     let stem: String = sanitize_file_stem(stem).chars().take(MAX_STEM_CHARS).collect();
-    format!("{stem}{COPY_MARK}{suffix:0SUFFIX_DIGITS$x}.{PROJECT_EXT}")
+    format!("{stem}-{COPY_MARK}-{suffix:0SUFFIX_DIGITS$x}.{PROJECT_EXT}")
 }
 
 /// `path` made absolute, as given when that fails
@@ -60,17 +76,53 @@ fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// `path` with links and, on Windows, the verbatim prefix resolved so two spellings of one folder compare equal; made absolute when that fails
-fn resolved(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| absolute(path))
+/// Compare device and inode without opening the directory or a possible special file.
+#[cfg(unix)]
+fn same_location(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    matches!((left.metadata(), right.metadata()), (Ok(left), Ok(right)) if (left.dev(), left.ino()) == (right.dev(), right.ino()))
 }
 
-/// Whether `path` is an autosave copy of `folder`: a project file there whose name ends in the copy mark and a suffix
+#[cfg(not(unix))]
+fn same_location(left: &Path, right: &Path) -> bool {
+    same_file::is_same_file(left, right).unwrap_or(false)
+}
+
+/// Whether the opened file is a generated autosave in the current profile.
 fn is_copy_in(path: &Path, folder: &Path) -> bool {
-    let suffix = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.rsplit_once(COPY_MARK)).map(|(_, suffix)| suffix);
-    path.parent().is_some_and(|parent| resolved(parent) == resolved(folder))
-        && path.extension().is_some_and(|extension| extension == PROJECT_EXT)
-        && suffix.is_some_and(|suffix| suffix.len() == SUFFIX_DIGITS && suffix.bytes().all(|digit| digit.is_ascii_hexdigit()))
+    let Some(extension) = path.extension().filter(|extension| extension.eq_ignore_ascii_case(PROJECT_EXT)) else {
+        return false;
+    };
+
+    let Some((prefix, suffix)) = path.file_stem().and_then(|stem| stem.to_str()).and_then(|stem| stem.rsplit_once('-')) else {
+        return false;
+    };
+
+    let Some((stem, mark)) = prefix.rsplit_once('-') else {
+        return false;
+    };
+
+    if !mark.eq_ignore_ascii_case(COPY_MARK) || suffix.len() != SUFFIX_DIGITS || !suffix.bytes().all(|digit| digit.is_ascii_hexdigit()) {
+        return false;
+    }
+
+    let opened = absolute(path);
+    let Some(parent) = opened.parent() else {
+        return false;
+    };
+
+    if parent != folder && !same_location(parent, folder) {
+        return false;
+    }
+
+    if mark == COPY_MARK && extension == PROJECT_EXT {
+        return true;
+    }
+
+    // On a case-sensitive volume the alternate spelling may be a separate user file
+    let generated_name = format!("{stem}-{COPY_MARK}-{}.{PROJECT_EXT}", suffix.to_ascii_lowercase());
+    same_location(path, &folder.join(generated_name))
 }
 
 /// A suffix for the unsaved project `project`: from this process and the moment, so another instance or a later run
@@ -151,17 +203,21 @@ mod tests {
         let mut app = app(project("hero"));
         let copy = app.autosave_path(&folder);
 
-        // A file there that is not a copy is the user's own, and so is a copy kept somewhere else
+        // Ordinary files and copies kept elsewhere retain their save paths
         let elsewhere = folder.join("kept").join(name_of(&copy));
-        for own in [folder.join("hero.tcraft"), folder.join("hero-20240115.tcraft"), elsewhere] {
-            let own = own.display().to_string();
-            app.session.path = Some(own.clone());
+        for project_path in [folder.join("hero.tcraft"), folder.join("hero-20240115.tcraft"), elsewhere] {
+            let project_path = project_path.display().to_string();
+            app.session.path = Some(project_path.clone());
+
             app.detach_autosave_copy();
-            assert_eq!(app.session.path, Some(own));
+
+            assert_eq!(app.session.path, Some(project_path));
         }
 
         app.session.path = Some(copy.display().to_string());
+
         app.detach_autosave_copy();
+
         assert_eq!(app.session.path, None, "Save asks for a file");
         assert!(app.session.modified, "closing asks to save the recovered work");
     }
